@@ -4,8 +4,8 @@
   "settings": {
     "width": 2000,
     "height": 2000,
-    "scrollTop": -606.9984,
-    "scrollLeft": -756.2425,
+    "scrollTop": -498,
+    "scrollLeft": -200.2425,
     "zoomLevel": 0.82,
     "show": 511,
     "database": 4,
@@ -2615,8 +2615,8 @@
           "columnIds": [
             "rtyKyH6JggwdE4kRSwiIT"
           ],
-          "x": 1368.7754,
-          "y": 1507.1427,
+          "x": 1364.7754,
+          "y": 1459.1427,
           "direction": 8
         },
         "meta": {
@@ -2643,7 +2643,7 @@
           "columnIds": [
             "-pp4E4FbCWh3LiP4bSDCJ"
           ],
-          "x": 1368.7754,
+          "x": 1364.7754,
           "y": 1163.1427,
           "direction": 4
         },
