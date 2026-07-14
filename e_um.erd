@@ -4,10 +4,17 @@
   "settings": {
     "width": 2000,
     "height": 2000,
+<<<<<<< HEAD
     "scrollTop": -167,
     "scrollLeft": 0,
     "zoomLevel": 1,
     "show": 431,
+=======
+    "scrollTop": -330.0933,
+    "scrollLeft": -334,
+    "zoomLevel": 0.79,
+    "show": 511,
+>>>>>>> 1567c7db64acebe18218ce76996423e1aa45b6ac
     "database": 4,
     "databaseName": "",
     "canvasType": "ERD",
