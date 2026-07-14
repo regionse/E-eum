@@ -4,8 +4,8 @@
   "settings": {
     "width": 2000,
     "height": 2000,
-    "scrollTop": -326.0933,
-    "scrollLeft": -136,
+    "scrollTop": -608.0933,
+    "scrollLeft": -175,
     "zoomLevel": 0.79,
     "show": 511,
     "database": 4,
@@ -236,15 +236,15 @@
           "2ZOdgZESCm8rc1KycTOBh"
         ],
         "ui": {
-          "x": 37.5009,
-          "y": 784.0895,
+          "x": 37.501,
+          "y": 720.7984,
           "zIndex": 377,
           "widthName": 76,
           "widthComment": 81,
           "color": "#00A2FF"
         },
         "meta": {
-          "updateAt": 1783995630275,
+          "updateAt": 1783996950484,
           "createAt": 1783900755876
         }
       },
@@ -1905,8 +1905,8 @@
           "columnIds": [
             "CoLYxCuUJWR6CWRaX8Rkl"
           ],
-          "x": 502.5009,
-          "y": 884.0895,
+          "x": 502.501,
+          "y": 820.7984,
           "direction": 2
         },
         "meta": {
@@ -1933,8 +1933,8 @@
           "columnIds": [
             "pZhywJZRtDr5ktacqDdnb"
           ],
-          "x": 270.0009,
-          "y": 984.0895,
+          "x": 270.001,
+          "y": 920.7984,
           "direction": 8
         },
         "meta": {
