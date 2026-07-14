@@ -4,9 +4,9 @@
   "settings": {
     "width": 2000,
     "height": 2000,
-    "scrollTop": -330.0933,
-    "scrollLeft": -334,
-    "zoomLevel": 0.79,
+    "scrollTop": -669,
+    "scrollLeft": -374.6415,
+    "zoomLevel": 0.91,
     "show": 511,
     "database": 4,
     "databaseName": "",
@@ -34,7 +34,6 @@
       "qKmzOL-g81uAt69wAIRrl",
       "z2tE9pEl9ggYg0auHXmWo",
       "nCSZcWK9mZuR5AkZQzgy2",
-      "cTYkgypp9k2T0eefD-caA",
       "Fcetcm56mf_9JNkRB_0qQ",
       "S6z-OPY_APkPTTn0C99kr",
       "TDXKT_Krv1wxR0vVhzq1B",
@@ -152,14 +151,14 @@
         ],
         "ui": {
           "x": 886.5109,
-          "y": 298.8542,
+          "y": 304.3487,
           "zIndex": 252,
           "widthName": 92,
           "widthComment": 60,
           "color": "#E91E63"
         },
         "meta": {
-          "updateAt": 1783991418847,
+          "updateAt": 1783995855077,
           "createAt": 1783432337613
         }
       },
@@ -177,15 +176,15 @@
           "SpMBXkCfkWI4oHydtpb01"
         ],
         "ui": {
-          "x": 954.3674,
-          "y": 1034.5398,
+          "x": 741.1806,
+          "y": 1041.1332,
           "zIndex": 299,
           "widthName": 60,
           "widthComment": 60,
           "color": ""
         },
         "meta": {
-          "updateAt": 1783989627273,
+          "updateAt": 1783996308458,
           "createAt": 1783469316223
         }
       },
@@ -429,17 +428,17 @@
         "columnIds": [
           "xiHVSLsE21aS3V1ZmHWr5",
           "Sj0e8blDeZqLWSfernys0",
+          "bO-Eu9OKXbo_biS4J1F6U",
           "-4C1BuAqz6xB_6mnK5gHz",
-          "gY3jpwT5HQ6DIgirq0oCS",
-          "bO-Eu9OKXbo_biS4J1F6U"
+          "gY3jpwT5HQ6DIgirq0oCS"
         ],
         "seqColumnIds": [
           "xiHVSLsE21aS3V1ZmHWr5",
           "Sj0e8blDeZqLWSfernys0",
+          "bO-Eu9OKXbo_biS4J1F6U",
           "-4C1BuAqz6xB_6mnK5gHz",
           "gY3jpwT5HQ6DIgirq0oCS",
-          "SGB6zHi4Nrj58z75B_ij8",
-          "bO-Eu9OKXbo_biS4J1F6U"
+          "SGB6zHi4Nrj58z75B_ij8"
         ],
         "ui": {
           "x": 975.2214,
@@ -450,7 +449,7 @@
           "color": "#4CAF50"
         },
         "meta": {
-          "updateAt": 1783991439568,
+          "updateAt": 1783996376426,
           "createAt": 1783988348925
         }
       },
@@ -768,7 +767,7 @@
         "comment": "탈퇴사유",
         "dataType": "VARCHAR(200)",
         "default": "",
-        "options": 0,
+        "options": 8,
         "ui": {
           "keys": 0,
           "widthName": 60,
@@ -777,7 +776,7 @@
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783432539542,
+          "updateAt": 1783996076019,
           "createAt": 1783432439527
         }
       },
@@ -785,7 +784,7 @@
         "id": "XxEvkBz2862QBg3yGPn1l",
         "tableId": "nCSZcWK9mZuR5AkZQzgy2",
         "name": "withdrawn_at",
-        "comment": "",
+        "comment": "탈퇴 일시",
         "dataType": "DATETIME",
         "default": "",
         "options": 0,
@@ -797,7 +796,7 @@
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783900317401,
+          "updateAt": 1783995860022,
           "createAt": 1783432541838
         }
       },
@@ -887,7 +886,7 @@
         "name": "care_message_enabled",
         "comment": "가족편지 돌봄 메시지 알림",
         "dataType": "BOOLEAN",
-        "default": "",
+        "default": "FALSE",
         "options": 0,
         "ui": {
           "keys": 0,
@@ -897,7 +896,7 @@
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783899860174,
+          "updateAt": 1783996537691,
           "createAt": 1783899812112
         }
       },
@@ -908,16 +907,16 @@
         "comment": "고유번호",
         "dataType": "INT",
         "default": "",
-        "options": 8,
+        "options": 10,
         "ui": {
-          "keys": 2,
+          "keys": 3,
           "widthName": 60,
           "widthComment": 60,
           "widthDataType": 60,
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783899887985,
+          "updateAt": 1783996277579,
           "createAt": 1783899887985
         }
       },
@@ -945,19 +944,19 @@
         "id": "io2lIaXGZy0wx12hBSLgK",
         "tableId": "nCSZcWK9mZuR5AkZQzgy2",
         "name": "reason_detail",
-        "comment": "",
-        "dataType": "VARCHAR(500)",
+        "comment": "상세 사유",
+        "dataType": "TEXT",
         "default": "",
         "options": 0,
         "ui": {
           "keys": 0,
           "widthName": 72,
           "widthComment": 60,
-          "widthDataType": 81,
+          "widthDataType": 60,
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783900371352,
+          "updateAt": 1783996069768,
           "createAt": 1783900325447
         }
       },
@@ -1833,8 +1832,8 @@
       },
       "ki0_H877SHGkdxsesgPSR": {
         "id": "ki0_H877SHGkdxsesgPSR",
-        "identification": false,
-        "relationshipType": 16,
+        "identification": true,
+        "relationshipType": 2,
         "startRelationshipType": 2,
         "start": {
           "tableId": "qKmzOL-g81uAt69wAIRrl",
@@ -1855,7 +1854,7 @@
           "direction": 1
         },
         "meta": {
-          "updateAt": 1783899887985,
+          "updateAt": 1783996519211,
           "createAt": 1783899887985
         }
       },
@@ -1879,7 +1878,7 @@
             "Xmxs95NVHjnx-qooUXDzr"
           ],
           "x": 886.5109,
-          "y": 386.8542,
+          "y": 392.3487,
           "direction": 1
         },
         "meta": {
