@@ -4,8 +4,8 @@
   "settings": {
     "width": 2000,
     "height": 2000,
-    "scrollTop": -215,
-    "scrollLeft": -526,
+    "scrollTop": -335,
+    "scrollLeft": -800,
     "zoomLevel": 0.85,
     "show": 511,
     "database": 4,
@@ -980,7 +980,7 @@
         "comment": "어드민 계정 창설 날짜",
         "dataType": "DATETIME",
         "default": "",
-        "options": 9,
+        "options": 8,
         "ui": {
           "keys": 0,
           "widthName": 60,
@@ -989,7 +989,7 @@
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783993802898,
+          "updateAt": 1783995569417,
           "createAt": 1783927276581
         }
       },
@@ -1000,7 +1000,7 @@
         "comment": "어드민 계정 상태 (활동중 등)",
         "dataType": "ENUM",
         "default": "",
-        "options": 9,
+        "options": 8,
         "ui": {
           "keys": 0,
           "widthName": 60,
@@ -1009,7 +1009,7 @@
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783993616775,
+          "updateAt": 1783995568797,
           "createAt": 1783927276902
         }
       },
