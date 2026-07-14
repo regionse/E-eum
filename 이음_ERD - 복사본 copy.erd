@@ -4,8 +4,8 @@
   "settings": {
     "width": 2000,
     "height": 2000,
-    "scrollTop": -451,
-    "scrollLeft": -800,
+    "scrollTop": -215,
+    "scrollLeft": -526,
     "zoomLevel": 0.85,
     "show": 511,
     "database": 4,
@@ -386,9 +386,7 @@
           "oeuS__83Gu9a1HEGTro-5",
           "Qi8SqCQ33IFozYI2Ua2Gx",
           "45CG2_lHfsVVG6oMfrros",
-          "S6aiFmsZGiWL6lNc68uc8",
           "xepAPSltvC-6Pbak3Qlec",
-          "YzJ0bI8FNyXxm-DdmvmDm",
           "RACzjcqjsuLva9ta_Qjlv"
         ],
         "seqColumnIds": [
@@ -414,7 +412,7 @@
           "color": "#00B8A9"
         },
         "meta": {
-          "updateAt": 1783993302530,
+          "updateAt": 1783994929127,
           "createAt": 1783965270374
         }
       },
@@ -982,7 +980,7 @@
         "comment": "어드민 계정 창설 날짜",
         "dataType": "DATETIME",
         "default": "",
-        "options": 8,
+        "options": 9,
         "ui": {
           "keys": 0,
           "widthName": 60,
@@ -991,7 +989,7 @@
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1783987656850,
+          "updateAt": 1783993802898,
           "createAt": 1783927276581
         }
       },
@@ -3268,8 +3266,8 @@
           "columnIds": [
             "RACzjcqjsuLva9ta_Qjlv"
           ],
-          "x": 1199.5247,
-          "y": 179.2547,
+          "x": 1194.5247,
+          "y": 155.2547,
           "direction": 2
         },
         "meta": {
