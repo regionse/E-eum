@@ -4,8 +4,8 @@
   "settings": {
     "width": 4000,
     "height": 4000,
-    "scrollTop": -1749.2078,
-    "scrollLeft": -2022,
+    "scrollTop": -155.2078,
+    "scrollLeft": -2157,
     "zoomLevel": 0.91,
     "show": 511,
     "database": 4,
@@ -809,15 +809,15 @@
           "pz0DoBAufiYE3d3KR1LsB"
         ],
         "ui": {
-          "x": 1771.8362,
-          "y": 2823.2076,
+          "x": 1765.2428,
+          "y": 2840.79,
           "zIndex": 1723,
           "widthName": 67,
           "widthComment": 60,
           "color": ""
         },
         "meta": {
-          "updateAt": 1784192172691,
+          "updateAt": 1784192352104,
           "createAt": 1784037012454
         }
       },
@@ -998,9 +998,7 @@
           "9sIw4VLeF8jHxZWflPId1",
           "gjIsTp9C4IJqh0CDRMZaM",
           "QN1zfQDLJruXrFugyul0R",
-          "VBi3i11sU7yMRxEFG32f3",
-          "lhM84gt-6EUlcU9uQdkUe",
-          "hBffEYatkKB1m0pgrJ4Dd"
+          "VBi3i11sU7yMRxEFG32f3"
         ],
         "seqColumnIds": [
           "vxLvVTazXp5W-tnUx8J6E",
@@ -1030,7 +1028,7 @@
           "color": "#4CAF50"
         },
         "meta": {
-          "updateAt": 1784189073600,
+          "updateAt": 1784192659175,
           "createAt": 1784079952440
         }
       },
@@ -5478,19 +5476,19 @@
         "id": "ctVoaNVbvqm0vuDqJkxt5",
         "tableId": "AJ5I-khV5vke1A2ymomcs",
         "name": "anomaly_detail",
-        "comment": "이상징후 설명",
+        "comment": "Ai가 이해한 이상징후 설명 (선별이유)",
         "dataType": "TEXT",
         "default": "",
         "options": 0,
         "ui": {
           "keys": 0,
           "widthName": 81,
-          "widthComment": 77,
+          "widthComment": 201,
           "widthDataType": 60,
           "widthDefault": 60
         },
         "meta": {
-          "updateAt": 1784081153959,
+          "updateAt": 1784192742401,
           "createAt": 1784081134290
         }
       },
@@ -6675,8 +6673,8 @@
           "columnIds": [
             "4Oz4G2jjdGnHU5VYNnIGs"
           ],
-          "x": 2082.8361999999997,
-          "y": 2823.2076,
+          "x": 2076.2428,
+          "y": 2840.79,
           "direction": 4
         },
         "meta": {
@@ -6946,8 +6944,8 @@
           "columnIds": [
             "vxLvVTazXp5W-tnUx8J6E"
           ],
-          "x": 709.1585,
-          "y": 1491.7547,
+          "x": 647.1585,
+          "y": 1467.7547,
           "direction": 2
         },
         "end": {
