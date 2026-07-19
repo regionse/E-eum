@@ -108,3 +108,46 @@ class Inquiry(Base):
         nullable=True,
         comment="답변 완료일",
     )
+
+class care_groups(Base):
+    __tablename__ = "caregroups"
+
+    care_groups_id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        comment="가족 방 식별번호",
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user.user_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="사용자 번호",
+    )
+
+class care_group_members(Base):
+    __tablename__ = "care_group_members"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user.user_id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="사용자 번호"
+    )
+
+    care_groups_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("care_groups.care_groups_id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="가족 방 식별번호",
+    )
+
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        # server_default=
+        )
+
+
