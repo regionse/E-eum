@@ -146,8 +146,203 @@ class care_group_members(Base):
 
     joined_at: Mapped[datetime] = mapped_column(
         DateTime,
-        nullable=False,
-        # server_default=
+        nullable=False
         )
+
+    relationships: Mapped[str] = mapped_column(
+        String(20),
+        nullable=True
+    )
+
+
+
+class invite_codes(Base):
+
+    __tablename__ = "invite_codes"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        comment="사용자 번호"
+    )
+
+    care_groups_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("care_groups.care_groups_id", ondelete="CASCADE"),
+        comment="가족 방 식별번호",
+    )
+
+    invite_code: Mapped[str] = mapped_column(
+        String(20),
+        nullable=True,
+        # 유니크
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=True,
+        server_default=func.now()        
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=True
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Bool,  # boolean
+        nullable=True
+    )
+
+
+
+class care_group_letters(Base):
+
+    __tablename__ = "care_group_letters"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        comment="편지 식별 번호",
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user.user_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="사용자 번호",
+    )
+
+    care_group_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("care_groups.care_groups_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="가족 방 식별번호",
+    )
+
+    content: Mapped[Text] = mapped_column(
+        Text,
+        nullable=False,
+        comment="편지 내용"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=True,
+        server_default=func.now()
+    )
+
+
+
+class support_services(Base): 
+
+    __tablename__ = "support_services"
+
+    ss_id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        comment="지원 서비스 식별 번호",
+    )
+
+    service_id: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="API가 제공하는 서비스 번호"
+    )
+
+    service_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="지원 서비스 이름"
+    )
+
+    service_summary: Mapped[Text] = mapped_column(
+        Text,
+        nullable=True,
+        comment="서비스 간략설명"
+    )
+
+    service_content: Mapped[Text] = mapped_column(
+        Text,
+        nullable=True,
+        comment="지원내용"
+    )
+
+    service_category: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="지원유형 카테고리"
+    )
+
+    target_description: Mapped[Text] = mapped_column(
+        Text,
+        nullable=True,
+        comment="지원대상 설명"
+    )
+    
+    region_code: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="지원 가능 지역"
+    )
+
+    application_method: Mapped[Text] = mapped_column(
+        Text,
+        nullable=True,
+        comment="신청방법"
+    )
+
+    contact: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="문의처"
+    )
+
+    min_age: Mapped[int] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="최소 나이"
+    )
+
+    max_age: Mapped[int] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="최대 나이"
+    )
+
+    income_condition: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="소득 조건"
+    )
+
+    add_condition: Mapped[Text] = mapped_column(
+        Text,
+        nullable=True,
+        comment="그 외 조건"
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        comment="수정 시각"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        comment="생성 시각"
+    )
+
+class care_group_analysis(Base):
+
+    __tablename__ = "care_group_analysis"
+
 
 
