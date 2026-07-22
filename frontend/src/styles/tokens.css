@@ -1,0 +1,53 @@
+/* 이음 디자인 토큰 — 색/간격/타이포. 스토리보드의 teal 계열 + 따뜻한 톤. */
+:root {
+  /* 브랜드 (teal) */
+  --teal-50:  #eefaf8;
+  --teal-100: #d3f1ec;
+  --teal-200: #a7e3da;
+  --teal-300: #6fcfc2;
+  --teal-400: #3fb6a7;
+  --teal-500: #1f9c8d;  /* 메인 액센트 */
+  --teal-600: #157f73;
+  --teal-700: #12655c;
+  --teal-800: #114f49;
+
+  /* 보조 (warm sand — 따뜻함) */
+  --sand-50:  #fbf7f0;
+  --sand-100: #f5ecdd;
+  --amber-500: #e0a500;
+
+  /* 중립 */
+  --ink:      #1b2b29;   /* 본문 텍스트 */
+  --ink-soft: #4a5b58;
+  --muted:    #7c8a87;
+  --line:     #e3e9e7;
+  --bg:       #f6f8f7;
+  --surface:  #ffffff;
+
+  /* 의미색 */
+  --danger:   #d94b4b;
+  --warn-bg:  #fff7e6;
+  --warn-line:#f0d38a;
+  --ok:       #1f9c8d;
+
+  /* 적합도 뱃지 (덜다 정책 4단계) */
+  --fit-best: #157f73;
+  --fit-good: #3fb6a7;
+  --fit-rec:  #7fb4d8;
+  --fit-ref:  #b6bec2;
+
+  /* 형태 */
+  --radius-sm: 8px;
+  --radius:    14px;
+  --radius-lg: 22px;
+  --shadow-sm: 0 1px 2px rgba(20,60,55,.06), 0 1px 3px rgba(20,60,55,.05);
+  --shadow:    0 4px 14px rgba(20,60,55,.08);
+  --shadow-lg: 0 14px 40px rgba(20,60,55,.14);
+
+  /* 간격 스케일 */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
+
+  --maxw: 1080px;
+  --header-h: 64px;
+}

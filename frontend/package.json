@@ -1,0 +1,22 @@
+{
+  "name": "e-um",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "이음(E-um) — 가족돌봄청년 통합 돌봄 파트너 (mock 프로토타입)",
+  "scripts": {
+    "predev": "node scripts/ensure-deps.mjs",
+    "dev": "vite --open",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.7"
+  }
+}
