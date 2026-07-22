@@ -1,2 +1,16 @@
 # 공통
 .env
+# Node / 프론트엔드
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+
+# Python / 백엔드
+__pycache__/
+*.pyc
+
+# OS / 기타
+.DS_Store
+*.log
