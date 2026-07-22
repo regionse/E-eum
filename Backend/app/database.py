@@ -85,3 +85,21 @@ async def get_db():
         except Exception:
             await db.rollback()
             raise
+
+
+# ==========================
+# Database 초기화
+# ==========================
+
+async def init_db() -> None:
+    """
+    SQLAlchemy 모델을 기준으로 존재하지 않는 테이블을 생성한다.
+    """
+
+    # 모델을 import해야 Base.metadata가 테이블을 인식한다.
+    from app.delda import models as delda_models  # noqa: F401
+
+    async with engine.begin() as connection:
+        await connection.run_sync(
+            Base.metadata.create_all
+        )
