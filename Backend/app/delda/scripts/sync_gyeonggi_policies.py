@@ -22,7 +22,10 @@ from app.delda.services.policy_sync_service import (
 LIST_LIMIT = 10
 REQUEST_INTERVAL = 0.5
 
-SyncSummary = dict[str, int]
+SyncSummary = dict[
+    str,
+    int | list[int],
+]
 
 
 async def collect_all_policy_items(
@@ -117,13 +120,18 @@ async def process_policy_item(
     db: AsyncSession,
     client: httpx.AsyncClient,
     list_item: dict[str, str | None],
-) -> PolicySyncAction:
+) -> tuple[PolicySyncAction, int]:
     """
     경기 정책 한 건을 상세 조회하고
     DB에 동기화한다.
+
+    반환값:
+    - 정책 동기화 결과
+    - MySQL policy 테이블의 policy_id
     """
 
-    article_no = list_item.get(
+    # 경기청년포털에서 사용하는 외부 정책 ID
+    gyeonggi_external_id = list_item.get(
         "article_no"
     )
 
@@ -131,9 +139,9 @@ async def process_policy_item(
         "category_url"
     )
 
-    if not article_no:
+    if not gyeonggi_external_id:
         raise ValueError(
-            "경기 정책 articleNo가 없습니다."
+            "경기 정책 외부 ID가 없습니다."
         )
 
     if not category_url:
@@ -144,7 +152,7 @@ async def process_policy_item(
     detail_html = await fetch_policy_detail_html(
         client=client,
         category_url=category_url,
-        article_no=article_no,
+        article_no=gyeonggi_external_id,
     )
 
     policy_data = normalize_gyeonggi_policy(
@@ -153,14 +161,14 @@ async def process_policy_item(
     )
 
     async with db.begin_nested():
-        action = await sync_single_policy(
-            db=db,
-            policy_data=policy_data,
+        action, db_policy_id = (
+            await sync_single_policy(
+                db=db,
+                policy_data=policy_data,
+            )
         )
 
-        await db.flush()
-
-    return action
+    return action, db_policy_id
 
 
 async def run_gyeonggi_policy_sync(
@@ -168,12 +176,16 @@ async def run_gyeonggi_policy_sync(
 ) -> SyncSummary:
     """
     경기청년포털 정책을 크롤링하고
-    처리 결과만 반환한다.
+    처리 결과와 임베딩 대상 정책 ID를 반환한다.
     """
 
     created_count = 0
     updated_count = 0
     skipped_count = 0
+
+    # 신규 등록되거나 내용이 변경된
+    # MySQL policy.policy_id 목록
+    changed_policy_ids: list[int] = []
 
     failed_items: list[
         dict[str, str | None]
@@ -205,13 +217,18 @@ async def run_gyeonggi_policy_sync(
             f"{len(list_items)}건을 확인했습니다."
         )
 
+        # =====================================
         # 1차 처리
+        # =====================================
+
         for index, list_item in enumerate(
             list_items,
             start=1,
         ):
-            article_no = list_item.get(
-                "article_no"
+            gyeonggi_external_id = (
+                list_item.get(
+                    "article_no"
+                )
             )
 
             policy_name = list_item.get(
@@ -220,23 +237,42 @@ async def run_gyeonggi_policy_sync(
 
             print(
                 f"[{index}/{len(list_items)}] "
-                f"GG_{article_no or 'ID 없음'} "
+                f"GG_"
+                f"{gyeonggi_external_id or 'ID 없음'} "
                 f"{policy_name or ''}"
             )
 
             try:
-                action = await process_policy_item(
-                    db=db,
-                    client=client,
-                    list_item=list_item,
+                action, db_policy_id = (
+                    await process_policy_item(
+                        db=db,
+                        client=client,
+                        list_item=list_item,
+                    )
                 )
 
-                if action == PolicySyncAction.CREATED:
+                if (
+                    action
+                    == PolicySyncAction.CREATED
+                ):
                     created_count += 1
+
+                    changed_policy_ids.append(
+                        db_policy_id
+                    )
+
                     print("  → 신규 등록")
 
-                elif action == PolicySyncAction.UPDATED:
+                elif (
+                    action
+                    == PolicySyncAction.UPDATED
+                ):
                     updated_count += 1
+
+                    changed_policy_ids.append(
+                        db_policy_id
+                    )
+
                     print("  → 내용 변경")
 
                 else:
@@ -259,7 +295,10 @@ async def run_gyeonggi_policy_sync(
                     REQUEST_INTERVAL
                 )
 
+        # =====================================
         # 실패 정책 재처리
+        # =====================================
+
         if failed_items:
             print(
                 f"\n경기 실패 정책 "
@@ -271,8 +310,10 @@ async def run_gyeonggi_policy_sync(
                 failed_items,
                 start=1,
             ):
-                article_no = list_item.get(
-                    "article_no"
+                gyeonggi_external_id = (
+                    list_item.get(
+                        "article_no"
+                    )
                 )
 
                 policy_name = list_item.get(
@@ -282,12 +323,13 @@ async def run_gyeonggi_policy_sync(
                 print(
                     f"[재시도 "
                     f"{index}/{len(failed_items)}] "
-                    f"GG_{article_no or 'ID 없음'} "
+                    f"GG_"
+                    f"{gyeonggi_external_id or 'ID 없음'} "
                     f"{policy_name or ''}"
                 )
 
                 try:
-                    action = (
+                    action, db_policy_id = (
                         await process_policy_item(
                             db=db,
                             client=client,
@@ -295,22 +337,42 @@ async def run_gyeonggi_policy_sync(
                         )
                     )
 
-                    if action == PolicySyncAction.CREATED:
+                    if (
+                        action
+                        == PolicySyncAction.CREATED
+                    ):
                         created_count += 1
-                        print(
-                            "  → 재시도 성공: 신규 등록"
+
+                        changed_policy_ids.append(
+                            db_policy_id
                         )
 
-                    elif action == PolicySyncAction.UPDATED:
-                        updated_count += 1
                         print(
-                            "  → 재시도 성공: 내용 변경"
+                            "  → 재시도 성공: "
+                            "신규 등록"
+                        )
+
+                    elif (
+                        action
+                        == PolicySyncAction.UPDATED
+                    ):
+                        updated_count += 1
+
+                        changed_policy_ids.append(
+                            db_policy_id
+                        )
+
+                        print(
+                            "  → 재시도 성공: "
+                            "내용 변경"
                         )
 
                     else:
                         skipped_count += 1
+
                         print(
-                            "  → 재시도 성공: 변경 없음"
+                            "  → 재시도 성공: "
+                            "변경 없음"
                         )
 
                 except Exception as error:
@@ -339,10 +401,17 @@ async def run_gyeonggi_policy_sync(
     print(f"내용 변경: {updated_count}건")
     print(f"변경 없음: {skipped_count}건")
     print(f"최종 실패: {failed_count}건")
+    print(
+        "임베딩 대상: "
+        f"{len(changed_policy_ids)}건"
+    )
 
     return {
         "created": created_count,
         "updated": updated_count,
         "skipped": skipped_count,
         "failed": failed_count,
+        "changed_policy_ids": (
+            changed_policy_ids
+        ),
     }

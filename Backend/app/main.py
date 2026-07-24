@@ -9,7 +9,7 @@ from app.notice.router import (
     admin_router as admin_notice_router,
     user_router as user_notice_router,
 )
-
+from app.delda.router import router as delda_router
 
 
 
@@ -31,6 +31,8 @@ app.include_router(admin_notice_router)
 
 app.include_router(user_inquiry_router)
 app.include_router(admin_inquiry_router)
+
+app.include_router(delda_router)
 
 
 @app.get("/")

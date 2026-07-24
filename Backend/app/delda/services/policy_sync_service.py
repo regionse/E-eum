@@ -22,10 +22,15 @@ async def sync_single_policy(
     *,
     db: AsyncSession,
     policy_data: NormalizedPolicy,
-) -> PolicySyncAction:
+) -> tuple[PolicySyncAction, int]:
     """
     정규화된 정책 한 건을 policy 테이블과 동기화한다.
 
+    반환값:
+    - 처리 결과
+    - policy_id
+
+    처리 방식:
     - 기존 정책 없음: 신규 등록
     - 기존 정책 있음 + 해시 동일: 변경 없음
     - 기존 정책 있음 + 해시 다름: 정책 내용 수정
@@ -59,14 +64,24 @@ async def sync_single_policy(
 
         db.add(new_policy)
 
-        return PolicySyncAction.CREATED
+        # AUTO_INCREMENT policy_id를 받기 위해
+        # INSERT를 DB에 반영한다.
+        await db.flush()
+
+        return (
+            PolicySyncAction.CREATED,
+            new_policy.policy_id,
+        )
 
     # 정책 내용이 바뀌지 않았다면 수정하지 않는다.
     if (
         existing_policy.content_hash
         == new_hash
     ):
-        return PolicySyncAction.SKIPPED
+        return (
+            PolicySyncAction.SKIPPED,
+            existing_policy.policy_id,
+        )
 
     # region을 포함한 모든 정규화 데이터를 업데이트한다.
     update_data = policy_data.model_dump()
@@ -84,4 +99,7 @@ async def sync_single_policy(
     existing_policy.content_hash = new_hash
     existing_policy.updated_at = datetime.now()
 
-    return PolicySyncAction.UPDATED
+    return (
+        PolicySyncAction.UPDATED,
+        existing_policy.policy_id,
+    )

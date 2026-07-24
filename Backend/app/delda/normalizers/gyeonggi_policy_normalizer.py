@@ -520,6 +520,12 @@ def normalize_gyeonggi_policy(
 
     application_lines: list[str] = []
 
+    if business_period:
+        application_lines.append(
+            "사업기간: "
+            + business_period
+        )
+
     if recruitment_schedule:
         application_lines.append(
             "모집일정: "
@@ -568,7 +574,7 @@ def normalize_gyeonggi_policy(
             category_name,
         ],
         support_type=None,
-        support_cycle=business_period,
+        support_cycle=None,
         policy_summary=(
             policy_summary
             or list_item.get(
