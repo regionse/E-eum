@@ -22,13 +22,19 @@ from app.delda.services.policy_sync_service import (
 PAGE_SIZE = 50
 DETAIL_REQUEST_INTERVAL = 1.0
 
-SyncSummary = dict[str, int]
+SyncSummary = dict[
+    str,
+    int | list[int],
+]
 
 
 async def fetch_all_policy_list(
     client: httpx.AsyncClient,
     api_key: str,
-) -> tuple[int, list[dict[str, str | None]]]:
+) -> tuple[
+    int,
+    list[dict[str, str | None]],
+]:
     """
     중앙부처 정책 목록의 모든 페이지를 조회한다.
     """
@@ -59,7 +65,9 @@ async def fetch_all_policy_list(
             )
         )
 
-        policy_items.extend(page_items)
+        policy_items.extend(
+            page_items
+        )
 
         print(
             f"  → {len(page_items)}건 조회 "
@@ -82,23 +90,31 @@ async def process_policy_item(
     client: httpx.AsyncClient,
     api_key: str,
     list_item: dict[str, str | None],
-) -> PolicySyncAction:
+) -> tuple[PolicySyncAction, int]:
     """
     중앙부처 정책 한 건을 상세 조회하고
     DB에 동기화한다.
+
+    반환값:
+    - 정책 동기화 결과
+    - MySQL policy 테이블의 policy_id
     """
 
-    service_id = list_item.get("servId")
+    # 중앙부처 API에서 사용하는 외부 정책 ID
+    welfare_external_id = list_item.get(
+        "servId"
+    )
 
-    if not service_id:
+    if not welfare_external_id:
         raise ValueError(
-            "정책 servId가 없습니다."
+            "중앙부처 정책 외부 ID인 "
+            "servId가 없습니다."
         )
 
     detail_xml = await fetch_policy_detail(
         client=client,
         api_key=api_key,
-        service_id=service_id,
+        service_id=welfare_external_id,
     )
 
     detail_item = parse_policy_detail(
@@ -111,14 +127,14 @@ async def process_policy_item(
     )
 
     async with db.begin_nested():
-        action = await sync_single_policy(
-            db=db,
-            policy_data=policy_data,
+        action, db_policy_id = (
+            await sync_single_policy(
+                db=db,
+                policy_data=policy_data,
+            )
         )
 
-        await db.flush()
-
-    return action
+    return action, db_policy_id
 
 
 async def run_welfare_policy_sync(
@@ -127,7 +143,8 @@ async def run_welfare_policy_sync(
     """
     중앙부처 정책을 조회하고 DB에 동기화한다.
 
-    실행 이력은 생성하지 않고 처리 결과만 반환한다.
+    실행 이력은 생성하지 않고,
+    처리 결과와 임베딩 대상 정책 ID를 반환한다.
     """
 
     api_key = get_api_key()
@@ -135,6 +152,10 @@ async def run_welfare_policy_sync(
     created_count = 0
     updated_count = 0
     skipped_count = 0
+
+    # 신규 등록되거나 내용이 변경된
+    # MySQL policy.policy_id 목록
+    changed_policy_ids: list[int] = []
 
     failed_items: list[
         dict[str, str | None]
@@ -158,18 +179,29 @@ async def run_welfare_policy_sync(
             )
         )
 
+        if not policy_items:
+            raise RuntimeError(
+                "중앙부처 정책 목록을 "
+                "찾지 못했습니다."
+            )
+
         print(
             "\n중앙부처 정책 상세 조회를 "
             "시작합니다."
         )
 
+        # =====================================
         # 1차 처리
+        # =====================================
+
         for index, list_item in enumerate(
             policy_items,
             start=1,
         ):
-            service_id = list_item.get(
-                "servId"
+            welfare_external_id = (
+                list_item.get(
+                    "servId"
+                )
             )
 
             policy_name = list_item.get(
@@ -178,32 +210,53 @@ async def run_welfare_policy_sync(
 
             print(
                 f"[{index}/{len(policy_items)}] "
-                f"{service_id or 'ID 없음'} "
+                f"{welfare_external_id or 'ID 없음'} "
                 f"{policy_name or ''}"
             )
 
             try:
-                action = await process_policy_item(
-                    db=db,
-                    client=client,
-                    api_key=api_key,
-                    list_item=list_item,
+                action, db_policy_id = (
+                    await process_policy_item(
+                        db=db,
+                        client=client,
+                        api_key=api_key,
+                        list_item=list_item,
+                    )
                 )
 
-                if action == PolicySyncAction.CREATED:
+                if (
+                    action
+                    == PolicySyncAction.CREATED
+                ):
                     created_count += 1
+
+                    changed_policy_ids.append(
+                        db_policy_id
+                    )
+
                     print("  → 신규 등록")
 
-                elif action == PolicySyncAction.UPDATED:
+                elif (
+                    action
+                    == PolicySyncAction.UPDATED
+                ):
                     updated_count += 1
+
+                    changed_policy_ids.append(
+                        db_policy_id
+                    )
+
                     print("  → 내용 변경")
 
                 else:
                     skipped_count += 1
+
                     print("  → 변경 없음")
 
             except Exception as error:
-                failed_items.append(list_item)
+                failed_items.append(
+                    list_item
+                )
 
                 print(
                     "  → 1차 처리 실패: "
@@ -216,7 +269,10 @@ async def run_welfare_policy_sync(
                     DETAIL_REQUEST_INTERVAL
                 )
 
+        # =====================================
         # 실패 정책 재처리
+        # =====================================
+
         if failed_items:
             print(
                 f"\n중앙부처 실패 정책 "
@@ -228,8 +284,10 @@ async def run_welfare_policy_sync(
                 failed_items,
                 start=1,
             ):
-                service_id = list_item.get(
-                    "servId"
+                welfare_external_id = (
+                    list_item.get(
+                        "servId"
+                    )
                 )
 
                 policy_name = list_item.get(
@@ -239,12 +297,12 @@ async def run_welfare_policy_sync(
                 print(
                     f"[재시도 "
                     f"{index}/{len(failed_items)}] "
-                    f"{service_id or 'ID 없음'} "
+                    f"{welfare_external_id or 'ID 없음'} "
                     f"{policy_name or ''}"
                 )
 
                 try:
-                    action = (
+                    action, db_policy_id = (
                         await process_policy_item(
                             db=db,
                             client=client,
@@ -253,22 +311,42 @@ async def run_welfare_policy_sync(
                         )
                     )
 
-                    if action == PolicySyncAction.CREATED:
+                    if (
+                        action
+                        == PolicySyncAction.CREATED
+                    ):
                         created_count += 1
-                        print(
-                            "  → 재시도 성공: 신규 등록"
+
+                        changed_policy_ids.append(
+                            db_policy_id
                         )
 
-                    elif action == PolicySyncAction.UPDATED:
-                        updated_count += 1
                         print(
-                            "  → 재시도 성공: 내용 변경"
+                            "  → 재시도 성공: "
+                            "신규 등록"
+                        )
+
+                    elif (
+                        action
+                        == PolicySyncAction.UPDATED
+                    ):
+                        updated_count += 1
+
+                        changed_policy_ids.append(
+                            db_policy_id
+                        )
+
+                        print(
+                            "  → 재시도 성공: "
+                            "내용 변경"
                         )
 
                     else:
                         skipped_count += 1
+
                         print(
-                            "  → 재시도 성공: 변경 없음"
+                            "  → 재시도 성공: "
+                            "변경 없음"
                         )
 
                 except Exception as error:
@@ -299,10 +377,17 @@ async def run_welfare_policy_sync(
     print(f"내용 변경: {updated_count}건")
     print(f"변경 없음: {skipped_count}건")
     print(f"최종 실패: {failed_count}건")
+    print(
+        "임베딩 대상: "
+        f"{len(changed_policy_ids)}건"
+    )
 
     return {
         "created": created_count,
         "updated": updated_count,
         "skipped": skipped_count,
         "failed": failed_count,
+        "changed_policy_ids": (
+            changed_policy_ids
+        ),
     }

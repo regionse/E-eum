@@ -9,7 +9,6 @@ from sqlalchemy import (
     String,
     Text,
     func,
-    Bool,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,7 +49,7 @@ class Inquiry(Base):
 
     admin_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("admin.admin_id", ondelete="SET NULL"),
+        ForeignKey("user.user_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
         comment="답변 관리자 번호",
@@ -86,7 +85,7 @@ class Inquiry(Base):
         ),
         nullable=False,
         default=InquiryStatus.RECEIVED,
-        server_default=InquiryStatus.RECEIVED.value,
+        server_default=InquiryStatus.RECEIVED.name,
         index=True,
         comment="처리 상태",
     )

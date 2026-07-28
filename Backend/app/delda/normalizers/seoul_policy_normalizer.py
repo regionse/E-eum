@@ -586,7 +586,7 @@ def normalize_seoul_policy(
         institution_name=(
             institution_name
         ),
-        category=categories,
+        category=categories or [],
         support_type=detail_info.get(
             "제공유형"
         ),

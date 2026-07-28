@@ -324,7 +324,7 @@ def normalize_welfare_policy(list_item: dict[str, str | None], detail_item: dict
         region="전국",
         policy_name=policy_name,
         institution_name=institution_name,
-        category=category,
+        category=category or [],
         support_type=(
             detail_item.get("srvPvsnNm")
             or list_item.get("srvPvsnNm")

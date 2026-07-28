@@ -1,0 +1,375 @@
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Path,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.delda import controllers
+from app.delda.schemas import (
+    PolicyDetailResponse,
+    PolicyFavoriteListResponse,
+    PolicyFavoriteStatusResponse,
+    PolicyRecommendationCompletedResponse,
+    PolicyRecommendationHistoryListResponse,
+    PolicyRecommendationMainResponse,
+    PolicyRecommendationRequest,
+    PolicyRecommendationResponse,
+    PolicySyncLatestResponse,
+    PolicySyncResultResponse,
+    PolicySyncStartResponse,
+)
+
+
+# =========================================================
+# 관리자 정책 최신화 Router
+# =========================================================
+
+
+admin_router = APIRouter(
+    prefix="/admin/policy-sync",
+    tags=["관리자 정책 최신화"],
+)
+
+
+@admin_router.post(
+    "",
+    response_model=PolicySyncStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="정책 데이터 최신화 시작",
+)
+async def start_policy_sync(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    중앙부처 정책 API, 서울 정책 크롤링,
+    경기 정책 크롤링 및 변경 정책 임베딩을
+    백그라운드에서 시작한다.
+    """
+
+    return await controllers.start_policy_sync(
+        db=db,
+        background_tasks=background_tasks,
+    )
+
+
+@admin_router.get(
+    "/latest",
+    response_model=PolicySyncLatestResponse,
+    status_code=status.HTTP_200_OK,
+    summary="최근 정책 최신화 결과 조회",
+)
+async def get_latest_policy_sync_result(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    가장 최근에 실행된 정책 최신화의
+    상태와 결과를 조회한다.
+    """
+
+    return await controllers.get_latest_policy_sync_result(
+        db=db,
+    )
+
+
+@admin_router.get(
+    "/{execution_id}",
+    response_model=PolicySyncResultResponse,
+    status_code=status.HTTP_200_OK,
+    summary="정책 최신화 실행 결과 조회",
+)
+async def get_policy_sync_result(
+    execution_id: int = Path(
+        ...,
+        ge=1,
+        description="정책 최신화 실행 결과 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    실행 ID를 기준으로 정책 최신화의
+    현재 상태와 결과를 조회한다.
+    """
+
+    return await controllers.get_policy_sync_result(
+        db=db,
+        execution_id=execution_id,
+    )
+
+
+# =========================================================
+# 사용자 정책 추천 Router
+# =========================================================
+
+
+user_router = APIRouter(
+    prefix="/policy-recommendations",
+    tags=["정책 추천"],
+)
+
+
+@user_router.post(
+    "/users/{user_id}",
+    response_model=PolicyRecommendationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="사용자 맞춤 정책 추천",
+)
+async def recommend_policies(
+    request: PolicyRecommendationRequest,
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    회원정보의 생년월일과 거주지역,
+    사용자가 입력한 돌봄 상황을 이용하여
+    맞춤 정책 추천을 실행한다.
+
+    인증 기능이 연결되기 전까지는
+    URL의 user_id를 임시로 사용한다.
+    """
+
+    return await controllers.run_policy_recommendation(
+        db=db,
+        user_id=user_id,
+        request=request,
+    )
+
+
+@user_router.get(
+    "/users/{user_id}",
+    response_model=(
+        PolicyRecommendationHistoryListResponse
+    ),
+    status_code=status.HTTP_200_OK,
+    summary="최근 정책 추천 이력 조회",
+)
+async def get_recent_policy_recommendations(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    사용자의 최근 정책 추천 이력을
+    최신순으로 최대 3건 조회한다.
+    """
+
+    return await (
+        controllers
+        .get_recent_policy_recommendations(
+            db=db,
+            user_id=user_id,
+        )
+    )
+
+
+# =========================================================
+# 정책 즐겨찾기 Router
+# =========================================================
+
+
+@user_router.get(
+    "/users/{user_id}/favorites",
+    response_model=PolicyFavoriteListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="정책 즐겨찾기 목록 조회",
+)
+async def get_policy_favorites(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    사용자가 즐겨찾기한 정책 목록을
+    최근 추가 순으로 조회한다.
+    """
+
+    return await controllers.get_policy_favorites(
+        db=db,
+        user_id=user_id,
+    )
+
+
+@user_router.post(
+    "/users/{user_id}/favorites/{policy_id}",
+    response_model=PolicyFavoriteStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="정책 즐겨찾기 추가",
+)
+async def add_policy_favorite(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    policy_id: int = Path(
+        ...,
+        ge=1,
+        description="즐겨찾기에 추가할 정책 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    사용자의 정책 즐겨찾기를 추가한다.
+    """
+
+    return await controllers.add_policy_favorite(
+        db=db,
+        user_id=user_id,
+        policy_id=policy_id,
+    )
+
+
+@user_router.delete(
+    "/users/{user_id}/favorites/{policy_id}",
+    response_model=PolicyFavoriteStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="정책 즐겨찾기 해제",
+)
+async def delete_policy_favorite(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    policy_id: int = Path(
+        ...,
+        ge=1,
+        description="즐겨찾기에서 해제할 정책 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    사용자의 정책 즐겨찾기를 해제한다.
+    """
+
+    return await controllers.delete_policy_favorite(
+        db=db,
+        user_id=user_id,
+        policy_id=policy_id,
+    )
+
+
+
+# =========================================================
+# 덜다 메인 화면 Router
+# =========================================================
+
+
+@user_router.get(
+    "/users/{user_id}/main",
+    response_model=PolicyRecommendationMainResponse,
+    status_code=status.HTTP_200_OK,
+    summary="덜다 메인 화면 조회",
+)
+async def get_policy_recommendation_main(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    덜다 메인 화면에 표시할 데이터를 조회한다.
+
+    - 최근 추천 이력 최대 3건
+    - 현재 사용자의 즐겨찾기 최대 5건
+    - 전체 사용자 기준 인기 정책 TOP 5
+    """
+
+    return await (
+        controllers
+        .get_policy_recommendation_main(
+            db=db,
+            user_id=user_id,
+        )
+    )
+
+
+# =========================================================
+# 정책 단건 상세 Router
+# =========================================================
+
+
+@user_router.get(
+    "/users/{user_id}/policies/{policy_id}",
+    response_model=PolicyDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="정책 단건 상세 조회",
+)
+async def get_policy_detail(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    policy_id: int = Path(
+        ...,
+        ge=1,
+        description="조회할 정책 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    특정 정책의 상세 정보와
+    현재 사용자의 즐겨찾기 여부를 조회한다.
+    """
+
+    return await controllers.get_policy_detail(
+        db=db,
+        user_id=user_id,
+        policy_id=policy_id,
+    )
+
+
+
+@user_router.get(
+    "/users/{user_id}/{recommendation_id}",
+    response_model=(
+        PolicyRecommendationCompletedResponse
+    ),
+    status_code=status.HTTP_200_OK,
+    summary="정책 추천 이력 상세 조회",
+)
+async def get_policy_recommendation_detail(
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="임시 테스트 사용자 ID",
+    ),
+    recommendation_id: int = Path(
+        ...,
+        ge=1,
+        description="정책 추천 이력 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    특정 정책 추천 이력과
+    추천된 정책 목록을 조회한다.
+    """
+
+    return await (
+        controllers
+        .get_policy_recommendation_detail(
+            db=db,
+            user_id=user_id,
+            recommendation_id=(
+                recommendation_id
+            ),
+        )
+    )

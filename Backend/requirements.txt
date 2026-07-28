@@ -3,3 +3,11 @@ sqlalchemy
 aiomysql
 fastapi
 uvicorn
+pydantic
+httpx
+beautifulsoup4
+google-genai
+pinecone
+langchain
+langchain-google-genai
+langgraph
