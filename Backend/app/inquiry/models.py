@@ -85,7 +85,7 @@ class Inquiry(Base):
         ),
         nullable=False,
         default=InquiryStatus.RECEIVED,
-        server_default=InquiryStatus.RECEIVED.value,
+        server_default=InquiryStatus.RECEIVED.name,
         index=True,
         comment="처리 상태",
     )

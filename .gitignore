@@ -1,2 +1,4 @@
 # 공통
 .env
+__pycache__/
+*.pyc

@@ -1,11 +1,20 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
-load_dotenv()
+# database.py가 있는 app 폴더의 .env를 읽는다.
+ENV_PATH = (
+    Path(__file__)
+    .resolve()
+    .parent
+    / ".env"
+)
+
+load_dotenv(ENV_PATH)
 
 
 # ==========================
@@ -97,6 +106,7 @@ async def init_db() -> None:
     """
 
     # 모델을 import해야 Base.metadata가 테이블을 인식한다.
+    from app.user import models as user_models
     from app.delda import models as delda_models  # noqa: F401
 
     async with engine.begin() as connection:
