@@ -1,7 +1,7 @@
 import asyncio
 import re
 
-from sqlalchemy import Integer, bindparam, select, text
+from sqlalchemy import Integer, bindparam, select, text, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.delda.models import Policy
@@ -488,6 +488,136 @@ async def _load_policies(
         for policy_id in policy_ids
         if policy_id in policy_map
     ]
+
+
+
+# =========================================================
+# 특정 정책명 직접 검색
+# =========================================================
+
+
+async def retrieve_policies_by_name(
+    *,
+    db: AsyncSession,
+    policy_name: str,
+    limit: int = 5,
+) -> list[Policy]:
+    """
+    사용자가 자연어로 직접 언급한 정책명을 기준으로
+    policy 테이블에서 정책을 검색한다.
+
+    검색 우선순위:
+    1. 정책명 정확히 일치
+    2. 정책명 부분 일치
+    3. 띄어쓰기를 제거한 정책명 부분 일치
+    """
+
+    normalized_name = " ".join(
+        policy_name.split()
+    )
+
+    if not normalized_name:
+        return []
+
+    limit = max(
+        1,
+        min(limit, 5),
+    )
+
+    compact_name = re.sub(
+        r"\s+",
+        "",
+        normalized_name,
+    )
+
+    # -----------------------------------------------------
+    # 1. 정확히 일치하는 정책 조회
+    # -----------------------------------------------------
+
+    exact_result = await db.execute(
+        select(Policy)
+        .where(
+            Policy.policy_name
+            == normalized_name
+        )
+        .order_by(
+            Policy.policy_id.asc()
+        )
+        .limit(limit)
+    )
+
+    exact_policies = list(
+        exact_result.scalars().all()
+    )
+
+    # -----------------------------------------------------
+    # 2. 부분 일치하는 정책 조회
+    # -----------------------------------------------------
+
+    partial_conditions = [
+        Policy.policy_name.contains(
+            normalized_name,
+            autoescape=True,
+        ),
+    ]
+
+    if compact_name:
+        partial_conditions.append(
+            func.replace(
+                Policy.policy_name,
+                " ",
+                "",
+            ).contains(
+                compact_name,
+                autoescape=True,
+            )
+        )
+
+    partial_result = await db.execute(
+        select(Policy)
+        .where(
+            or_(
+                *partial_conditions
+            )
+        )
+        .order_by(
+            func.char_length(
+                Policy.policy_name
+            ).asc(),
+            Policy.policy_name.asc(),
+            Policy.policy_id.asc(),
+        )
+        .limit(limit)
+    )
+
+    partial_policies = list(
+        partial_result.scalars().all()
+    )
+
+    # 정확히 일치한 정책을 먼저 넣고,
+    # 중복 정책은 제외한다.
+    policies: list[Policy] = []
+    added_policy_ids: set[int] = set()
+
+    for policy in (
+        exact_policies
+        + partial_policies
+    ):
+        if (
+            policy.policy_id
+            in added_policy_ids
+        ):
+            continue
+
+        policies.append(policy)
+        added_policy_ids.add(
+            policy.policy_id
+        )
+
+        if len(policies) >= limit:
+            break
+
+    return policies
 
 
 # =========================================================

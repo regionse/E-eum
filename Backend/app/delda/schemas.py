@@ -324,8 +324,6 @@ class CareActivity(str, Enum):
 # =========================================================
 
 
-# Agent가 추가 질문을 만들 때 답변 형태를 정하는 값 
-# (프론트는 이 값을 보고 라디오 버튼, 체크박스, 텍스트 입력창 중 무엇을 보여줄지 결정)
 PolicyFollowUpAnswerType = Literal[
     "single_choice",
     "multiple_choice",
@@ -335,8 +333,8 @@ PolicyFollowUpAnswerType = Literal[
 
 class PolicyFollowUpAnswer(BaseModel):
     """
-    Agent가 이전에 질문한 내용에 대한
-    사용자의 추가 답변.
+    Agent가 이전에 질문한 내용과
+    그 질문에 대한 사용자의 답변.
 
     DB에는 저장하지 않고,
     프론트가 진행 중인 추천 요청에 포함해
@@ -344,13 +342,29 @@ class PolicyFollowUpAnswer(BaseModel):
     """
 
     model_config = ConfigDict(
-        str_strip_whitespace=True,      # 문자열 앞, 뒤 공백 제거
-        extra="forbid",                 # schema에 정의하지 않은 필드가 들어오면 오류 발생시킴. (422오류)
+        str_strip_whitespace=True,
+        extra="forbid",
     )
 
-    question_id: str = Field(       # 어떤 질문인지에 대한 식별을 위해 필요
+    question_id: str = Field(
         min_length=1,
         max_length=100,
+    )
+
+    policy_id: int = Field(
+        ge=1,
+    )
+
+    condition_key: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    # 챗봇 답변이 원래 질문과 관련 있는지
+    # Agent가 판단할 수 있도록 함께 전달
+    question: str = Field(
+        min_length=1,
+        max_length=500,
     )
 
     answer: str | list[str]
@@ -358,14 +372,23 @@ class PolicyFollowUpAnswer(BaseModel):
 
 class PolicyFollowUpQuestion(BaseModel):
     """
-    정보가 부족할 때 Agent가 사용자에게
-    반환하는 추가 질문.
+    검색된 특정 정책의 핵심 자격조건이
+    부족할 때 Agent가 반환하는 추가 질문.
     """
 
     question_id: str = Field(
         min_length=1,
         max_length=100,
-    )       # 질문 종류
+    )
+
+    policy_id: int = Field(
+        ge=1,
+    )
+
+    condition_key: str = Field(
+        min_length=1,
+        max_length=100,
+    )
 
     question: str = Field(
         min_length=1,
@@ -376,9 +399,9 @@ class PolicyFollowUpQuestion(BaseModel):
 
     options: list[str] = Field(
         default_factory=list,
-    )       # 선택지
+    )
 
-    allow_skip: bool = True     # 스킵 가능 여부
+    allow_skip: bool = True
 
 
 # =========================================================
@@ -456,6 +479,11 @@ class PolicyRecommendationContext(
         le=2100,
     )
 
+    age: int = Field(
+        ge=0,
+        le=120,
+    )
+
     region: str = Field(
         min_length=1,
         max_length=50,
@@ -518,6 +546,83 @@ class RecommendedPolicyItemResponse(BaseModel):
 
 
 # =========================================================
+# 정책 단건 상세 응답
+# =========================================================
+
+
+class PolicyDetailResponse(BaseModel):
+    """
+    정책 한 건의 상세 정보를 반환하는 응답.
+
+    추천 순위, 적합도, 추천 이유는
+    특정 추천 실행에 속한 값이므로 포함하지 않는다.
+    """
+
+    policy_id: int
+
+    source_name: str
+    region: str
+
+    policy_name: str
+    institution_name: str | None = None
+
+    category: list[str] = Field(
+        default_factory=list,
+    )
+
+    support_type: str | None = None
+    support_cycle: str | None = None
+
+    policy_summary: str | None = None
+
+    target_detail: str | None = None
+    selection_criteria: str | None = None
+    support_content: str | None = None
+    application_method: str | None = None
+
+    detail_url: str | None = None
+    guide_pdf_url: str | None = None
+
+    is_favorite: bool = False
+
+
+
+# =========================================================
+# 특정 정책 직접 조회 응답
+# =========================================================
+
+
+class PolicyLookupCompletedResponse(BaseModel):
+    """
+    사용자가 자연어로 특정 정책을 직접 찾아달라고
+    요청했을 때 반환하는 응답.
+
+    단순 정책 정보 조회이므로
+    사용자의 신청 가능 여부를 확정하지 않고,
+    추천 이력에도 저장하지 않는다.
+    """
+
+    status: Literal[
+        "policy_lookup_completed"
+    ] = "policy_lookup_completed"
+
+    # 사용자가 찾으려고 한 정책명
+    requested_policy_name: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+    # 정확히 일치하거나 이름이 비슷한 정책 목록
+    policies: list[
+        PolicyDetailResponse
+    ] = Field(
+        min_length=1,
+        max_length=5,
+    )
+
+
+
+# =========================================================
 # 정보 부족 응답
 # =========================================================
 
@@ -560,16 +665,204 @@ class PolicyRecommendationCompletedResponse(
         "recommendation_completed"
     ] = "recommendation_completed"
 
-    # 추천 결과를 DB에 저장한 뒤 사용.
-    # User 모델 연결 전에는 None으로 반환할 수 있다.
-    recommendation_id: int | None = None
+    # DB에 저장된 추천 실행 ID
+    recommendation_id: int
 
-    created_at: datetime | None = None
+    created_at: datetime
 
     understood_situation: str | None = None
 
     recommendations: list[
         RecommendedPolicyItemResponse
+    ] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+
+# =========================================================
+# 최근 정책 추천 이력 응답
+# =========================================================
+
+
+class PolicyRecommendationHistoryItemResponse(
+    BaseModel
+):
+    """
+    정책 추천 이력 목록에 표시할 추천 실행 한 건.
+    """
+
+    recommendation_id: int
+
+    understood_situation: str | None = None
+
+    result_count: int = Field(
+        ge=0,
+        description="추천된 정책 수",
+    )
+
+    created_at: datetime
+
+
+class PolicyRecommendationHistoryListResponse(
+    BaseModel
+):
+    """
+    사용자의 최근 정책 추천 이력 목록.
+    """
+
+    recommendations: list[
+        PolicyRecommendationHistoryItemResponse
+    ] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+
+
+# =========================================================
+# 정책 즐겨찾기 응답
+# =========================================================
+
+
+class PolicyFavoriteStatusResponse(BaseModel):
+    """
+    정책 즐겨찾기 추가·해제 결과.
+    """
+
+    policy_id: int
+
+    is_favorite: bool
+
+    message: str
+
+
+class PolicyFavoriteItemResponse(BaseModel):
+    """
+    즐겨찾기 정책 목록에 표시할 정책 한 건.
+    """
+
+    policy_id: int
+
+    source_name: str
+    region: str
+
+    policy_name: str
+    institution_name: str | None = None
+
+    category: list[str] = Field(
+        default_factory=list,
+    )
+
+    support_type: str | None = None
+    support_cycle: str | None = None
+
+    policy_summary: str | None = None
+
+    target_detail: str | None = None
+    selection_criteria: str | None = None
+    support_content: str | None = None
+    application_method: str | None = None
+
+    detail_url: str | None = None
+    guide_pdf_url: str | None = None
+
+    created_at: datetime
+
+    is_favorite: bool = True
+
+
+class PolicyFavoriteListResponse(BaseModel):
+    """
+    사용자가 즐겨찾기한 정책 목록.
+    """
+
+    total_count: int = Field(
+        ge=0,
+    )
+
+    favorites: list[
+        PolicyFavoriteItemResponse
+    ] = Field(
+        default_factory=list,
+    )
+
+
+# =========================================================
+# 인기 정책 응답
+# =========================================================
+
+
+class PolicyPopularItemResponse(BaseModel):
+    """
+    전체 사용자의 즐겨찾기 수를 기준으로 선정한
+    인기 정책 한 건.
+    """
+
+    policy_id: int
+
+    source_name: str
+    region: str
+
+    policy_name: str
+    institution_name: str | None = None
+
+    category: list[str] = Field(
+        default_factory=list,
+    )
+
+    support_type: str | None = None
+    support_cycle: str | None = None
+
+    policy_summary: str | None = None
+
+    detail_url: str | None = None
+    guide_pdf_url: str | None = None
+
+    favorite_count: int = Field(
+        ge=1,
+        description="전체 사용자의 즐겨찾기 수",
+    )
+
+    # 인기 정책 중 현재 사용자도
+    # 즐겨찾기했는지를 나타낸다.
+    is_favorite: bool = False
+
+
+# =========================================================
+# 덜다 메인 화면 응답
+# =========================================================
+
+
+class PolicyRecommendationMainResponse(BaseModel):
+    """
+    덜다 메인 화면에 표시할 데이터를 반환한다.
+
+    recent_recommendations:
+        현재 사용자의 최근 추천 이력 최대 3건
+
+    favorite_policies:
+        현재 사용자가 최근 즐겨찾기한 정책 최대 5건
+
+    popular_policies:
+        전체 사용자 기준 즐겨찾기 수 TOP 5
+    """
+
+    recent_recommendations: list[
+        PolicyRecommendationHistoryItemResponse
+    ] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+
+    favorite_policies: list[
+        PolicyFavoriteItemResponse
+    ] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+    popular_policies: list[
+        PolicyPopularItemResponse
     ] = Field(
         default_factory=list,
         max_length=5,
@@ -625,16 +918,116 @@ class PolicyNoPolicyFoundResponse(BaseModel):
     )
 
 
+
+# =========================================================
+# 잘못되거나 서비스 범위를 벗어난 입력 응답
+# =========================================================
+
+
+PolicyInvalidInputReasonCode = Literal[
+    "unrelated_topic",
+    "gibberish",
+    "abusive_only",
+    "prompt_injection",
+    "sensitive_information",
+]
+
+
+PolicyInputStage = Literal[
+    "initial_form",
+    "follow_up_chat",
+]
+
+
+class PolicyInvalidInputResponse(BaseModel):
+    """
+    정상적으로 처리하기 어려운 자연어 입력에
+    대한 안내 응답.
+
+    follow_up_chat에서 발생한 경우에는
+    기존 챗봇 질문을 다시 표시할 수 있도록
+    질문 정보를 함께 반환한다.
+    """
+
+    status: Literal[
+        "invalid_input"
+    ] = "invalid_input"
+
+    reason_code: PolicyInvalidInputReasonCode
+
+    input_stage: PolicyInputStage
+
+    message: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+
+    retry_example: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+    retry_question_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    retry_question: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+
+# =========================================================
+# 긴급지원 우선 안내 응답
+# =========================================================
+
+
+PolicyUrgentReasonCode = Literal[
+    "self_harm_risk",
+    "harm_to_others_risk",
+    "immediate_danger",
+]
+
+
+class PolicyUrgentSupportResponse(BaseModel):
+    """
+    사용자 입력에서 자해, 타해 또는 즉각적인
+    위험 가능성이 감지되었을 때 반환하는 응답.
+
+    일반 정책 검색보다 사용자의 안전 안내를
+    우선하도록 프론트에 알려준다.
+    """
+
+    status: Literal[
+        "urgent_support"
+    ] = "urgent_support"
+
+    reason_code: PolicyUrgentReasonCode
+
+    message: str = Field(
+        min_length=1,
+        max_length=1000,
+    )
+
+    can_continue_policy_recommendation: bool = False
+
+
+
 # =========================================================
 # 정책 추천 통합 응답
 # =========================================================
 
-# 정보 부족, 추천 성공, 정책 없음 => 세 가지 중 하나를 반환
+# 정보 부족, 추천 성공, 정책 없음,
+# 잘못된 입력, 긴급지원 안내 중 하나를 반환한다.
 PolicyRecommendationResponse = Annotated[
     PolicyNeedMoreInformationResponse
     | PolicyRecommendationCompletedResponse
-    | PolicyNoPolicyFoundResponse,
+    | PolicyLookupCompletedResponse
+    | PolicyNoPolicyFoundResponse
+    | PolicyInvalidInputResponse
+    | PolicyUrgentSupportResponse,
     Field(
-        discriminator="status",     # 응답의 status 값을 보고 어떤 Schema인지 구분
+        discriminator="status",
     ),
 ]
