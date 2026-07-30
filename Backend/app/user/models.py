@@ -135,5 +135,5 @@ class User(Base):
         nullable=False,
         default=False,
         server_default="0",
-        comment="어드민 여부",
+        comment="관리자 여부",
     )
