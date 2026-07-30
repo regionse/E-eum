@@ -5,7 +5,6 @@ from nanuda.shared.existing_tables import user_table
 
 from sqlalchemy import (
     DateTime,
-    Table,
     ForeignKey,
     Integer,
     String,
@@ -13,9 +12,7 @@ from sqlalchemy import (
     func,
     Boolean,
     false,
-    Column,
     BigInteger,
-    text,
     UniqueConstraint,
     JSON,
     Float,

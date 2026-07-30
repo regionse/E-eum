@@ -1,53 +1,39 @@
 
-from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+)
 from nanuda.database import get_db
-from nanuda.care_group_letters import controllers as controller
-from nanuda.care_group_letters.schemas import (
+from nanuda import controllers
+from nanuda.schemas import (
     FamilyLetterCreate,
     FamilyLetterResponse,
-)
-from nanuda.care_groups import controllers
-from nanuda.care_groups.schemas import (
     CareGroupCreate,
     CareGroupCreateResponse,
     CareGroupMemberResponse,
     MyCareGroupResponse,
-)
-
-from nanuda.invite_codes import controllers
-from nanuda.invite_codes.schemas import (
     InviteCodeCreate,
     InviteCodeJoin,
     InviteCodeJoinResponse,
     InviteCodeResponse,
-)
-
-
-from nanuda.support_facilities import controllers
-from nanuda.support_facilities.schemas import (
-    SupportFacilityResponse,
-)
-from nanuda.support_facilities.schemas import (
-    SupportFacilityMapResponse,
-    SupportFacilityResponse,
-)
-
-
-from nanuda.weekly_care_analyses import (
-    controllers,
-)
-from nanuda.weekly_care_analyses.schemas import (
     FacilityRecommendationRequest,
     FacilityRecommendationResponse,
+    SupportFacilityResponse,
+    SupportFacilityMapResponse,
+
 )
-# router = APIRouter(prefix="/family-letters", tags=["가족편지"])
+
+
+router = APIRouter(prefix="", tags=["나누다"])
 
 
 @router.post("/family-letters", response_model=FamilyLetterResponse, status_code=201)
 def create_family_letter(data: FamilyLetterCreate, db: Session = Depends(get_db)):
-    return controller.create_family_letter(db, data)
+    return controllers.create_family_letter(db, data)
 
 
 @router.get("/family-letters", response_model=list[FamilyLetterResponse])
@@ -58,7 +44,7 @@ def list_family_letters(
     size: int = Query(5, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    return controller.list_family_letters(
+    return controllers.list_family_letters(
         db=db,
         care_group_id=care_group_id,
         user_id=user_id,
@@ -73,7 +59,7 @@ def get_family_letter(
     user_id: int = Query(..., gt=0),
     db: Session = Depends(get_db),
 ):
-    return controller.get_family_letter(db, letter_id, user_id)
+    return controllers.get_family_letter(db, letter_id, user_id)
 
 # =============================================================
 
