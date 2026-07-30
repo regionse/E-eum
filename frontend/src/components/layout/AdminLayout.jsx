@@ -3,7 +3,6 @@ import { useAuth } from '../../store/auth.jsx'
 
 // 그룹이 있으면 서브메뉴(덜다), 없으면 단일 항목
 const MENU = [
-  { to: '/admin', label: '대시보드', end: true },
   { to: '/admin/users', label: '회원관리' },
   { to: '/admin/notices', label: '공지관리' },
   { to: '/admin/inquiries', label: '문의관리' },

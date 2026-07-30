@@ -19,6 +19,8 @@ from app.delda.router import (
     admin_router as delda_admin_router,
     user_router as delda_user_router,
 )
+from app.itda.router import router as itda_router   # 잇다 (진로상담)
+from app.user.router import router as auth_router    # 로그인/회원
 
 
 @asynccontextmanager
@@ -64,6 +66,9 @@ app.include_router(admin_inquiry_router)
 
 app.include_router(delda_user_router)
 app.include_router(delda_admin_router)
+
+app.include_router(itda_router)   # 잇다 진로상담 (/itda/*)
+app.include_router(auth_router)   # 로그인/회원 (user)
 
 
 @app.get("/")

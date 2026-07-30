@@ -8,13 +8,6 @@ const AXES = [
   { to: '/share', ic: '🤝', name: '나누다', desc: '혼자 안고 있지 않게, 가족·전문가와 나눠요.', tag: '가족편지 · 기관연결' },
 ]
 
-// 자가 인식 후크 (스스로 대상인 줄 모르는 청년을 부드럽게 안내)
-const SIGNS = [
-  '아픈 가족을 돌보느라 학업이나 일이 자주 밀려요.',
-  '병원비·약값이 부담돼요.',
-  '쉴 틈 없이 돌봄과 생계를 함께 감당하고 있어요.',
-]
-
 export default function Home() {
   const { user } = useAuth()
   const nav = useNavigate()
@@ -33,36 +26,15 @@ export default function Home() {
             </p>
             <div className="hero-cta">
               <button className="btn btn-primary btn-lg" onClick={startFind}>내 혜택 찾기</button>
-              <Link to="/about" className="btn btn-ghost btn-lg">둘러보기</Link>
+              <Link to="/about" className="btn btn-ghost btn-lg">이음 살펴보기</Link>
             </div>
           </div>
           <div className="hero-visual">🤝</div>
         </div>
       </section>
 
-      {!user && (
-        <section className="container" style={{ paddingTop: 'var(--sp-7)' }}>
-          <div className="card card-pad" style={{ background: 'var(--teal-50)', borderColor: 'var(--teal-100)' }}>
-            <h2 className="section-title" style={{ marginBottom: 4 }}>혹시, 당신도?</h2>
-            <p className="section-sub">‘복지 대상자’라는 말은 낯설어도 괜찮아요. 이런 하루를 보내고 있다면 —</p>
-            <div className="stack" style={{ gap: 8 }}>
-              {SIGNS.map((s) => (
-                <div key={s} className="row" style={{ gap: 10, color: 'var(--teal-800)' }}>
-                  <span aria-hidden style={{ color: 'var(--teal-500)', fontWeight: 800 }}>✓</span>
-                  <span>{s}</span>
-                </div>
-              ))}
-            </div>
-            <div className="row" style={{ gap: 12, marginTop: 'var(--sp-5)', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" onClick={startFind}>받을 수 있는 지원 찾아보기</button>
-              <span className="muted" style={{ fontSize: 14 }}>익명으로, 몇 가지만 답하면 돼요.</span>
-            </div>
-          </div>
-        </section>
-      )}
-
       {/* 전체 기능 소개 */}
-      <section className="container page">
+      <section className="container" style={{ padding: 'var(--sp-6) 0 var(--sp-7)' }}>
         <div className="grid axis-grid">
           {AXES.map((a) => (
             <Link key={a.to} to={a.to} className="card card-hover axis-card" style={{ alignItems: 'center', textAlign: 'center' }}>

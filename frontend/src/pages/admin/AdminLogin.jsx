@@ -37,7 +37,7 @@ export default function AdminLogin() {
             <input type="password" className={`input ${err.pw ? 'error' : ''}`} placeholder="••••••••" value={form.pw} onChange={set('pw')} />{err.pw && <span className="err">{err.pw}</span>}</div>
           <button className="btn btn-primary btn-block btn-lg" disabled={busy}>{busy ? '로그인 중…' : '로그인'}</button>
         </form>
-        <p className="hint center" style={{ marginTop: 12 }}>데모 관리자 계정 — 아이디 <b>1234</b> · 비밀번호 <b>1234</b></p>
+        <p className="hint center" style={{ marginTop: 12 }}>관리자 권한(<code>is_admin</code>) 계정으로 로그인하세요.</p>
         <div className="center" style={{ marginTop: 12 }}><Link to="/" className="muted" style={{ fontSize: 13 }}>← 사용자 사이트로</Link></div>
       </div>
     </div>

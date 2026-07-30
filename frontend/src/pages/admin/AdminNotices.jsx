@@ -60,14 +60,14 @@ export default function AdminNotices() {
         <Async state={state}>
           {() => (
             <table className="tbl">
-              <thead><tr><th style={{ width: 54 }}>No</th><th style={{ width: 92 }}>유형</th><th>제목</th><th style={{ width: 112 }}>작성일</th><th style={{ width: 88 }}>조회</th><th style={{ width: 90 }}>상태</th></tr></thead>
+              <thead><tr><th style={{ width: 54 }}>No</th><th style={{ width: 104 }}>유형</th><th>제목</th><th style={{ width: 112 }}>작성일</th><th style={{ width: 88 }}>조회</th><th style={{ width: 96 }}>상태</th></tr></thead>
               <tbody>
                 {view.length === 0 ? (
                   <tr><td colSpan={6} className="muted center" style={{ padding: 20 }}>조건에 맞는 공지가 없어요.</td></tr>
                 ) : view.map((n) => (
                   <tr key={n.id}>
                     <td className="muted">{n.id.replace('N-', '')}</td>
-                    <td><span className={`badge ${typeBadge[n.type]}`}>{n.type}</span></td>
+                    <td><span className={`badge ${typeBadge[n.type]}`} style={{ whiteSpace: 'nowrap' }}>{n.type}</span></td>
                     <td>
                       <button onClick={() => nav(`/admin/notices/${n.id}`)}
                         style={{ fontWeight: 600, background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'var(--ink)', textAlign: 'left', textDecoration: 'underline', textDecorationColor: 'var(--teal-200)' }}>{n.title}</button>
@@ -77,7 +77,7 @@ export default function AdminNotices() {
                     <td>
                       <button onClick={() => toggleStatus(n.id)} title="클릭하면 활성/비활성 전환"
                         className={`badge ${n.status === '활성' ? 'badge-teal' : 'badge-gray'}`}
-                        style={{ cursor: 'pointer', border: 0 }}>{n.status}</button>
+                        style={{ cursor: 'pointer', border: 0, whiteSpace: 'nowrap' }}>{n.status}</button>
                     </td>
                   </tr>
                 ))}

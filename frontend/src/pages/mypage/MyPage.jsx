@@ -14,7 +14,7 @@ function Info() {
   const { user } = useAuth()
   const [edit, setEdit] = useState(false)
   const toast = useToast()
-  const rows = [['이름', user?.name], ['생년월일', user?.birth], ['연락처', user?.phone], ['지역', user?.region]]
+  const rows = [['아이디', user?.username], ['생년월일', user?.birthdate], ['연락처', user?.phone_number], ['지역', user?.region_sido]]
   return (
     <div className="card card-pad">
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
@@ -24,7 +24,7 @@ function Info() {
       {rows.map(([k, v]) => (
         <div key={k} className="list-row">
           <span className="muted">{k}</span>
-          {edit && k !== '생년월일' ? <input className="input" style={{ maxWidth: 260 }} defaultValue={v} /> : <span style={{ fontWeight: 600 }}>{v}</span>}
+          {edit && k !== '아이디' && k !== '생년월일' ? <input className="input" style={{ maxWidth: 260 }} defaultValue={v} /> : <span style={{ fontWeight: 600 }}>{v || '—'}</span>}
         </div>
       ))}
       {toast.node}
@@ -160,7 +160,7 @@ export default function MyPage() {
   if (!user) return <Navigate to="/login" replace />
   return (
     <div className="container page">
-      <PageHead title="마이페이지" sub={`${user.nickname} 님, 안녕하세요.`} />
+      <PageHead title="마이페이지" sub={`${user.username || ''} 님, 안녕하세요.`} />
       <div className="side-layout">
         <aside className="side-nav">
           {TABS.map((t) => <NavLink key={t.to} to={t.to} end={t.end}>{t.label}</NavLink>)}

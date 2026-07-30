@@ -35,13 +35,14 @@ export default function Login() {
       <form onSubmit={submit}>
         <div className="field">
           <label>아이디<span className="req">*</span></label>
-          <input className={`input ${err.id ? 'error' : ''}`} placeholder="user1234" value={form.id} onChange={set('id')} />
+          <input className={`input ${err.id ? 'error' : ''}`} value={form.id} onChange={set('id')} />
           {err.id && <span className="err">{err.id}</span>}
         </div>
         <div className="field">
           <label>비밀번호<span className="req">*</span></label>
-          <input type="password" className={`input ${err.pw ? 'error' : ''}`} placeholder="••••••••" value={form.pw} onChange={set('pw')} />
+          <input type="password" className={`input ${err.pw ? 'error' : ''}`} value={form.pw} onChange={set('pw')} />
           {err.pw && <span className="err">{err.pw}</span>}
+          <span className="hint">비밀번호 8자 이상</span>
         </div>
         <button className="btn btn-primary btn-block btn-lg" disabled={busy}>{busy ? '로그인 중…' : '로그인'}</button>
       </form>
@@ -50,7 +51,7 @@ export default function Login() {
         <span style={{ color: 'var(--line)' }}>|</span>
         <Link to="/find-pw" className="muted">비밀번호 찾기</Link>
       </div>
-      <p className="hint center" style={{ marginTop: 14 }}>데모: 아이디·비밀번호 아무거나 넣어도 로그인돼요.</p>
+      <p className="hint center" style={{ marginTop: 14 }}>가입한 계정으로 로그인해 주세요.</p>
     </AuthShell>
   )
 }

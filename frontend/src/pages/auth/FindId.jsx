@@ -3,19 +3,19 @@ import { Link } from 'react-router-dom'
 import { findId } from '../../api/auth.js'
 import { Modal } from '../../components/ui/index.jsx'
 import AuthShell from './AuthShell.jsx'
+import { formatBirth, okBirth, formatPhone, okPhone } from '../../utils/form.js'
 
 export default function FindId() {
   const [form, setForm] = useState({ birth: '', phone: '' })
   const [err, setErr] = useState({})
   const [result, setResult] = useState(null)
   const [notFound, setNotFound] = useState(false)
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
   const submit = async (e) => {
     e.preventDefault()
     const er = {}
-    if (!form.birth) er.birth = '생년월일을 입력해주세요'
-    if (!form.phone) er.phone = '전화번호를 입력해주세요'
+    if (!okBirth(form.birth)) er.birth = '생년월일 8자리를 입력해주세요 (예: 2004-03-15)'
+    if (!okPhone(form.phone)) er.phone = '연락처 형식이 올바르지 않아요 (예: 010-1234-5678)'
     setErr(er)
     if (Object.keys(er).length) return
     try {
@@ -29,9 +29,11 @@ export default function FindId() {
       foot={<Link to="/login" style={{ color: 'var(--teal-600)', fontWeight: 700 }}>로그인으로 돌아가기</Link>}>
       <form onSubmit={submit}>
         <div className="field"><label>생년월일<span className="req">*</span></label>
-          <input type="date" className={`input ${err.birth ? 'error' : ''}`} value={form.birth} onChange={set('birth')} />{err.birth && <span className="err">{err.birth}</span>}</div>
+          <input className={`input ${err.birth ? 'error' : ''}`} placeholder="2004-03-15" maxLength={10} inputMode="numeric"
+            value={form.birth} onChange={(e) => setForm((f) => ({ ...f, birth: formatBirth(e.target.value) }))} />{err.birth && <span className="err">{err.birth}</span>}</div>
         <div className="field"><label>전화번호<span className="req">*</span></label>
-          <input className={`input ${err.phone ? 'error' : ''}`} placeholder="01012345678" value={form.phone} onChange={set('phone')} />{err.phone && <span className="err">{err.phone}</span>}</div>
+          <input className={`input ${err.phone ? 'error' : ''}`} placeholder="010-0000-0000" maxLength={13} inputMode="numeric"
+            value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: formatPhone(e.target.value) }))} />{err.phone && <span className="err">{err.phone}</span>}</div>
         <button className="btn btn-primary btn-block btn-lg">아이디 찾기</button>
       </form>
       {result && (

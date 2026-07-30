@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 // 인증 화면 공통 껍데기: 좌측 브랜드 소개 + 우측 폼
 export default function AuthShell({ title, sub, children, foot }) {
   return (
-    <div className="container page" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-7)', alignItems: 'center', maxWidth: 900 }}>
+    <div className="container page" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-7)', alignItems: 'center', maxWidth: 1040, marginTop: 'var(--sp-6)' }}>
       <div className="auth-aside" style={{ background: 'linear-gradient(160deg,var(--teal-50),var(--sand-50))', borderRadius: 'var(--radius-lg)', padding: 'var(--sp-7)', border: '1px solid var(--line)' }}>
         <Link to="/" className="brand" style={{ fontSize: 24 }}><span className="dot" />이음</Link>
         <h2 style={{ marginTop: 16, fontSize: 24, letterSpacing: '-.02em' }}>덜다 · 잇다 · 나누다</h2>
@@ -17,7 +17,7 @@ export default function AuthShell({ title, sub, children, foot }) {
       <div>
         <h1 className="section-title" style={{ fontSize: 26 }}>{title}</h1>
         {sub && <p className="section-sub">{sub}</p>}
-        <div className="card card-pad">{children}</div>
+        <div className="card card-pad" style={{ padding: 'var(--sp-6)' }}>{children}</div>
         {foot && <div className="center muted" style={{ marginTop: 16, fontSize: 14 }}>{foot}</div>}
       </div>
     </div>

@@ -5,19 +5,6 @@
 //     화면(pages/components)은 한 줄도 손대지 않는다. (mock → real 교체 지점)
 // ============================================================================
 
-// ---------- 사용자 (덜다 정책찾기 기본정보 자동입력용) ----------
-export const currentUser = {
-  id: 'user1234',
-  nickname: '수민',
-  name: '강수민',
-  birth: '2001-03-14',
-  age: 24,
-  phone: '010-1234-5678',
-  region: '서울시 성북구',
-  gender: '여자',
-  email: 'sumin@example.com',
-}
-
 // ---------- 덜다 · 맞춤 지원 정책 (rule 기반 추천 결과) ----------
 // fit: best(매우 적합) / good(적합) / rec(추천) / ref(참고)
 export const policies = [
@@ -103,51 +90,8 @@ export const popularPolicies = [
 ]
 
 
-// ---------- 잇다 · 인기 있는 무료 강좌 (즐겨찾기 많이 받은 순 · mock) ----------
-export const popularCourses = [
-  { id: 'L-001', title: '비전공자를 위한 웹 개발 입문', provider: 'K-MOOC', favCount: 842, url: 'https://www.kmooc.kr' },
-  { id: 'L-005', title: '사회복지 현장의 이해', provider: 'K-MOOC', favCount: 631, url: 'https://www.kmooc.kr' },
-  { id: 'L-002', title: '데이터 분석 첫걸음 (파이썬)', provider: '늘배움', favCount: 574, url: 'https://www.lifelongedu.go.kr' },
-  { id: 'L-006', title: '노인 돌봄 기초', provider: '늘배움', favCount: 489, url: 'https://www.lifelongedu.go.kr' },
-  { id: 'L-003', title: 'UX/UI 디자인 기초', provider: 'K-MOOC', favCount: 402, url: 'https://www.kmooc.kr' },
-]
 
-// ---------- 잇다 · 추천 엔진용 강좌 풀 (임베딩 유사도 mock) ----------
-// keywords : 목표 문장과 겹치면 유사도가 오른다.
-// cat      : 되묻기(ITD-102) 선택지로 쓰는 '사용자 언어' 분류 (K-MOOC 대분류를 그대로 쓰지 않음).
-// order    : 미래설계지도 배움 순서(1 기초 → 3 현장). hours : 학습시간(숫자). baseSim : 기본 유사도.
-export const learnPool = [
-  { id: 'L-101', title: '사회복지 현장의 이해', provider: 'K-MOOC', hours: 15, cat: '복지 현장', order: 1, baseSim: 0.72,
-    reason: '복지의 기초를 처음부터 잡아줘요', url: 'https://www.kmooc.kr',
-    keywords: ['복지', '사회복지', '돕', '도움', '사람', '현장', '봉사'] },
-  { id: 'L-102', title: '노인 돌봄 기초', provider: 'K-MOOC', hours: 12, cat: '어르신 돌봄', order: 2, baseSim: 0.70,
-    reason: '어르신 돌봄 실무로 바로 연결돼요', url: 'https://www.kmooc.kr',
-    keywords: ['돌봄', '노인', '어르신', '간병', '요양', '부모', '엄마', '아빠', '할머니', '할아버지', '사람', '도움', '돕'] },
-  { id: 'L-103', title: '돌봄 대화의 기술', provider: 'K-MOOC', hours: 8, cat: '어르신 돌봄', order: 3, baseSim: 0.66,
-    reason: '현장에서 먼저 필요한 소통 능력이에요', url: 'https://www.kmooc.kr',
-    keywords: ['돌봄', '대화', '소통', '어르신', '정서', '마음'] },
-  { id: 'L-104', title: '심리상담의 기초', provider: '늘배움', hours: 20, cat: '마음 상담', order: 1, baseSim: 0.68,
-    reason: '마음을 돌보는 상담의 기본기를 다뤄요', url: 'https://www.lifelongedu.go.kr',
-    keywords: ['상담', '마음', '심리', '정신', '정서', '위로', '들어주', '사람', '도움', '돕'] },
-  { id: 'L-105', title: '아동·청소년 이해와 지도', provider: 'K-MOOC', hours: 18, cat: '아동·청소년', order: 1, baseSim: 0.64,
-    reason: '아이들과 함께하는 일의 출발점이에요', url: 'https://www.kmooc.kr',
-    keywords: ['아동', '청소년', '아이', '교육', '학생', '보육', '어린이'] },
-  { id: 'L-106', title: '지역사회 복지의 이해', provider: 'K-MOOC', hours: 14, cat: '복지 현장', order: 2, baseSim: 0.63,
-    reason: '복지를 지역·현장 관점으로 넓혀줘요', url: 'https://www.kmooc.kr',
-    keywords: ['복지', '지역', '사회', '현장', '공동체', '이웃'] },
-  { id: 'L-107', title: '요양보호사 실무 입문', provider: '늘배움', hours: 24, cat: '어르신 돌봄', order: 3, baseSim: 0.69,
-    reason: '요양보호 현장 실무를 준비해요', url: 'https://www.lifelongedu.go.kr',
-    keywords: ['요양', '요양보호사', '돌봄', '간병', '자격', '노인', '어르신'] },
-  { id: 'L-108', title: '비전공자를 위한 웹 개발 입문', provider: 'K-MOOC', hours: 30, cat: 'IT·개발', order: 1, baseSim: 0.60,
-    reason: '개발자로 성장하는 기초 과정이에요', url: 'https://www.kmooc.kr',
-    keywords: ['개발', '웹', '코딩', 'it', '프로그래밍', '컴퓨터'] },
-]
 
-// 결과 없음(ITD-104)에서 보여줄 '조금 가까운' 대안 강좌
-export const learnNear = [
-  { id: 'L-101', title: '사회복지 현장의 이해', provider: 'K-MOOC', url: 'https://www.kmooc.kr' },
-  { id: 'L-106', title: '지역사회 복지의 이해', provider: 'K-MOOC', url: 'https://www.kmooc.kr' },
-]
 
 // ---------- 나누다 · 동네 자원 (지도 mock) ----------
 export const resources = [
@@ -231,17 +175,6 @@ export let inquiries = [
   { id: 3, title: '회원가입 관련 문의', type: '기타', date: '2026-07-03', status: '접수', body: '가입 연령 제한이 왜 있나요?', answer: '' },
   { id: 2, title: '로그인 안돼요', type: '계정문의', date: '2026-07-02', status: '답변완료', body: '로그인이 안됩니다.', answer: '확인 결과 정상 처리되었습니다.' },
   { id: 1, title: '서비스 이용 문의', type: '서비스문의', date: '2026-07-01', status: '처리중', body: '나누다 지도가 안 보여요.', answer: '' },
-]
-
-// ---------- 관리자 · 대시보드 ----------
-export const dashboardKpis = { totalUsers: 1240, todayLogins: 380, apiFailures: 17, aiRuns: 95 }
-export const aiTrend = [ // 최근 7일 AI 실행 추이
-  { d: '07-01', v: 42 }, { d: '07-02', v: 55 }, { d: '07-03', v: 48 },
-  { d: '07-04', v: 71 }, { d: '07-05', v: 63 }, { d: '07-06', v: 88 }, { d: '07-07', v: 95 },
-]
-export const featureUsage = [ // 기능별 사용량
-  { name: '덜다 정책 추천', v: 420 },
-  { name: '잇다 추천', v: 210 }, { name: '나누다 기관검색', v: 130 },
 ]
 
 // ---------- 관리자 · 회원 목록 ----------

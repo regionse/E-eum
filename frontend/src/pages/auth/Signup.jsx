@@ -23,10 +23,40 @@ export default function Signup() {
   const [step, setStep] = useState(1)
   const [agree, setAgree] = useState({})
   const [over14, setOver14] = useState(false)
-  const [form, setForm] = useState({ id: '', pw: '', pw2: '', birth: '', phone: '', region: '', nickname: '', gender: '선택' })
+  const [form, setForm] = useState({ id: '', pw: '', pw2: '', birth: '', phone: '', region: '' })
   const [err, setErr] = useState({})
   const [done, setDone] = useState(false)
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  // 검증 문구만 뜨고 계속 타이핑되던 문제 해결 — 입력 단계에서 아예 제한한다.
+  const setId = (e) => setForm((f) => ({ ...f, id: e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 10) }))
+  const setBirth = (e) => {
+    const d = e.target.value.replace(/\D/g, '').slice(0, 8)      // YYYYMMDD 8자리 → 연도 4자리 고정
+    const out = d.length > 6 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}`
+      : d.length > 4 ? `${d.slice(0, 4)}-${d.slice(4)}` : d
+    setForm((f) => ({ ...f, birth: out }))
+  }
+  const setPhone = (e) => {
+    const d = e.target.value.replace(/\D/g, '').slice(0, 11)
+    let out = d
+    if (d.startsWith('02')) {                                            // 서울(지역번호 2자리)
+      if (d.length <= 2) out = d
+      else if (d.length <= 6) out = `${d.slice(0, 2)}-${d.slice(2)}`
+      else if (d.length <= 9) out = `${d.slice(0, 2)}-${d.slice(2, 5)}-${d.slice(5)}`   // 02-123-4567
+      else out = `${d.slice(0, 2)}-${d.slice(2, 6)}-${d.slice(6)}`                      // 02-1234-5678
+    } else {                                                             // 휴대폰·기타(3자리)
+      if (d.length <= 3) out = d
+      else if (d.length <= 7) out = `${d.slice(0, 3)}-${d.slice(3)}`
+      else if (d.length <= 10) out = `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`  // 010-123-4567
+      else out = `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`                      // 010-1234-5678
+    }
+    setForm((f) => ({ ...f, phone: out }))
+  }
+  // 실제 번호 체계 허용: 휴대폰 10~11자리 · 유선(02·0XX) 9~11자리 (3-3-4/3-4-4/2-3-4/2-4-4)
+  const okPhone = (s) => {
+    const d = (s || '').replace(/\D/g, '')
+    if (/^01[016-9]/.test(d)) return d.length === 10 || d.length === 11
+    return /^0\d/.test(d) && d.length >= 9 && d.length <= 11
+  }
 
   const allRequired = AGREEMENTS.filter((a) => a.required).every((a) => agree[a.k])
   const toggleAll = () => {
@@ -34,22 +64,35 @@ export default function Signup() {
     setAgree(Object.fromEntries(AGREEMENTS.map((a) => [a.k, v])))
   }
 
+  // 스토리보드 REG-03 규칙: 아이디 4~10 영숫자 · 비번 8~10 영숫자특수 · 14세 이상 · 연락처 형식
   const validateInfo = () => {
     const e = {}
-    if (!form.id) e.id = '아이디를 입력해주세요'
-    if (!form.pw) e.pw = '비밀번호를 입력해주세요'
+    if (!/^[A-Za-z0-9]{4,10}$/.test(form.id)) e.id = '아이디는 영문+숫자 4~10자예요'
+    if (!/^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,10}$/.test(form.pw))
+      e.pw = '비밀번호는 영문·숫자·특수문자 포함 8~10자예요'
     if (form.pw && form.pw !== form.pw2) e.pw2 = '비밀번호가 일치하지 않아요'
-    if (!form.birth) e.birth = '생년월일을 입력해주세요'
-    if (!form.phone) e.phone = '연락처를 입력해주세요'
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.birth)) e.birth = '생년월일 8자리를 입력해주세요 (예: 2004-03-15)'
+    else {
+      const b = new Date(form.birth), now = new Date()
+      const age = (now - b) / (365.25 * 24 * 3600 * 1000)
+      if (isNaN(b.getTime()) || b > now) e.birth = '생년월일을 다시 확인해주세요'
+      else if (age < 14) e.birth = '만 14세 이상만 가입할 수 있어요'
+      else if (age > 120) e.birth = '생년월일을 다시 확인해주세요'
+    }
+    if (!okPhone(form.phone))
+      e.phone = '연락처 형식이 올바르지 않아요 (예: 010-1234-5678)'
     if (!form.region) e.region = '지역을 선택해주세요'
-    if (!form.nickname) e.nickname = '닉네임을 입력해주세요'
     setErr(e)
     return Object.keys(e).length === 0
   }
   const finish = async () => {
     if (!validateInfo()) return
-    await signup(form)
-    setDone(true)
+    try {
+      await signup({ ...form, agree })             // 약관 동의값도 함께 넘긴다(백엔드 필수)
+      setDone(true)
+    } catch (e) {
+      setErr((prev) => ({ ...prev, submit: e.message || '가입에 실패했어요. 잠시 후 다시 시도해 주세요.' }))
+    }
   }
 
   return (
@@ -97,30 +140,28 @@ export default function Signup() {
       {step === 3 && (
         <>
           <div className="field"><label>아이디<span className="req">*</span></label>
-            <input className={`input ${err.id ? 'error' : ''}`} placeholder="영문+숫자 4~10자" value={form.id} onChange={set('id')} />{err.id && <span className="err">{err.id}</span>}</div>
+            <input className={`input ${err.id ? 'error' : ''}`} placeholder="영문+숫자 4~10자" maxLength={10} value={form.id} onChange={setId} />{err.id && <span className="err">{err.id}</span>}
+          <span className="hint"> 4~10자, 영문+숫자 조합</span></div>
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="field"><label>비밀번호<span className="req">*</span></label>
-              <input type="password" className={`input ${err.pw ? 'error' : ''}`} placeholder="••••••••" value={form.pw} onChange={set('pw')} />{err.pw && <span className="err">{err.pw}</span>}</div>
+              <input type="password" className={`input ${err.pw ? 'error' : ''}`} placeholder="••••••••" maxLength={10} value={form.pw} onChange={set('pw')} />{err.pw && <span className="err">{err.pw}</span>}
+              <span className="hint"> 8~10자, 영문·숫자·특수문자 조합 </span>
+            </div>
             <div className="field"><label>비밀번호 확인<span className="req">*</span></label>
-              <input type="password" className={`input ${err.pw2 ? 'error' : ''}`} placeholder="••••••••" value={form.pw2} onChange={set('pw2')} />{err.pw2 && <span className="err">{err.pw2}</span>}</div>
+              <input type="password" className={`input ${err.pw2 ? 'error' : ''}`} placeholder="••••••••" maxLength={10} value={form.pw2} onChange={set('pw2')} />{err.pw2 && <span className="err">{err.pw2}</span>}</div>
           </div>
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="field"><label>생년월일<span className="req">*</span></label>
-              <input type="date" className={`input ${err.birth ? 'error' : ''}`} value={form.birth} onChange={set('birth')} />{err.birth && <span className="err">{err.birth}</span>}</div>
+              <input className={`input ${err.birth ? 'error' : ''}`} placeholder="2004-03-15" maxLength={10} inputMode="numeric" value={form.birth} onChange={setBirth} />{err.birth && <span className="err">{err.birth}</span>}</div>
             <div className="field"><label>연락처<span className="req">*</span></label>
-              <input className={`input ${err.phone ? 'error' : ''}`} placeholder="010-0000-0000" value={form.phone} onChange={set('phone')} />{err.phone && <span className="err">{err.phone}</span>}</div>
+              <input className={`input ${err.phone ? 'error' : ''}`} placeholder="010-0000-0000" maxLength={13} inputMode="numeric" value={form.phone} onChange={setPhone} />{err.phone && <span className="err">{err.phone}</span>}</div>
           </div>
           <div className="field"><label>지역 (시·도)<span className="req">*</span></label>
             <select className="select" value={form.region} onChange={set('region')}>
               <option value="">선택</option>
               {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>{err.region && <span className="err">{err.region}</span>}</div>
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <div className="field"><label>닉네임<span className="req">*</span></label>
-              <input className={`input ${err.nickname ? 'error' : ''}`} placeholder="닉네임" value={form.nickname} onChange={set('nickname')} />{err.nickname && <span className="err">{err.nickname}</span>}</div>
-            <div className="field"><label>성별</label>
-              <select className="select" value={form.gender} onChange={set('gender')}><option>선택</option><option>남자</option><option>여자</option><option>선택 안함</option></select></div>
-          </div>
+          {err.submit && <p className="err" style={{ marginTop: 10 }}>{err.submit}</p>}
           <div className="row" style={{ gap: 10, marginTop: 8 }}>
             <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setStep(2)}>이전</button>
             <button className="btn btn-primary" style={{ flex: 1 }} onClick={finish}>가입 완료</button>

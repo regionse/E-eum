@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { resetPassword } from '../../api/auth.js'
 import { Modal } from '../../components/ui/index.jsx'
 import AuthShell from './AuthShell.jsx'
+import { sanitizeId, formatBirth, okBirth, formatPhone, okPhone } from '../../utils/form.js'
 
 export default function FindPw() {
   const nav = useNavigate()
@@ -15,9 +16,9 @@ export default function FindPw() {
   const verify = (e) => {
     e.preventDefault()
     const er = {}
-    if (!form.id) er.id = '아이디를 입력해주세요'
-    if (!form.birth) er.birth = '생년월일을 입력해주세요'
-    if (!form.phone) er.phone = '전화번호를 입력해주세요'
+    if (!/^[A-Za-z0-9]{4,10}$/.test(form.id)) er.id = '아이디는 영문+숫자 4~10자예요'
+    if (!okBirth(form.birth)) er.birth = '생년월일 8자리를 입력해주세요 (예: 2004-03-15)'
+    if (!okPhone(form.phone)) er.phone = '연락처 형식이 올바르지 않아요 (예: 010-1234-5678)'
     setErr(er)
     if (Object.keys(er).length) return
     setPhase('reset')
@@ -25,12 +26,20 @@ export default function FindPw() {
   const reset = async (e) => {
     e.preventDefault()
     const er = {}
-    if (!form.pw) er.pw = '비밀번호를 입력해주세요'
+    if (!/^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,10}$/.test(form.pw))
+      er.pw = '비밀번호는 영문·숫자·특수문자 포함 8~10자예요'
     if (form.pw !== form.pw2) er.pw2 = '비밀번호가 일치하지 않아요'
     setErr(er)
     if (Object.keys(er).length) return
-    await resetPassword(form)
-    setDone(true)
+    try {
+      // 본인확인(아이디+생년월일+전화번호) + 새 비밀번호 변경을 한 번에 (백엔드가 검증)
+      await resetPassword({ id: form.id, birth: form.birth, phone: form.phone, newPw: form.pw })
+      setDone(true)
+    } catch (e2) {
+      // DB와 안 맞으면 본인확인 단계로 되돌리고 안내
+      setPhase('verify')
+      setErr({ submit: e2?.message || '일치하는 회원 정보를 찾을 수 없어요. 정보를 다시 확인해주세요.' })
+    }
   }
 
   return (
@@ -39,11 +48,12 @@ export default function FindPw() {
       {phase === 'verify' ? (
         <form onSubmit={verify}>
           <div className="field"><label>아이디<span className="req">*</span></label>
-            <input className={`input ${err.id ? 'error' : ''}`} placeholder="user1234" value={form.id} onChange={set('id')} />{err.id && <span className="err">{err.id}</span>}</div>
+            <input className={`input ${err.id ? 'error' : ''}`} placeholder="영문+숫자 4~10자" maxLength={10} value={form.id} onChange={(e) => setForm((f) => ({ ...f, id: sanitizeId(e.target.value) }))} />{err.id && <span className="err">{err.id}</span>}</div>
           <div className="field"><label>생년월일<span className="req">*</span></label>
-            <input type="date" className={`input ${err.birth ? 'error' : ''}`} value={form.birth} onChange={set('birth')} />{err.birth && <span className="err">{err.birth}</span>}</div>
+            <input className={`input ${err.birth ? 'error' : ''}`} placeholder="2004-03-15" maxLength={10} inputMode="numeric" value={form.birth} onChange={(e) => setForm((f) => ({ ...f, birth: formatBirth(e.target.value) }))} />{err.birth && <span className="err">{err.birth}</span>}</div>
           <div className="field"><label>전화번호<span className="req">*</span></label>
-            <input className={`input ${err.phone ? 'error' : ''}`} placeholder="01012345678" value={form.phone} onChange={set('phone')} />{err.phone && <span className="err">{err.phone}</span>}</div>
+            <input className={`input ${err.phone ? 'error' : ''}`} placeholder="010-0000-0000" maxLength={13} inputMode="numeric" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: formatPhone(e.target.value) }))} />{err.phone && <span className="err">{err.phone}</span>}</div>
+          {err.submit && <p className="err" style={{ marginTop: 4, marginBottom: 8 }}>{err.submit}</p>}
           <button className="btn btn-primary btn-block btn-lg">다음</button>
         </form>
       ) : (

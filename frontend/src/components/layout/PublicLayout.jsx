@@ -9,16 +9,6 @@ import { useAuth } from '../../store/auth.jsx'
  *      · 각 축에 마우스를 올리면 → 그 "우측"에 세부 메뉴가 뜬다(flyout)
  */
 
-// 마이페이지 > 서비스: 3축과 각 세부 메뉴
-const AXES = [
-  { key: '덜다', emoji: '📄', to: '/welfare', subs: [{ to: '/welfare/policy', label: '맞춤 제도 찾기' }] },
-  { key: '잇다', emoji: '🌱', to: '/learn', subs: [{ to: '/learn/chat', label: '알맞는 강좌 찾기' }] },
-  { key: '나누다', emoji: '🤝', to: '/share', subs: [
-    { to: '/share/map', label: '전문가 기관 연결' },
-    { to: '/family/diary', label: '돌봄 일지' },
-  ] },
-]
-
 // mock 알림 — 실제 알림 기능이 붙기 전까지 쓰는 예시 데이터
 const NOTIS = [
   { id: 1, txt: '내 조건에 맞는 새 지원제도가 등록됐어요', time: '방금' },
@@ -53,26 +43,13 @@ function NotiBell() {
 function MyPageMenu() {
   return (
     <div className="mypage-wrap">
-      <NavLink to="/mypage" className="btn btn-soft btn-sm">마이페이지 ▾</NavLink>
+      <NavLink to="/mypage" className="btn btn-soft" style={{ fontSize: 15 }}>마이페이지 ▾</NavLink>
       <div className="mypage-menu">
         <div className="grp">계정</div>
         <Link to="/mypage">내정보</Link>
         <Link to="/mypage/consent">동의관리</Link>
         <Link to="/mypage/withdraw">회원탈퇴</Link>
-        <div className="sep" />
-        <div className="grp">서비스</div>
-        {AXES.map((ax) => (
-          <div key={ax.key} className="fly">
-            <Link to={ax.to} className="fly-main">
-              <span>{ax.emoji} {ax.key}</span>
-              <span className="fly-arrow" aria-hidden>›</span>
-            </Link>
-            {/* 우측으로 펼쳐지는 세부 메뉴 */}
-            <div className="fly-menu">
-              {ax.subs.map((s) => <Link key={s.to + s.label} to={s.to}>{s.label}</Link>)}
-            </div>
-          </div>
-        ))}
+        {/* 서비스(잇다·덜다·나누다)는 상단 메뉴/홈에서 진입 — 마이페이지 드롭다운에서 제거(2026-07-29) */}
       </div>
     </div>
   )
@@ -87,6 +64,10 @@ export function Header() {
 
         {/* 공통 메뉴 — 로그인 여부와 무관하게 항상 노출 */}
         <nav className="gnb">
+          <NavLink to="/welfare">덜다</NavLink>
+          <NavLink to="/learn">잇다</NavLink>
+          <NavLink to="/share">나누다</NavLink>
+          <span className="gnb-sep" />
           <NavLink to="/about">소개</NavLink>
           <NavLink to="/notice">공지</NavLink>
           <NavLink to="/inquiry">문의</NavLink>
@@ -97,13 +78,10 @@ export function Header() {
             <>
               <MyPageMenu />
               <NotiBell />
-              <button className="btn btn-plain btn-sm" onClick={logout}>로그아웃</button>
+              <button className="btn btn-plain" style={{ fontSize: 14.5, padding: '9px 16px' }} onClick={logout}>로그아웃</button>
             </>
           ) : (
-            <>
-              <Link to="/login" className="btn btn-plain btn-sm">로그인</Link>
-              <Link to="/signup" className="btn btn-primary btn-sm">회원가입</Link>
-            </>
+            <Link to="/login" className="btn btn-primary">로그인</Link>
           )}
         </div>
       </div>
@@ -117,17 +95,9 @@ export function Footer() {
       <div className="container">
         <div className="brand">이음</div>
         <div className="footer-links">
-          <Link to="/about">서비스 소개</Link>
-          <Link to="/library">자료실</Link>
-          <Link to="/notice">공지사항</Link>
+          <a href="tel:0263530336">가족돌봄청년 지원 전담기구 ☎ 02-6353-0336~9</a>
         </div>
-        {/* 위기 상담 번호 상시 노출 (스토리보드 원칙) */}
-        <div className="helplines">
-          <span>위기상담 · 자살예방 <b>109</b></span>
-          <span>정신건강 <b>1577-0199</b></span>
-          <span>보건복지 <b>129</b></span>
-        </div>
-        <div className="credit">© 2026 이음 · 가족돌봄청년 통합 돌봄 파트너 (해커톤 프로토타입 · mock 데이터)</div>
+        <div className="credit">© 2026 이음 · 가족돌봄청년 통합 돌봄 파트너</div>
       </div>
     </footer>
   )

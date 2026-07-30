@@ -1,13 +1,9 @@
 // ============================================================================
-//  API 클라이언트 — mock/real 교체 지점
-//  지금은 mock 데이터를 인위적 지연과 함께 Promise로 반환한다.
-//  나중에 진짜 백엔드(FastAPI)를 붙일 땐:
-//    1) USE_MOCK = false 로 바꾸고
-//    2) request() 안의 실제 fetch 분기를 사용하면
-//    화면 코드는 그대로 둔 채 데이터 소스만 바뀐다.
+//  API 클라이언트
+//  · request()     : 진짜 백엔드(FastAPI) fetch 래퍼 — 잇다·인증이 여기로 붙는다.
+//  · mockResolve() : 아직 백엔드가 없는 화면(덜다·나누다·공지·문의)의 mock 반환용.
+//  화면(pages)은 api/*.js 만 바라보므로, 백엔드가 생기면 그 반환부만 request()로 바꾸면 된다.
 // ============================================================================
-
-export const USE_MOCK = true
 
 // 실제 API 지연을 흉내 내 로딩 UI를 진짜처럼 검증할 수 있게 한다.
 export function delay(ms = 700) {
@@ -24,62 +20,37 @@ export async function mockResolve(data, ms = 700, failRate = 0) {
   return typeof data === 'function' ? data() : JSON.parse(JSON.stringify(data))
 }
 
-// 진짜 백엔드 붙일 때 쓸 fetch 래퍼 (지금은 미사용).
-export async function request(
-  path,
-  {
-    method = 'GET',
-    body,
-    signal,
-  } = {},
-) {
-  const response = await fetch(`/api${path}`, {
+// ── JWT 토큰 저장/조회 (localStorage). request()가 자동으로 Authorization 헤더에 싣는다. ──
+const TOKEN_KEY = 'eum_token'
+export function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t) }
+export function getToken() { return localStorage.getItem(TOKEN_KEY) }
+export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
+
+// 진짜 백엔드(FastAPI) fetch 래퍼. 토큰이 있으면 Bearer 로 싣고, 백엔드 detail 문구를 그대로 올린다.
+export async function request(path, { method = 'GET', body } = {}) {
+  const token = getToken()
+  const res = await fetch(`/api${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body:
-      body !== undefined
-        ? JSON.stringify(body)
-        : undefined,
-    signal,
+    body: body ? JSON.stringify(body) : undefined,
   })
-
-  const contentType =
-    response.headers.get('content-type') || ''
-
-  const data = contentType.includes(
-    'application/json',
-  )
-    ? await response.json()
-    : null
-
-  if (!response.ok) {
-    let message =
-      `요청에 실패했습니다. (${response.status})`
-
-    if (typeof data?.detail === 'string') {
-      message = data.detail
-    } else if (data?.detail?.message) {
-      message = data.detail.message
-    } else if (Array.isArray(data?.detail)) {
-      message = data.detail
-        .map((error) => {
-          const field = error.loc
-            ?.filter(
-              (value) => value !== 'body',
-            )
-            .join('.')
-
-          return field
-            ? `${field}: ${error.msg}`
-            : error.msg
-        })
-        .join('\n')
-    }
-
-    throw new Error(message)
+  if (res.status === 401) {                       // 만료·위조 → 토큰 정리 후 알림
+    clearToken()
+    throw new Error('로그인이 필요하거나 만료되었어요. 다시 로그인해 주세요.')
   }
-
-  return data
+  if (!res.ok) {                                  // 백엔드가 준 detail(409 중복·400 약관·422 검증)을 그대로
+    let msg = `요청 실패 (${res.status})`
+    try {
+      const j = await res.json()
+      if (j && j.detail) {
+        msg = typeof j.detail === 'string' ? j.detail
+            : Array.isArray(j.detail) ? (j.detail[0]?.msg || msg) : msg
+      }
+    } catch { /* 응답 본문 없음 */ }
+    throw new Error(msg)
+  }
+  return res.json()
 }

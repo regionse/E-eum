@@ -7,7 +7,6 @@ import AdminLayout from './components/layout/AdminLayout.jsx'
 import Home from './pages/Home.jsx'
 import About from './pages/About.jsx'
 import Alerts from './pages/Alerts.jsx'
-import Library from './pages/library/Library.jsx'
 import NoticeList from './pages/notice/NoticeList.jsx'
 import NoticeDetail from './pages/notice/NoticeDetail.jsx'
 import Inquiry from './pages/inquiry/Inquiry.jsx'
@@ -38,7 +37,6 @@ import CareDiary from './pages/family/CareDiary.jsx'
 import CareDiaryDetail from './pages/family/CareDiaryDetail.jsx'
 // 관리자
 import AdminLogin from './pages/admin/AdminLogin.jsx'
-import Dashboard from './pages/admin/Dashboard.jsx'
 import AdminUsers from './pages/admin/AdminUsers.jsx'
 import AdminNotices from './pages/admin/AdminNotices.jsx'
 import AdminNoticeEdit from './pages/admin/AdminNoticeEdit.jsx'
@@ -64,7 +62,6 @@ export default function App() {
         <Route element={<PublicLayout />}>
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
-          <Route path="/library" element={<Library />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/notice" element={<NoticeList />} />
           <Route path="/notice/:id" element={<NoticeDetail />} />
@@ -97,7 +94,7 @@ export default function App() {
         {/* 관리자 */}
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route element={<AdminLayout />}>
-          <Route path="/admin" element={<Dashboard />} />
+          <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/admin/notices" element={<AdminNotices />} />
           <Route path="/admin/notices/new" element={<AdminNoticeEdit />} />

@@ -51,7 +51,7 @@ export default function AdminInquiries() {
         <Async state={state}>
           {() => (
             <table className="tbl">
-              <thead><tr><th style={{ width: 60 }}>번호</th><th>제목</th><th style={{ width: 110 }}>유형</th><th style={{ width: 112 }}>문의일</th><th style={{ width: 96 }}>상태</th></tr></thead>
+              <thead><tr><th style={{ width: 60 }}>번호</th><th>제목</th><th style={{ width: 110 }}>유형</th><th style={{ width: 112 }}>문의일</th><th style={{ width: 104 }}>상태</th></tr></thead>
               <tbody>
                 {view.length === 0 ? (
                   <tr><td colSpan={5} className="muted center" style={{ padding: 20 }}>조건에 맞는 문의가 없어요.</td></tr>
@@ -59,9 +59,9 @@ export default function AdminInquiries() {
                   <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/admin/inquiries/${r.id}`)}>
                     <td className="muted">{r.id}</td>
                     <td style={{ fontWeight: 600, textDecoration: 'underline', textDecorationColor: 'var(--teal-200)' }}>{r.title}</td>
-                    <td className="muted">{r.type}</td>
+                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{r.type}</td>
                     <td className="muted">{r.date}</td>
-                    <td><span className={`badge ${statusBadge[r.status]}`}>{r.status}</span></td>
+                    <td><span className={`badge ${statusBadge[r.status]}`} style={{ whiteSpace: 'nowrap' }}>{r.status}</span></td>
                   </tr>
                 ))}
               </tbody>

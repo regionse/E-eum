@@ -1,6 +1,8 @@
 import { createContext, useContext, useState } from 'react'
+import { clearToken } from '../api/client.js'
 
-// mock 로그인 상태. 새로고침에도 유지되도록 localStorage 사용.
+// 로그인 상태(user·admin). 새로고침에도 유지되도록 localStorage 사용.
+//  JWT 토큰은 client.js(eum_token)가 소유하고, 여기선 로그아웃 때 같이 비운다.
 const AuthCtx = createContext(null)
 
 export function AuthProvider({ children }) {
@@ -14,9 +16,13 @@ export function AuthProvider({ children }) {
   const [familyLinked, setFamilyLinked] = useState(() => localStorage.getItem('eum_family') === '1')
 
   const login = (u) => { setUser(u); localStorage.setItem('eum_user', JSON.stringify(u)) }
-  const logout = () => { setUser(null); localStorage.removeItem('eum_user') }
+  const logout = () => {
+    setUser(null); localStorage.removeItem('eum_user'); clearToken()
+    // ★ 로그아웃 시 잇다 대화 draft 전부 삭제(공용 PC에서 다음 사용자에게 안 남게)
+    try { Object.keys(localStorage).filter((k) => k.startsWith('eum_itda_chat')).forEach((k) => localStorage.removeItem(k)) } catch { /* noop */ }
+  }
   const adminLogin = (a) => { setAdmin(a); localStorage.setItem('eum_admin', JSON.stringify(a)) }
-  const adminLogout = () => { setAdmin(null); localStorage.removeItem('eum_admin') }
+  const adminLogout = () => { setAdmin(null); localStorage.removeItem('eum_admin'); clearToken() }
   const linkFamily = () => { setFamilyLinked(true); localStorage.setItem('eum_family', '1') }
   const unlinkFamily = () => { setFamilyLinked(false); localStorage.removeItem('eum_family') }
 
