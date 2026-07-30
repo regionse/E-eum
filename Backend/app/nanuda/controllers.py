@@ -1,7 +1,9 @@
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from asyncio import to_thread
 from datetime import (
     date,
     datetime,
@@ -11,7 +13,7 @@ from datetime import (
 import secrets
 
 
-from nanuda.models import (
+from .models import (
     weekly_analysis_letters, 
     weekly_care_analyses,
     care_group_members, 
@@ -22,51 +24,53 @@ from nanuda.models import (
     )
 
 
-from nanuda.weekly_care_analyses.analysis_rules import apply_weekly_rules
-from nanuda.weekly_care_analyses.weekly_analyzer import analyze_weekly_letters
-from nanuda.weekly_care_analyses.anomaly_query import create_anomaly_search_text
-from nanuda.weekly_care_analyses.comparison import compare_weekly_analyses
+from .weekly_care_analyses.analysis_rules import apply_weekly_rules
+from .weekly_care_analyses.weekly_analyzer import analyze_weekly_letters
+from .weekly_care_analyses.anomaly_query import create_anomaly_search_text
+from .weekly_care_analyses.comparison import compare_weekly_analyses
 
-from nanuda.facility_knowledge.search_pinecone import search_facility_type
-from nanuda.facility_knowledge.vector_decision import decide_final_result
+from .facility_knowledge.search_pinecone import search_facility_type
+from .facility_knowledge.vector_decision import decide_final_result
 
-from nanuda.support_facilities.nearby_recommendation import recommend_nearest_facility
-from nanuda.support_facilities.kakao_local import search_facility_on_kakao
+from .support_facilities.nearby_recommendation import recommend_nearest_facility
+from .support_facilities.kakao_local import search_facility_on_kakao
 
 
 
-from nanuda.schemas import (
+from .schemas import (
     InviteCodeCreate,
     InviteCodeJoin,
     FamilyLetterCreate,
     CareGroupCreate,
 )
-from user.models import user_table######
+from app.user.models import user_table
 
 
 
 
-def create_care_group(
-    db: Session,
+async def create_care_group(
+    db: AsyncSession,
     data: CareGroupCreate,
 ):
     # 사용자가 실제로 존재하는지 확인
-    user = db.execute(
-        select(user_table.c.user_id).where(
-            user_table.c.user_id == data.user_id
+    result = await db.execute(
+        select(user_table.user_id).where(
+            user_table.user_id == data.user_id
         )
-    ).first()
+    )
+    user = result.first()
 
     if user is None:
         raise HTTPException(
             status_code=404,
             detail="사용자를 찾을 수 없습니다.",
         )
-    existing_member = db.execute(
+    result = await db.execute(
         select(care_group_members).where(
             care_group_members.user_id == data.user_id
         )
-    ).scalar_one_or_none()
+    )
+    existing_member = result.scalar_one_or_none()
 
     if existing_member is not None:
         raise HTTPException(
@@ -83,7 +87,7 @@ def create_care_group(
         db.add(new_group)
 
         # INSERT를 실행해 care_groups_id를 생성
-        db.flush()
+        await db.flush()
 
         # 방 생성자를 구성원으로 자동 등록
         owner_member = care_group_members(
@@ -94,8 +98,8 @@ def create_care_group(
         )
 
         db.add(owner_member)
-        db.commit()
-
+        await db.commit()
+        await db.refresh(new_group)
         return {
             "care_group_id": new_group.care_groups_id,
             "owner_user_id": data.user_id,
@@ -103,18 +107,18 @@ def create_care_group(
         }
 
     except SQLAlchemyError:
-        db.rollback()
+        await db.rollback()
 
         raise HTTPException(
             status_code=500,
             detail="가족방 생성 중 데이터베이스 오류가 발생했습니다.",
         )
     
-def get_my_care_groups(
-    db: Session,
+async def get_my_care_groups(
+    db: AsyncSession,
     user_id: int,
 ):
-    result = db.execute(
+    result = await db.execute(
         select(
             care_groups.care_groups_id,
             care_groups.user_id,
@@ -146,14 +150,13 @@ def get_my_care_groups(
         for row in rows
     ]
 
-
-def get_care_group_members(
-    db: Session,
+async def get_care_group_members(
+    db: AsyncSession,
     care_group_id: int,
     user_id: int,
 ):
     # 요청한 사용자가 해당 가족방 구성원인지 확인
-    requesting_member = db.get(
+    requesting_member = await db.get(
         care_group_members,
         (
             user_id,
@@ -167,7 +170,7 @@ def get_care_group_members(
             detail="가족방 구성원만 구성원 목록을 확인할 수 있습니다.",
         )
 
-    result = db.execute(
+    result = await db.execute(
         select(
             care_group_members.user_id,
             care_group_members.relationships,
@@ -181,7 +184,6 @@ def get_care_group_members(
             care_group_members.joined_at.asc()
         )
     )
-
     rows = result.all()
 
     return [
@@ -196,13 +198,14 @@ def get_care_group_members(
 # ==========================================================
 
 # ==========================================================
-def _check_member(db: Session, user_id: int, care_group_id: int) -> None:
-    member = db.execute(
+async def _check_member(db: AsyncSession, user_id: int, care_group_id: int) -> None:
+    result = await db.execute(
         select(care_group_members).where(
             care_group_members.user_id == user_id,
             care_group_members.care_groups_id == care_group_id,
         )
-    ).scalar_one_or_none()
+    )
+    member = result.scalar_one_or_none()
 
     if member is None:
         raise HTTPException(
@@ -211,24 +214,54 @@ def _check_member(db: Session, user_id: int, care_group_id: int) -> None:
         )
 
 
-def create_family_letter(db: Session, data: FamilyLetterCreate):
-    _check_member(db, data.user_id, data.care_group_id)
+async def create_family_letter(
+        db: AsyncSession, 
+        data: FamilyLetterCreate
+    ):
+    await _check_member(
+        db, 
+        data.user_id, 
+        data.care_group_id
+        )
+    content = data.content.strip()
+
+    if not content:
+        raise HTTPException(
+            status_code=422,
+            detail="가족편지 내용을 입력해주세요.",
+        )
 
     letter = care_group_letters(
         user_id=data.user_id,
         care_group_id=data.care_group_id,
-        content=data.content.strip(),
+        content=content,
     )
-    db.add(letter)
-    db.commit()
-    db.refresh(letter)
-    return letter
+    try:
+        db.add(letter)
+        await db.commit()
+        await db.refresh(letter)
+        return letter
+
+    except SQLAlchemyError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="가족편지 저장 중 오류가 발생했습니다.",
+        ) from error
 
 
-def list_family_letters(db: Session, care_group_id: int, user_id: int,page: int, size: int,):
-    _check_member(db, user_id, care_group_id)
+async def list_family_letters(
+        db: AsyncSession, 
+        care_group_id: int, 
+        user_id: int,page: int, 
+        size: int,
+    ):
+    await _check_member(
+        db, user_id, 
+        care_group_id
+    )
     offset = (page - 1) * size
-    result = db.execute(
+    result = await db.execute(
         select(care_group_letters)
         .where(care_group_letters.care_group_id == care_group_id)
         .order_by(care_group_letters.created_at.desc())
@@ -238,24 +271,24 @@ def list_family_letters(db: Session, care_group_id: int, user_id: int,page: int,
     return result.scalars().all()
 
 
-def get_family_letter(db: Session, letter_id: int, user_id: int):
-    letter = db.get(care_group_letters, letter_id)
+async def get_family_letter(db: AsyncSession, letter_id: int, user_id: int):
+    letter = await db.get(care_group_letters, letter_id)
     if letter is None:
         raise HTTPException(status_code=404, detail="가족편지를 찾을 수 없습니다.")
 
-    _check_member(db, user_id, letter.care_group_id)
+    await _check_member(db, user_id, letter.care_group_id)
     return letter
 # =======================================================
 
 # =======================================================
 
 # 초대코드 생성 함수
-def create_invite_code(
-    db: Session,
+async def create_invite_code(
+    db: AsyncSession,
     data: InviteCodeCreate,
 ):
     # 가족방 조회
-    care_group = db.get(
+    care_group = await db.get(
         care_groups,
         data.care_group_id,
     )
@@ -275,7 +308,7 @@ def create_invite_code(
         )
 
     # 기존 활성 초대코드 비활성화
-    result = db.execute(
+    result = await db.execute(
         select(invite_codes).where(
             invite_codes.care_groups_id == data.care_group_id,
             invite_codes.is_active.is_(True),
@@ -303,19 +336,26 @@ def create_invite_code(
         is_active=True,
     )
 
-    db.add(invite)
-    db.commit()
-    db.refresh(invite)
+    try:
+        db.add(invite)
+        await db.commit()
+        await db.refresh(invite)
+        return invite
 
-    return invite
+    except SQLAlchemyError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="초대코드 생성 중 오류가 발생했습니다.",
+        ) from error
 
 # 참여 함수
-def join_care_group(
-    db: Session,
+async def join_care_group(
+    db: AsyncSession,
     data: InviteCodeJoin,
 ):
     # 초대코드 조회
-    result = db.execute(
+    result = await db.execute(
         select(invite_codes).where(
             invite_codes.invite_code == data.invite_code
         )
@@ -342,7 +382,14 @@ def join_care_group(
         and invite.expires_at < datetime.now()
     ):
         invite.is_active = False
-        db.commit()
+        try:
+            await db.commit()
+        except SQLAlchemyError as error:
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="초대코드 상태 변경 중 오류가 발생했습니다.",
+            ) from error
 
         raise HTTPException(
             status_code=400,
@@ -350,22 +397,17 @@ def join_care_group(
         )
 
     # 이미 참여한 사용자인지 확인
-    existing_member = db.execute(
+    result = await db.execute(
         select(care_group_members).where(
             care_group_members.user_id == data.user_id
         )
-    ).scalar_one_or_none()
+    )
+    existing_member = result.scalar_one_or_none()
 
     if existing_member is not None:
         raise HTTPException(
             status_code=409,
             detail="이미 참여 중인 가족방이 있습니다.",
-        )
-
-    if existing_member is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="이미 참여한 가족방입니다.",
         )
 
     # 가족방 구성원 추가
@@ -376,13 +418,21 @@ def join_care_group(
         relationships=data.relationships,
     )
 
-    db.add(new_member)
-    db.commit()
+    try:
+        db.add(new_member)
+        await db.commit()
 
-    return {
-        "message": "가족방에 참여했습니다.",
-        "care_group_id": invite.care_groups_id,
-    }
+        return {
+            "message": "가족방에 참여했습니다.",
+            "care_group_id": invite.care_groups_id,
+        }
+
+    except SQLAlchemyError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="가족방 참여 중 오류가 발생했습니다.",
+        ) from error
 # ===================================================
 
 # ===================================================
@@ -394,8 +444,8 @@ ALLOWED_FACILITY_TYPES = {
 }
 
 
-def get_facility_map_information(
-    db: Session,
+async def get_facility_map_information(
+    db: AsyncSession,
     facility_id: int,
 ) -> dict:
     statement = (
@@ -406,20 +456,21 @@ def get_facility_map_information(
         )
     )
 
-    facility = db.execute(
-        statement
-    ).scalar_one_or_none()
+    result = await db.execute(statement)
+    facility = result.scalar_one_or_none()
 
     if facility is None:
         raise LookupError(
             "지원 기관을 찾을 수 없습니다."
         )
 
-    place = search_facility_on_kakao(
+    place = await to_thread(
+        search_facility_on_kakao,
         facility_name=facility.facility_name,
         address=facility.address,
         phone=facility.phone,
     )
+    
 
     return {
         "facility_id": facility.facility_id,
@@ -432,8 +483,8 @@ def get_facility_map_information(
 
 
 
-def get_facilities_by_type(
-    db: Session,
+async def get_facilities_by_type(
+    db: AsyncSession,
     facility_type: str,
     page: int = 1,
     size: int = 20,
@@ -458,7 +509,7 @@ def get_facilities_by_type(
         .limit(size)
     )
 
-    result = db.execute(statement)
+    result = await db.execute(statement)
 
     return list(
         result.scalars().all()
@@ -491,8 +542,8 @@ def get_week_period(
     return period_start, period_end
 
 
-def get_weekly_letters(
-    db: Session,
+async def get_weekly_letters(
+    db: AsyncSession,
     care_group_id: int,
     target_date: date | None = None,
 ) -> tuple[
@@ -520,11 +571,9 @@ def get_weekly_letters(
         )
     )
 
-    letters = list(
-        db.execute(
-            statement
-        ).scalars().all()
-    )
+    result = await db.execute(statement)
+    letters = list(result.scalars().all())
+    
 
     return (
         letters,
@@ -561,8 +610,8 @@ def prepare_letters_for_analysis(
 
     return prepared_letters
 
-def analyze_and_save_week(
-    db: Session,
+async def analyze_and_save_week(
+    db: AsyncSession,
     care_group_id: int,
     target_date: date | None = None,
 ) -> weekly_care_analyses:
@@ -571,7 +620,7 @@ def analyze_and_save_week(
             letters,
             period_start,
             period_end,
-        ) = get_weekly_letters(
+        ) = await get_weekly_letters(
             db=db,
             care_group_id=care_group_id,
             target_date=target_date,
@@ -589,8 +638,9 @@ def analyze_and_save_week(
             )
 
         # Gemini 구조화 분석
-        llm_result = analyze_weekly_letters(
-            prepared_letters
+        llm_result = await to_thread(
+            analyze_weekly_letters,
+            prepared_letters,
         )
 
         # Python 규칙 계산
@@ -612,9 +662,8 @@ def analyze_and_save_week(
             )
         )
 
-        analysis = db.execute(
-            statement
-        ).scalar_one_or_none()
+        result = await db.execute(statement)
+        analysis = result.scalar_one_or_none()
 
         if analysis is None:
             analysis = weekly_care_analyses(
@@ -711,7 +760,7 @@ def analyze_and_save_week(
             analysis.recommendation_reason = None
 
             # 이전 편지 연결 제거
-            db.execute(
+            await db.execute(
                 delete(weekly_analysis_letters)
                 .where(
                     weekly_analysis_letters
@@ -721,7 +770,7 @@ def analyze_and_save_week(
             )
 
         # 신규 분석이면 ID를 받기 위해 필요
-        db.flush()
+        await db.flush()
 
         analyzed_letter_ids = {
             letter["letter_id"]
@@ -738,18 +787,18 @@ def analyze_and_save_week(
 
             db.add(link)
 
-        db.commit()
-        db.refresh(analysis)
+        await db.commit()
+        await db.refresh(analysis)
 
         return analysis
 
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
 
-def get_previous_weekly_analysis(
-    db: Session,
+async def get_previous_weekly_analysis(
+    db: AsyncSession,
     current: weekly_care_analyses,
 ) -> weekly_care_analyses | None:
     statement = (
@@ -766,9 +815,8 @@ def get_previous_weekly_analysis(
         .limit(1)
     )
 
-    return db.execute(
-        statement
-    ).scalar_one_or_none()
+    result = await db.execute(statement)
+    return result.scalar_one_or_none()
 
 
 def collect_analysis_evidence(
@@ -799,8 +847,8 @@ def collect_analysis_evidence(
     return list(dict.fromkeys(evidence_texts))
 
 
-def recommend_facility_for_latest_analysis(
-    db: Session,
+async def recommend_facility_for_latest_analysis(
+    db: AsyncSession,
     care_group_id: int,
     latitude: float,
     longitude: float,
@@ -819,9 +867,8 @@ def recommend_facility_for_latest_analysis(
             .limit(1)
         )
 
-        current = db.execute(
-            statement
-        ).scalar_one_or_none()
+        result = await db.execute(statement)
+        current = result.scalar_one_or_none()
 
         if current is None:
             raise HTTPException(
@@ -833,7 +880,7 @@ def recommend_facility_for_latest_analysis(
             )
 
         # 2. 지난주 분석 조회
-        previous = get_previous_weekly_analysis(
+        previous = await get_previous_weekly_analysis(
             db=db,
             current=current,
         )
@@ -866,7 +913,8 @@ def recommend_facility_for_latest_analysis(
         )
 
         # 5. Pinecone 기관 유형 검색
-        vector_result = search_facility_type(
+        vector_result = await to_thread(
+            search_facility_type,
             query_text=search_text,
             top_k=10,
         )
@@ -876,7 +924,8 @@ def recommend_facility_for_latest_analysis(
         ]["hits"]
 
         # 6. Vector + LLM 최종 판단
-        decision = decide_final_result(
+        decision = await to_thread(
+            decide_final_result,
             hits=hits,
             anomaly_summary=search_text,
             evidence=evidence,
@@ -898,7 +947,7 @@ def recommend_facility_for_latest_analysis(
         ]["facility_type"]
 
         # 7. 가장 가까운 실제 기관 검색
-        nearest = recommend_nearest_facility(
+        nearest = await recommend_nearest_facility(
             db=db,
             facility_type=facility_type,
             latitude=latitude,
@@ -913,7 +962,13 @@ def recommend_facility_for_latest_analysis(
                     "기관을 찾지 못했습니다."
                 ),
             )
-        distance_m = nearest["distance_m"]
+        place = nearest.get("place")
+
+        if not place:
+            raise HTTPException(
+                status_code=404,
+                detail="추천 기관의 지도 정보를 찾지 못했습니다.",
+            )
 
         decision_reason = decision.get("reason")
 
@@ -971,10 +1026,8 @@ def recommend_facility_for_latest_analysis(
             recommendation_reason
         )
 
-        db.commit()
-        db.refresh(current)
-
-        place = nearest["place"]
+        await db.commit()
+        await db.refresh(current)
 
         return {
             "weekly_analysis_id": (
@@ -1022,10 +1075,10 @@ def recommend_facility_for_latest_analysis(
         }
 
     except HTTPException:
-        db.rollback()
+        await db.rollback()
         raise
 
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 # ===================================================

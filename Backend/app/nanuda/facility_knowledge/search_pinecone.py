@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from pinecone import Pinecone
 
-from nanuda.facility_knowledge.vector_decision import (
+from .vector_decision import (
     decide_final_result,
 )
 

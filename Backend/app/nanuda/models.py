@@ -1,7 +1,7 @@
 from datetime import datetime
-from nanuda.database import Base
+from app.database import Base
 
-from user.models import user_table
+from app.user.models import user_table
 
 from sqlalchemy import (
     DateTime,

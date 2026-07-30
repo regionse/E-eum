@@ -1,4 +1,4 @@
-from nanuda.facility_knowledge.llm_scorer import (
+from .llm_scorer import (
     score_facility_candidates,
 )
 

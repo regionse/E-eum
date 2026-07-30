@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from pinecone import Pinecone
 
-from nanuda.facility_knowledge.role_documents import (
+from .role_documents import (
     FACILITY_ROLE_DOCUMENTS,
 )
 
