@@ -1,9 +1,9 @@
 import asyncio
 
 from nanuda.database import Base, engine
-from nanuda.shared.existing_tables import( user_table, care_groups_table )
+from nanuda.shared.existing_tables import( user_table )
 
-from nanuda.care_group_letters import models  ###
+from Backend.app.notifications import models  ###
 
 
 async def create_tables():

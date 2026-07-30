@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai.errors import ServerError
 
-from nanuda.weekly_care_analyses.schemas import (
+from app.nanuda.schemas import (
     WeeklyAnalysisLLMOutput,
 )
 

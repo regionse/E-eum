@@ -1,3 +1,4 @@
+import asyncio
 import os
 import xml.etree.ElementTree as ET
 
@@ -5,8 +6,8 @@ import requests
 from dotenv import load_dotenv
 from sqlalchemy import select
 
-from nanuda.database import SessionLocal
-from nanuda.support_facilities.models import support_facilities
+from app.database import SessionLocal
+from app.nanuda.models import support_facilities
 
 
 load_dotenv()
@@ -193,7 +194,7 @@ def request_facility_detail(
 
 
 
-def save_long_term_care_facilities():
+async def save_long_term_care_facilities():
     db = SessionLocal()
 
     created_count = 0
@@ -205,8 +206,9 @@ def save_long_term_care_facilities():
 
     try:
         for sido_code in SIDO_CODES:
-            facilities = request_facility_list(
-                sido_code
+            facilities = await asyncio.to_thread(
+                request_facility_list,
+                sido_code,
             )
 
             print(
@@ -229,9 +231,10 @@ def save_long_term_care_facilities():
                 processed_external_ids.add(external_id)
 
 
-                detail = request_facility_detail(
-                    external_id=summary["external_id"],
-                    category=summary["category"],
+                detail = await asyncio.to_thread(
+                    request_facility_detail,
+                    summary["external_id"],
+                    summary["category"],
                 )
 
                 if detail is None:
@@ -266,9 +269,8 @@ def save_long_term_care_facilities():
                     )
                 )
 
-                existing = db.execute(
-                    statement
-                ).scalar_one_or_none()
+                result = await db.execute(statement)
+                existing = result.scalar_one_or_none()
 
                 if existing:
                     existing.facility_type = (
@@ -301,7 +303,7 @@ def save_long_term_care_facilities():
                     db.add(facility)
                     created_count += 1
 
-            db.commit()
+            await db.commit()
 
         print("====================")
         print("신규 저장:", created_count)
@@ -310,12 +312,12 @@ def save_long_term_care_facilities():
         print("주소 또는 상세정보 누락:", missing_address_count)
 
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
     finally:
-        db.close()
+        await db.close()
 
 
 if __name__ == "__main__":
-    save_long_term_care_facilities()
+    asyncio.run(save_long_term_care_facilities())

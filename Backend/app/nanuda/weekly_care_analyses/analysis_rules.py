@@ -1,4 +1,4 @@
-from nanuda.weekly_care_analyses.schemas import (
+from app.nanuda.schemas import (
     CalculatedAnalysisItem,
     DataSufficiency,
     WeeklyAnalysisLLMOutput,
