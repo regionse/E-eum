@@ -22,6 +22,8 @@ from app.delda.router import (
 from app.itda.router import router as itda_router   # 잇다 (진로상담)
 from app.user.router import router as auth_router    # 로그인/회원
 
+from app.nanuda.router import router as nanuda_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -69,6 +71,8 @@ app.include_router(delda_admin_router)
 
 app.include_router(itda_router)   # 잇다 진로상담 (/itda/*)
 app.include_router(auth_router)   # 로그인/회원 (user)  
+
+app.include_router(nanuda_router)
 
   
 @app.get("/")

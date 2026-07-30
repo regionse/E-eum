@@ -14,3 +14,4 @@ __pycache__/
 # OS / 기타
 .DS_Store
 *.log
+activate_home.bat

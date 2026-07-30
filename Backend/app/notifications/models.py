@@ -13,7 +13,7 @@ from sqlalchemy import (
     Boolean,
     false,
     Column,
-    BigInteger,
+    Integer,
     text
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,7 +25,7 @@ class notifications(Base):
         comment="알림 식별 번호"
     )
 
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"),
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id", ondelete="CASCADE"),
         nullable=False, index=True,
         comment="사용자 번호"
     )

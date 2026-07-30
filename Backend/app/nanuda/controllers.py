@@ -43,7 +43,7 @@ from .schemas import (
     FamilyLetterCreate,
     CareGroupCreate,
 )
-from app.user.models import user_table
+from app.user.models import User
 
 
 
@@ -54,8 +54,8 @@ async def create_care_group(
 ):
     # 사용자가 실제로 존재하는지 확인
     result = await db.execute(
-        select(user_table.user_id).where(
-            user_table.user_id == data.user_id
+        select(User.user_id).where(
+            User.user_id == data.user_id
         )
     )
     user = result.first()
