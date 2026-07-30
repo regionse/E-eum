@@ -1,11 +1,10 @@
 from datetime import datetime
-from nanuda.database import Base
-# from enum import Enum
-from nanuda.shared.existing_tables import user_table
+from app.database import Base
+
+from app.user.models import user_table
 
 from sqlalchemy import (
     DateTime,
-    Table,
     ForeignKey,
     Integer,
     String,
@@ -13,18 +12,15 @@ from sqlalchemy import (
     func,
     Boolean,
     false,
-    Column,
     BigInteger,
-    text,
     UniqueConstraint,
     JSON,
     Float,
+    true,
     
 )
-from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
+from sqlalchemy.orm import (Mapped, mapped_column,)
 
-class Base(DeclarativeBase):
-    pass
 # care_groups===============================================
 class care_groups(Base):
     __tablename__ = "care_groups"
@@ -57,7 +53,7 @@ class care_group_members(Base):
         comment="참여일시"
     )
 
-    relationships: Mapped[str] = mapped_column(String(20), nullable=True,
+    relationships: Mapped[str | None] = mapped_column(String(20), nullable=True,
         comment="관계"
     )
 # care_group_members========================================
@@ -81,7 +77,7 @@ class care_group_letters(Base):
         comment="가족 방 식별번호"
     )
 
-    content: Mapped[Text] = mapped_column(Text, nullable=False, 
+    content: Mapped[str] = mapped_column(Text, nullable=False, 
         comment="편지 내용"
     )
 
@@ -116,7 +112,7 @@ class invite_codes(Base):
         comment="초대 코드 만료 일시"
     )
 
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=True,
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true(),
         comment="초대 코드 사용가능 여부"    
     )
 # invite_cades==============================================

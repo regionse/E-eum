@@ -1,4 +1,4 @@
-from nanuda.weekly_care_analyses.models import (
+from app.nanuda.models import (
     weekly_care_analyses,
 )
 
