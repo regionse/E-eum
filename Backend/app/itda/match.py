@@ -14,14 +14,27 @@
 
 ※ 임베딩(embed_course_·embed_cert_) 끝난 뒤에 동작함.
 """
-import os, re, sys, json, getpass
-import urllib.request
-import pymysql
+import os, re, sys, json, asyncio
+import urllib.request, urllib.error
+from sqlalchemy import text, bindparam
 from pinecone import Pinecone
+
+# async 세션 — 백엔드(패키지)와 CLI(스크립트) 양쪽에서 import 되게.
+try:
+    from .db import async_session
+except ImportError:
+    from db import async_session
+
+# Gemini 호출 공용 (무료 우선·분당 대기·유료는 하루소진 때만) — itda_core 와 같은 정책.
+try:
+    from . import gemini_util as _gutil
+except ImportError:
+    import gemini_util as _gutil
 
 MODEL = 'gemini-embedding-2'   # ※ embed_course_·embed_cert_ 의 MODEL과 반드시 동일할 것
 NS_COURSE = 'course'
 NS_CERT   = 'cert'
+NS_JOB    = 'job'              # 직업 먼저(2026-07-27) — understanding → 직업 벡터
 
 
 def read_env():
@@ -38,37 +51,70 @@ def read_env():
     return d
 
 ENV = {**read_env(), **os.environ}
-GEMINI_KEY   = next((v for k, v in ENV.items() if k.startswith('GEMINI_API_KEY') and v), None)
+# Gemini 키 회전은 gemini_util 이 ENV 에서 직접 가른다(무료 우선·유료는 하루소진 때만).
 PINECONE_KEY = ENV.get('PINECONE_API_KEY')
-INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-courses')
+INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-itda')   # 임베딩 스크립트와 동일해야 함(안 그러면 빈 인덱스 조회)
 
 
 # ── ① 질의 임베딩 (강좌와 같은 모델·plain) ─────────────────────────
-def embed_query(text):
-    url = f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:embedContent?key={GEMINI_KEY}'
-    body = json.dumps({'model': f'models/{MODEL}', 'content': {'parts': [{'text': text}]}}).encode()
-    req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'})
-    return json.loads(urllib.request.urlopen(req, timeout=30).read())['embedding']['values']
+#  content 파라미터명 주의 — sqlalchemy 의 text 를 import 했으므로 'text' 를 쓰면 가려진다.
+async def embed_query(content):
+    body = json.dumps({'model': f'models/{MODEL}',
+                       'content': {'parts': [{'text': content}]}}).encode()
+
+    def _post(key):
+        url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
+               f'{MODEL}:embedContent?key={key}')
+        req = urllib.request.Request(url, data=body,
+                                     headers={'Content-Type': 'application/json'})
+        return urllib.request.urlopen(req, timeout=30).read()
+
+    j = await _gutil.call(_post, ENV)              # 무료 우선·분당 대기·유료는 하루소진 때만
+    return j['embedding']['values']
 
 
-# ── Pinecone + MySQL 연결 (한 번만) ─────────────────────────────────
+# ── Pinecone 클라이언트/인덱스 (한 번만 생성) ──────────────────────
+#  Pinecone SDK 는 동기다. 쿼리·리랭크는 asyncio.to_thread 로 감싼다.
+_client = None
+def _pc():
+    """Pinecone 클라이언트 — 인덱스(_pinecone)와 인퍼런스(리랭크) 둘 다 여기서 뻗는다."""
+    global _client
+    if _client is None:
+        if not PINECONE_KEY:                       # 없으면 None 이 흘러가 첫 쿼리에서 불명확하게 실패(코드감사)
+            raise RuntimeError('PINECONE_API_KEY 없음 — etc/.env 확인')
+        _client = Pinecone(api_key=PINECONE_KEY)
+    return _client
+
 _index = None
-_conn = None
 def _pinecone():
     global _index
     if _index is None:
-        _index = Pinecone(api_key=PINECONE_KEY).Index(INDEX_NAME)
+        _index = _pc().Index(INDEX_NAME)
     return _index
 
-def _db():
-    global _conn
-    if _conn is None:
-        # DB_PW 는 itda_core 가 심어놓는 키. 단독 실행이면 .env 의 DB_PASSWORD 를 쓴다.
-        pw = os.environ.get('DB_PW') or ENV.get('DB_PASSWORD') \
-            or getpass.getpass('user2604 DB 비밀번호: ')
-        _conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                                password=pw, database='eum', charset='utf8mb4')
-    return _conn
+
+# ── 크로스인코더 리랭크 (Pinecone 인퍼런스 · bge-reranker-v2-m3) ─────
+#  하이브리드(벡터+키워드 RRF)로 후보를 좁힌 뒤 '마지막 관련도 심판'.
+#  벡터 임베딩은 본문이 얇아('직업명·중분류') 미세한 우열을 못 가린다. 크로스인코더는
+#  질의와 후보를 '함께' 읽어 진짜 관련도를 매긴다 — 실측(2026-07-29):
+#    "어르신 돌보는 일" → 요양지원 0.76 · 사회복지 0.58 · 간호 0.32 · 보육교사 0.09
+#  실패(쿼터·네트워크·권한)하면 원래 순서를 그대로 쓴다 — 리랭크는 '개선'이지 '필수'가 아니다.
+RERANK_MODEL = os.environ.get('ITDA_RERANK_MODEL') or ENV.get('ITDA_RERANK_MODEL') or 'bge-reranker-v2-m3'
+
+async def rerank(query_text, docs, top_n=None):
+    """[(문서문자열)] 을 질의와의 관련도로 재정렬 → [(원래인덱스, 점수)] 관련도 높은 순.
+    docs 가 비었거나 리랭크가 실패하면 [] 를 돌려준다(호출부가 원래 순서로 폴백)."""
+    q = re.sub(r'\s+', ' ', (query_text or '')).strip()
+    if not q or not docs:
+        return []
+    n = top_n or len(docs)
+    try:
+        res = await asyncio.to_thread(lambda: _pc().inference.rerank(
+            model=RERANK_MODEL, query=q, documents=list(docs),
+            top_n=n, return_documents=False))
+        return [(int(row.index), float(row.score)) for row in res.data]
+    except Exception:
+        return []                                  # 폴백은 호출부에서 (원래 순서 유지)
 
 
 # ── ② 매칭: 질의 → 벡터검색 → 중복 제거 → 강좌 상세 ─────────────────
@@ -79,11 +125,12 @@ def _norm(title):
     return re.sub(r'\s+', '', (title or '')).lower()
 
 
-def _search(query_text, namespace, over_fetch, min_score):
+async def _search(query_text, namespace, over_fetch, min_score):
     """질의 → 벡터 → 해당 네임스페이스에서 (id, score) 목록. 순서는 유사도 순."""
-    vec = embed_query(query_text)
-    res = _pinecone().query(vector=vec, namespace=namespace,
-                            top_k=over_fetch, include_metadata=True)
+    vec = await embed_query(query_text)
+    res = await asyncio.to_thread(
+        lambda: _pinecone().query(vector=vec, namespace=namespace,
+                                  top_k=over_fetch, include_metadata=True))
     matches = res.get('matches', []) if isinstance(res, dict) else res.matches
     out = []
     for m in matches:
@@ -94,18 +141,18 @@ def _search(query_text, namespace, over_fetch, min_score):
     return out
 
 
-def match_courses(query_text, top_k=5, min_score=0.0):
+async def match_courses(db, query_text, top_k=5, min_score=0.0):
     # 중복·threshold 로 걸러질 것을 감안해 넉넉히 뽑는다
-    id_score = _search(query_text, NS_COURSE, max(top_k * 4, 12), min_score)
+    id_score = await _search(query_text, NS_COURSE, max(top_k * 4, 12), min_score)
     if not id_score:
         return []
 
     ids = [i for i, _ in id_score]
-    with _db().cursor() as cur:
-        fmt = ','.join(['%s'] * len(ids))
-        cur.execute(f"SELECT kmooc_id, title, classfy_name, professor, course_url "
-                    f"FROM course WHERE kmooc_id IN ({fmt})", ids)
-        info = {str(r[0]): r for r in cur.fetchall()}
+    stmt = text("SELECT kmooc_id, title, classfy_name, professor, course_url, course_id "
+                "FROM course WHERE kmooc_id IN :ids").bindparams(
+                    bindparam("ids", expanding=True))
+    rows = (await db.execute(stmt, {"ids": ids})).fetchall()
+    info = {str(r[0]): r for r in rows}
 
     out, seen = [], set()
     for cid, score in id_score:                 # 유사도 순서 유지
@@ -117,69 +164,202 @@ def match_courses(query_text, top_k=5, min_score=0.0):
             continue
         seen.add(key)
         out.append({'kmooc_id': r[0], 'title': r[1], 'classfy': r[2],
-                    'professor': r[3], 'url': r[4], 'score': round(score, 3)})
+                    'professor': r[3], 'url': r[4], 'score': round(score, 3),
+                    'course_id': r[5]})         # 미래설계지도 저장용 (itda_map_course FK)
         if len(out) >= top_k:
             break
     return out
 
 
-# ── ③ 자격증 매칭 : 대직무분야를 거치지 않는다 ──────────────────────
-#  기존 경로는 '모델이 대직무분야 17개 중 하나를 고른다'가 병목이었다.
-#    · 기능사가 0개인 대직무분야가 7개
-#    · 국가전문자격 100종은 oblig_fld 가 비어 있어 그 enum 에 아예 없다
-#  벡터로 직접 찾으면 613종 전부가 후보가 된다.
+# ── ③ 자격증 매칭 : 하이브리드(벡터 + 키워드) ───────────────────────
+#  왜 대직무분야를 안 거치나
+#    기존 경로는 '모델이 대직무분야 17개 중 하나를 고른다'가 병목이었다.
+#    기능사가 0개인 대직무분야가 7개, 국가전문자격 100종은 oblig_fld 가 비어 있었다.
+#    벡터로 직접 찾으면 613종 전부가 후보가 된다.
 #
-#  grade / entry_free 로 좁히고 싶을 때가 있어 filters 를 받는다.
-#    match_certs(q, grade='기능사')      → 응시자격 제한 없는 것만
-#    match_certs(q)                      → 613종 전부
-def match_certs(query_text, top_k=5, min_score=0.0, grade=None):
-    id_score = _search(query_text, NS_CERT, max(top_k * 4, 20), min_score)
-    if not id_score:
+#  왜 벡터만으로 부족한가 (실측 2026-07-24)
+#    벡터는 '뜻'은 잘 보지만 '정확한 이름'에 약하다.
+#      "미용사 자격증"    → 미용사(일반) 0.623  (괄호 때문에 임계 미달로 놓침)
+#      "전기산업기사"     → 전기기기산업기사가 1위 (엉뚱한 게 위로)
+#    키워드(MySQL FULLTEXT ngram)는 정반대다 — 정확한 이름엔 강하고 뜻엔 약하다.
+#      "미용사"          → 미용사(일반) 11.19  ✅
+#      "요리"            → 결과 없음 (조리사엔 '조리'만 있어 글자가 안 겹침)
+#    → 둘을 각각 돌려 순위를 RRF 로 합친다. 서로의 약점을 메운다.
+
+
+KW_FLOOR = 3.0   # 이 점수 미만은 ngram 잡음으로 보고 버린다 (요리사→'리사'→관리사 2.11)
+
+async def _keyword_certs(db, query_text, over_fetch):
+    """FULLTEXT 키워드 검색 → [(cert_id, kw_score)]. 점수 높은 순.
+
+    ★ 종목명(jm_name)만 검색한다. 수행직무(job_desc)까지 넣으면 '자격증'·'관리' 같은
+      흔한 단어가 수백 종의 본문에 걸려 잡음이 된다(실측: "AWS 클라우드 자격증" →
+      대기관리기술사 8.44). 우리가 키워드로 얻고 싶은 건 '정확한 이름'뿐이다.
+      뜻은 벡터가 본다.
+    ★ ngram 2글자는 서로 다른 단어를 우연히 잇는다("요리사"의 '리사' ↔ "관리사").
+      KW_FLOOR 미만은 버려 이 잡음을 막는다.
+    NATURAL LANGUAGE MODE 는 결과에 '글자가 실제로 겹친' 것만 올린다 → 없는 자격증엔 0건.
+    """
+    q = re.sub(r'\s+', ' ', (query_text or '')).strip()
+    if not q:
+        return []
+    # 종목명 전용 색인(ft_cert_name)을 쓴다. 두 컬럼 합친 ft_cert 로는 jm_name 만 못 짚는다.
+    #  :q 는 SELECT·WHERE 두 곳에 쓰이지만 named param 이라 한 값이 재사용된다.
+    #  LIMIT 는 우리 정수라 인라인(바인딩하면 MySQL 이 까다롭다).
+    ft = "MATCH(jm_name) AGAINST (:q IN NATURAL LANGUAGE MODE)"
+    stmt = text(f"SELECT cert_id, {ft} s FROM certification "
+                f"WHERE {ft} ORDER BY s DESC LIMIT {int(over_fetch)}")
+    rows = (await db.execute(stmt, {"q": q})).fetchall()
+    return [(str(r[0]), float(r[1])) for r in rows if float(r[1]) >= KW_FLOOR]
+
+
+def _rrf(*ranked_id_lists, k=60):
+    """Reciprocal Rank Fusion — 여러 순위를 하나로 합친다.
+
+    점수 스케일이 다른 검색(코사인 0~1 vs FULLTEXT 0~수십)을 그냥 더하면
+    큰 쪽이 압도한다. 그래서 '순위'로 바꿔 합친다 — 어느 검색에서든 1등은 1등이다.
+    두 검색에 다 있으면 점수가 커지고, 한쪽에만 있으면 작아진다.
+    k=60 은 RRF 표준값(상위권 격차를 완만하게 해 한쪽 검색의 잡음에 덜 흔들린다).
+    """
+    score = {}
+    for ids in ranked_id_lists:
+        for rank, cid in enumerate(ids):
+            score[cid] = score.get(cid, 0.0) + 1.0 / (k + rank + 1)
+    return sorted(score, key=score.get, reverse=True)
+
+
+async def match_certs(db, query_text, top_k=5, min_score=0.0, grade=None):
+    """하이브리드 자격증 검색.
+
+    반환 dict 의 점수 두 개 — itda_core 가 '우리에게 있나'를 판정할 때 둘 다 본다.
+      score    : 벡터 코사인 (0~1). 없으면 0.0
+      kw_score : FULLTEXT 점수. 키워드에 안 걸리면 0.0
+    정렬은 두 순위를 RRF 로 합친 순서다.
+    """
+    vec = await _search(query_text, NS_CERT, max(top_k * 4, 20), min_score)  # [(cid, cosine)]
+    kw = await _keyword_certs(db, query_text, max(top_k * 4, 20))            # [(cid, kw_score)]
+    if not vec and not kw:
         return []
 
-    ids = [i for i, _ in id_score]
+    vec_score = {cid: s for cid, s in vec}
+    kw_score = {cid: s for cid, s in kw}
+    order = _rrf([c for c, _ in vec], [c for c, _ in kw])   # 합친 순위
+
+    ids = list(vec_score.keys() | kw_score.keys())
     # grade 가 아니라 grade_std — grade(Q-Net seriesnm)는 산업기사 114종을 '기사'로 뭉갠다.
-    # entry_free/entry_note 도 같이 꺼낸다. 카드에서 「지금 바로」·「응시자격」을 가르는 값이다.
     sql = ("SELECT cert_id, jm_name, COALESCE(grade_std, grade), oblig_fld, mdoblig_fld, "
            "       entry_free, entry_note "
-           "FROM certification WHERE cert_id IN (%s)" % ','.join(['%s'] * len(ids)))
-    params = list(ids)
+           "FROM certification WHERE cert_id IN :ids")
+    params = {"ids": ids}
     if grade:
-        sql += " AND COALESCE(grade_std, grade)=%s"
-        params.append(grade)
-    with _db().cursor() as cur:
-        cur.execute(sql, params)
-        info = {str(r[0]): r for r in cur.fetchall()}
+        sql += " AND COALESCE(grade_std, grade) = :grade"
+        params["grade"] = grade
+    stmt = text(sql).bindparams(bindparam("ids", expanding=True))
+    rows = (await db.execute(stmt, params)).fetchall()
+    info = {str(r[0]): r for r in rows}
 
     out = []
-    for cid, score in id_score:              # 유사도 순서 유지
+    for cid in order:                        # RRF 합친 순서
         r = info.get(cid)
         if not r:
             continue                         # grade 필터에 걸러진 것
         out.append({'cert_id': r[0], 'jm_name': r[1], 'grade': r[2],
                     'oblig_fld': r[3], 'mdoblig_fld': r[4],
                     'entry_free': r[5] == 1,     # True=제한없음 확인 / False=미확인
-                    'entry_note': r[6], 'score': round(score, 3)})
+                    'entry_note': r[6],
+                    'score': round(vec_score.get(cid, 0.0), 3),      # 벡터 코사인
+                    'kw_score': round(kw_score.get(cid, 0.0), 2)})   # 키워드 점수
+        if len(out) >= top_k:
+            break
+    return out
+
+
+# ── ④ 직업 매칭 : 직업 먼저(2026-07-27) · 하이브리드(2026-07-28) ─────
+#  understanding → 직업 후보. 각 후보에 '자격증 몇 개 붙었나'(n_cert)를 단다.
+#  자격증 0인 직업(요양간호사·웹개발자 등)도 후보로 살린다 — 카드가 내일배움카드+강좌로 대체.
+#  ★ 하이브리드(2026-07-28) — 직업 임베딩 본문이 얇아('직업명·중분류' ~21자) 벡터만으론
+#    "컴퓨터 만들기"에 '작곡가' 같은 노이즈가 뜬다. 그래서 자격증(match_certs)과 똑같이
+#    벡터(뜻) + 키워드(FULLTEXT ft_job_name, 정확한 이름)를 RRF 로 합친다.
+KW_JOB_FLOOR = 3.0   # ngram 부분토큰 잡음 제거 (cert 의 KW_FLOOR 와 같은 값)
+
+
+# 구어 → NCS 어휘 보강 (2026-07-29) — NCS 직무명이 formal 해서 '웹사이트'가 '응용SW엔지니어링'을
+#  못 잡는다(벡터·키워드 둘 다 0). 사용자 말투를 NCS 검색어로 살짝 확장해 키워드 경로를 살린다.
+_JOB_ALIAS = {
+    '웹사이트': '응용SW', '웹개발': '응용SW', '홈페이지': '응용SW', '웹': '응용SW',
+    '애플리케이션': '응용SW', '어플': '앱콘텐츠', '앱': '앱콘텐츠',
+}
+
+
+async def _keyword_jobs(db, query_text, over_fetch):
+    """FULLTEXT 키워드 검색 → [(job_code, kw_score)]. job_name 전용 색인 ft_job_name.
+    벡터가 얇어 놓치는 '정확한 이름'(게임·용접 등)을 키워드가 끌어올린다."""
+    q = re.sub(r'\s+', ' ', (query_text or '')).strip()
+    if not q:
+        return []
+    for k, v in _JOB_ALIAS.items():            # 구어 → NCS 어휘 보강
+        if k in q and v not in q:
+            q += ' ' + v
+    ft = "MATCH(job_name) AGAINST (:q IN NATURAL LANGUAGE MODE)"
+    stmt = text(f"SELECT job_code, {ft} s FROM job_catalog "
+                f"WHERE {ft} ORDER BY s DESC LIMIT {int(over_fetch)}")
+    rows = (await db.execute(stmt, {"q": q})).fetchall()
+    return [(str(r[0]), float(r[1])) for r in rows if float(r[1]) >= KW_JOB_FLOOR]
+
+
+async def match_jobs(db, query_text, top_k=6, min_score=0.0):
+    vec = await _search(query_text, NS_JOB, max(top_k * 3, 12), min_score)   # [(job_code, cosine)]
+    kw = await _keyword_jobs(db, query_text, max(top_k * 3, 12))             # [(job_code, kw_score)]
+    if not vec and not kw:
+        return []
+    vec_score = {c: s for c, s in vec}
+    kw_score = {c: s for c, s in kw}
+    order = _rrf([c for c, _ in vec], [c for c, _ in kw])                    # 두 순위를 RRF 로 합침
+    codes = list(vec_score.keys() | kw_score.keys())
+    stmt = text("SELECT jc.job_code, jc.job_name, jc.job_mcls_name, jc.job_description, "
+                "       COUNT(cj.cert_id) "
+                "FROM job_catalog jc LEFT JOIN cert_job cj ON cj.job_code = jc.job_code "
+                "WHERE jc.job_code IN :codes "
+                "GROUP BY jc.job_code").bindparams(
+                    bindparam("codes", expanding=True))
+    rows = (await db.execute(stmt, {"codes": codes})).fetchall()
+    info = {str(r[0]): r for r in rows}
+    out = []
+    for code in order:                           # RRF 합친 순서
+        r = info.get(code)
+        if not r:
+            continue
+        out.append({'job_code': str(r[0]), 'job_name': r[1], 'group': r[2],
+                    'description': r[3],                              # NCS DUTY_DEF (카드 설명·2026-07-29)
+                    'n_cert': int(r[4]),
+                    'score': round(vec_score.get(code, 0.0), 3),      # 벡터 코사인 (_is_spread·notfound 판정용)
+                    'kw_score': round(kw_score.get(code, 0.0), 2)})   # 키워드 점수
         if len(out) >= top_k:
             break
     return out
 
 
 # ── 테스트용 CLI ────────────────────────────────────────────────────
-if __name__ == '__main__':
+async def _cli():
     args = sys.argv[1:]
     cert = '--cert' in args
     q = ' '.join(a for a in args if a != '--cert') or '정보통신 클라우드 프로그래밍'
     print(f'질의: "{q}"   대상: {"자격증" if cert else "강좌"}\n')
-    if cert:
-        for i, c in enumerate(match_certs(q, top_k=8), 1):
-            fld = ' · '.join(x for x in (c['oblig_fld'], c['mdoblig_fld']) if x) or '(분야 없음)'
-            tag = '지금 바로' if c['entry_free'] else '응시자격 확인'
-            print(f"{i}. [{c['score']}] {c['jm_name']}  ({c['grade']} · {tag})")
-            print(f"     {fld}")
-            if not c['entry_free'] and c['entry_note']:
-                print(f"     {c['entry_note'].splitlines()[0][:60]}")
-    else:
-        for i, c in enumerate(match_courses(q, top_k=5), 1):
-            print(f"{i}. [{c['score']}] {c['title']}  ({c['classfy']}·{c['professor']})")
-            print(f"     {c['url']}")
+    async with async_session() as db:
+        if cert:
+            for i, c in enumerate(await match_certs(db, q, top_k=8), 1):
+                fld = ' · '.join(x for x in (c['oblig_fld'], c['mdoblig_fld']) if x) or '(분야 없음)'
+                tag = '지금 바로' if c['entry_free'] else '응시자격 확인'
+                print(f"{i}. 벡터 {c['score']:.3f} · 키워드 {c['kw_score']:>5}  "
+                      f"{c['jm_name']}  ({c['grade']} · {tag})")
+                print(f"     {fld}")
+                if not c['entry_free'] and c['entry_note']:
+                    print(f"     {c['entry_note'].splitlines()[0][:60]}")
+        else:
+            for i, c in enumerate(await match_courses(db, q, top_k=5), 1):
+                print(f"{i}. [{c['score']}] {c['title']}  ({c['classfy']}·{c['professor']})")
+                print(f"     {c['url']}")
+
+
+if __name__ == '__main__':
+    asyncio.run(_cli())

@@ -35,7 +35,7 @@ class Notice(Base):
     # 관리자 식별번호
     admin_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("user.user_id", ondelete="RESTRICT"),
+        ForeignKey("admin.admin_id"),
         nullable=False,
     )
 

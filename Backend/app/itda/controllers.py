@@ -7,14 +7,16 @@
   프론트가 기대      →  {type, reply, turn, max_turn, understanding, mode, goal, alternatives}
 
 · 세션에는 slot(profile) 만 보관한다. 대화 로그를 쌓지 않는다.
-· itda_core 는 동기(urllib·pymysql)라 run_in_threadpool 로 넘겨 이벤트 루프를 막지 않는다.
+· itda_core 는 async 다(2026-07-24). db 세션은 라우터가 Depends(get_db)로 주입한다.
 """
 import json
+import uuid
 
-from fastapi.concurrency import run_in_threadpool
+from fastapi import HTTPException
+from sqlalchemy import text
 
 from app.itda import session
-from app.itda.schemas import Goal, MessageResponse, NextStep
+from app.itda.schemas import Goal, CertStep, Course, Hire, MessageResponse
 
 try:                                   # 서버(패키지) 경로
     from app.itda.itda_core import ItdaEngine, missing_slots, ASK_ORDER
@@ -28,7 +30,7 @@ _ENGINE = None
 def get_engine():
     global _ENGINE
     if _ENGINE is None:
-        _ENGINE = ItdaEngine()         # allow_prompt=False → 서버가 입력을 기다리는 일 없음
+        _ENGINE = ItdaEngine()         # 지연 초기화(첫 요청 때 1회). think_level 미지정 → Gemini 기본(dynamic)
     return _ENGINE
 
 
@@ -49,25 +51,37 @@ def _exam_text(exam):
 
 
 def _to_goal(card) -> Goal:
-    titles = [c["title"] for c in (card.get("courses") or [])]
-    nxt = card.get("next_step")
-    #  entry_free 는 3값이다 — True 는 '제한 없음 확인', False 는 '조건 있음'이 아니라 '미확인'.
-    #  미확인일 땐 우리가 해석하지 않고 공단이 쓴 조건 원문(entry_note)을 그대로 넘긴다.
-    free = bool(card.get("entry_free"))
+    """직업 먼저(2026-07-27) 카드 → 프론트 goal. 주인공은 '직업', 자격증은 그 직업의 수단(≤3)."""
+    # 강좌 — 제목만 넘기던 걸 상세(교수·링크·유사도)까지. 유사도는 '관련도'라 UI에 그대로 노출.
+    courses = [Course(title=c["title"], professor=c.get("professor") or "",
+                      classfy=c.get("classfy") or "", url=c.get("url") or "",
+                      score=float(c.get("score") or 0)) for c in (card.get("courses") or [])]
+    #  이 직업의 자격증 ≤3 — 「지금 바로」 우선 정렬. entry_free 는 3값(True=제한없음 확인 /
+    #  False=미확인). 미확인이면 우리가 해석하지 않고 공단 조건 원문(entry_note)을 그대로 넘긴다.
+    certs = []
+    for c in (card.get("certs") or []):
+        free = bool(c.get("entry_free"))
+        certs.append(CertStep(
+            cert=c["cert"], grade=c.get("grade") or "", entry_free=free,
+            entry="지금 바로 응시 가능" if free else "응시자격 확인 필요",
+            entry_note="" if free else (c.get("entry_note") or ""),
+            exam=_exam_text(c.get("exam")),
+            verified=bool(c.get("verified")),
+        ))
+    job = card.get("job") or {}
+    hd = card.get("hire") or {}
     return Goal(
-        cert=card["cert"],
-        field=card.get("oblig_fld") or "",
-        reason=card.get("reason", ""),
-        exam=_exam_text(card.get("exam")),
-        has_courses=bool(titles),
-        courses=titles,
-        guide="" if titles else
-              "아직 딱 맞는 무료강좌를 못 찾았어요. 국민내일배움카드 훈련과정으로 이어서 볼 수 있어요.",
-        grade=card.get("grade") or "",
-        entry="지금 바로 응시 가능" if free else "응시자격 확인 필요",
-        entry_note="" if free else (card.get("entry_note") or ""),
-        next_step=NextStep(cert=nxt["cert"], grade=nxt.get("grade") or "",
-                           entry_note=nxt.get("entry_note") or "") if nxt else None,
+        job=job.get("name") or "",
+        group=job.get("group") or "",
+        description=job.get("description") or "",       # NCS 설명(2026-07-29)
+        reason=card.get("job_reason", ""),
+        certs=certs,
+        no_cert_path=bool(card.get("no_cert_path")),
+        guide=card.get("guide") or "",
+        has_courses=bool(courses),
+        courses=courses,
+        hire=Hire(label=hd.get("label", ""), url=hd.get("url", ""),
+                  note=hd.get("note", "")) if hd else None,          # 국비 딥링크
     )
 
 
@@ -78,13 +92,16 @@ def _progress(profile):
 
 
 # ── 한 턴 ───────────────────────────────────────────────────────────
-async def handle_message(session_id: str, message: str) -> MessageResponse:
+#  db 는 라우터가 Depends(get_db) 로 요청마다 주입하는 async 세션.
+#  예전엔 run_in_threadpool 로 동기 step 을 스레드에 던졌는데, 그 스레드들이
+#  전역 pymysql 커넥션을 공유해 깨졌다(코드리뷰 HIGH). 이제 step 이 async 라 그냥 await.
+async def handle_message(db, session_id: str, message: str) -> MessageResponse:
     st = session.get(session_id)
     profile = st.get("profile") or {}
 
     try:
-        eng = await run_in_threadpool(get_engine)          # 최초 1회 DB 연결도 스레드풀에서
-        r = await run_in_threadpool(eng.step, profile, message)
+        eng = get_engine()
+        r = await eng.step(db, profile, message)
     except Exception as e:
         print(f"[itda] step 실패: {type(e).__name__}: {e}")   # 서버 로그에만 남긴다
         done, total = _progress(profile)
@@ -111,9 +128,23 @@ async def handle_message(session_id: str, message: str) -> MessageResponse:
         reply += "\n\n지금은 자격증보다 돌봄 지원이나 바로 해볼 수 있는 일부터 보는 것도 좋아요."
 
     card = r.get("card")
-    # 카드가 있으면 다른 후보를, 못 찾았으면 가까운 것들을 alternatives 로 내보낸다
-    alts = ([c["cert"] for c in (r.get("near") or [])] if kind == "notfound"
+    if card:
+        st["last_card"] = card                 # 미래설계지도 '저장'용 — 마지막 카드를 세션에 캐시(2026-07-29)
+    #  코드감사 #6 — 강좌 매칭 실패(Pinecone/임베딩 장애)를 조용히 삼키지 않고 서버 로그에 남긴다.
+    if card and card.get("course_error"):
+        print(f"[itda] 강좌 매칭 실패(카드는 나감): {card['course_error']}")
+    # 카드가 있으면 다른 후보 직업을, 못 찾았으면 가까운 직업들을 alternatives 로 내보낸다
+    alts = ([c["job"] for c in (r.get("near") or [])] if kind == "notfound"
             else (card or {}).get("alternatives", []))
+    #  코드감사 — _to_goal 은 step() try 밖이라, 카드에 필수 키가 없으면 여기서 500이 난다.
+    #  감싸서 변환 실패해도 대화가 죽지 않게(결과 대신 ask 로 유지) 한다.
+    goal = None
+    if card:
+        try:
+            goal = _to_goal(card)
+        except Exception as e:
+            print(f"[itda] 카드→goal 변환 실패: {type(e).__name__}: {e}")
+            msg_type = "ask"
     return MessageResponse(
         type=msg_type,
         reply=reply,
@@ -121,6 +152,125 @@ async def handle_message(session_id: str, message: str) -> MessageResponse:
         max_turn=total,
         understanding=json.dumps(profile, ensure_ascii=False),
         mode="gemini",
-        goal=_to_goal(card) if card else None,
+        goal=goal,
         alternatives=alts,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  미래설계지도 (저장 · 목록 · 이어서하기 · 삭제) — 2026-07-29
+#  itda_map(user·job_code·profile_json) + itda_map_cert + itda_map_course.
+#  저장은 세션에 캐시된 '마지막 카드'(last_card)를 그대로 담는다 → 프론트가 id 를 되돌릴 필요 없음.
+# ─────────────────────────────────────────────────────────────────────
+def _hire(job_name: str) -> Hire:
+    import urllib.parse
+    url = ('https://m.work24.go.kr/hr/a/a/1100/trnnCrsInf.do?'
+           f'keyword={urllib.parse.quote(job_name)}&searchYn=Y')
+    return Hire(label=f"'{job_name}' 국비 훈련 찾기", url=url,
+                note='국민내일배움카드로 훈련비 지원 · 고용24(HRD-Net)에서 검색')
+
+
+async def _saved_goal(db, map_id: int) -> Goal:
+    """저장된 지도(map_id) → Goal 재구성 (직무·설명·자격·강좌·국비링크)."""
+    m = (await db.execute(text(
+        "SELECT jc.job_name, jc.job_mcls_name, jc.job_description "
+        "FROM itda_map im JOIN job_catalog jc ON jc.job_code = im.job_code "
+        "WHERE im.map_id = :mid"), {"mid": map_id})).fetchone()
+    cert_rows = (await db.execute(text(
+        "SELECT c.jm_name, COALESCE(c.grade_std, c.grade), c.entry_free, c.entry_note "
+        "FROM itda_map_cert mc JOIN certification c ON c.cert_id = mc.cert_id "
+        "WHERE mc.map_id = :mid ORDER BY mc.`rank`"), {"mid": map_id})).fetchall()
+    course_rows = (await db.execute(text(
+        "SELECT co.title, co.professor, co.classfy_name, co.course_url, mco.similarity_score "
+        "FROM itda_map_course mco JOIN course co ON co.course_id = mco.course_id "
+        "WHERE mco.map_id = :mid ORDER BY mco.`rank`"), {"mid": map_id})).fetchall()
+    certs = [CertStep(cert=r[0], grade=r[1] or "", entry_free=(r[2] == 1),
+                      entry="지금 바로 응시 가능" if r[2] == 1 else "응시자격 확인 필요",
+                      entry_note="" if r[2] == 1 else (r[3] or "")) for r in cert_rows]
+    courses = [Course(title=r[0], professor=r[1] or "", classfy=r[2] or "",
+                      url=r[3] or "", score=float(r[4] or 0)) for r in course_rows]
+    return Goal(
+        job=m[0], group=m[1] or "", description=m[2] or "",
+        certs=certs, no_cert_path=(len(certs) == 0),
+        guide=('이 방향은 국가기술자격으로 바로 이어지진 않아요. 국민내일배움카드로 '
+               '훈련비를 지원받아 아래 강좌부터 시작할 수 있어요.') if not certs else "",
+        has_courses=bool(courses), courses=courses, hire=_hire(m[0]),
+    )
+
+
+async def save_map(db, user_id: int, session_id: str) -> dict:
+    """세션에 캐시된 마지막 카드를 미래설계지도로 저장 (로그인 사용자 소유)."""
+    st = session.get(session_id)
+    card = st.get("last_card") or {}
+    job_code = (card.get("job") or {}).get("code")
+    if not job_code:
+        raise HTTPException(status_code=400,
+                            detail="아직 저장할 결과가 없어요. 대화로 직업을 찾은 뒤 저장해 주세요.")
+    profile = st.get("profile") or {}
+    done, _ = _progress(profile)
+    res = await db.execute(text(
+        "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
+        "VALUES (:uid, :jc, '진행중', :ps, :pj, NOW())"),
+        {"uid": user_id, "jc": job_code, "ps": done,
+         "pj": json.dumps(profile, ensure_ascii=False)})
+    map_id = res.lastrowid
+    for i, c in enumerate(card.get("certs") or []):
+        if c.get("cert_id"):
+            await db.execute(text(
+                "INSERT INTO itda_map_cert (map_id, cert_id, `rank`, is_next_step) "
+                "VALUES (:m, :c, :r, 0)"), {"m": map_id, "c": c["cert_id"], "r": i + 1})
+    for i, c in enumerate(card.get("courses") or []):
+        if c.get("course_id"):
+            await db.execute(text(
+                "INSERT INTO itda_map_course (map_id, course_id, `rank`, similarity_score) "
+                "VALUES (:m, :c, :r, :s)"),
+                {"m": map_id, "c": c["course_id"], "r": i + 1, "s": c.get("score")})
+    await db.commit()
+    return {"ok": True, "map_id": map_id, "job": (card.get("job") or {}).get("name") or ""}
+
+
+async def list_maps(db, user_id: int) -> list[dict]:
+    """내 미래설계지도 목록 (최신순)."""
+    rows = (await db.execute(text(
+        "SELECT im.map_id, jc.job_name, jc.job_mcls_name, im.status, im.progress_step, im.created_at, "
+        "  (SELECT COUNT(*) FROM itda_map_cert WHERE map_id = im.map_id), "
+        "  (SELECT COUNT(*) FROM itda_map_course WHERE map_id = im.map_id) "
+        "FROM itda_map im JOIN job_catalog jc ON jc.job_code = im.job_code "
+        "WHERE im.user_id = :uid ORDER BY im.created_at DESC"), {"uid": user_id})).fetchall()
+    return [{"map_id": r[0], "job": r[1], "group": r[2] or "", "status": r[3],
+             "progress_step": r[4], "created_at": r[5].isoformat() if r[5] else None,
+             "n_cert": r[6], "n_course": r[7]} for r in rows]
+
+
+async def resume_map(db, user_id: int, map_id: int, session_id: str) -> dict:
+    """저장된 지도를 이어서 — 슬롯(profile)을 세션에 복원 + goal 재구성해 돌려준다."""
+    row = (await db.execute(text(
+        "SELECT profile_json FROM itda_map WHERE map_id = :mid AND user_id = :uid"),
+        {"mid": map_id, "uid": user_id})).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="지도를 찾을 수 없어요.")
+    profile = {}
+    if row[0]:
+        try:
+            profile = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        except Exception:
+            profile = {}
+    st = session.get(session_id)
+    st["profile"] = profile                       # 세션에 슬롯 복원 → 대화 이어감
+    st["last_card"] = None
+    goal = await _saved_goal(db, map_id)
+    return {"ok": True, "session_id": session_id, "profile": profile,
+            "goal": goal.model_dump()}
+
+
+async def delete_map(db, user_id: int, map_id: int) -> dict:
+    row = (await db.execute(text(
+        "SELECT 1 FROM itda_map WHERE map_id = :mid AND user_id = :uid"),
+        {"mid": map_id, "uid": user_id})).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="지도를 찾을 수 없어요.")
+    await db.execute(text("DELETE FROM itda_map_cert WHERE map_id = :mid"), {"mid": map_id})
+    await db.execute(text("DELETE FROM itda_map_course WHERE map_id = :mid"), {"mid": map_id})
+    await db.execute(text("DELETE FROM itda_map WHERE map_id = :mid"), {"mid": map_id})
+    await db.commit()
+    return {"ok": True}
