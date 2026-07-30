@@ -8,7 +8,40 @@ from nanuda.care_group_letters.schemas import (
     FamilyLetterCreate,
     FamilyLetterResponse,
 )
+from nanuda.care_groups import controllers
+from nanuda.care_groups.schemas import (
+    CareGroupCreate,
+    CareGroupCreateResponse,
+    CareGroupMemberResponse,
+    MyCareGroupResponse,
+)
 
+from nanuda.invite_codes import controllers
+from nanuda.invite_codes.schemas import (
+    InviteCodeCreate,
+    InviteCodeJoin,
+    InviteCodeJoinResponse,
+    InviteCodeResponse,
+)
+
+
+from nanuda.support_facilities import controllers
+from nanuda.support_facilities.schemas import (
+    SupportFacilityResponse,
+)
+from nanuda.support_facilities.schemas import (
+    SupportFacilityMapResponse,
+    SupportFacilityResponse,
+)
+
+
+from nanuda.weekly_care_analyses import (
+    controllers,
+)
+from nanuda.weekly_care_analyses.schemas import (
+    FacilityRecommendationRequest,
+    FacilityRecommendationResponse,
+)
 # router = APIRouter(prefix="/family-letters", tags=["가족편지"])
 
 
