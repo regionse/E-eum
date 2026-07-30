@@ -7,13 +7,11 @@ import { FamilyProvider } from './store/family.jsx'
 import './styles/global.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <FamilyProvider>
-          <App />
-        </FamilyProvider>
-      </AuthProvider>
-    </BrowserRouter>
-  </React.StrictMode>
+  <BrowserRouter>
+    <AuthProvider>
+      <FamilyProvider>
+        <App />
+      </FamilyProvider>
+    </AuthProvider>
+  </BrowserRouter>
 )
