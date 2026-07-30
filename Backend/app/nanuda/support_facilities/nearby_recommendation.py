@@ -1,12 +1,12 @@
 import os
+from asyncio import to_thread
 from difflib import SequenceMatcher
 
 import requests
 from dotenv import load_dotenv
 from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from nanuda.support_facilities.models import (
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..models import (
     support_facilities,
 )
 
@@ -199,44 +199,49 @@ def search_facility_on_kakao(
     return matched_places[0]
 
 
-def recommend_nearest_facility(
-    db: Session,
+async def recommend_nearest_facility(
+    db: AsyncSession,
     facility_type: str,
     latitude: float,
     longitude: float,
-) -> dict | None:
-    region = get_current_region(
+):
+    region = await to_thread(
+        get_current_region,
         latitude=latitude,
         longitude=longitude,
     )
 
-    region_1depth = region[
-        "region_1depth_name"
-    ]
-    region_2depth = region[
-        "region_2depth_name"
+    region_1depth = region.get("region_1depth_name")
+    region_2depth = region.get("region_2depth_name")
+
+    if not region_1depth:
+        raise ValueError(
+            "현재 위치의 시·도 정보를 찾지 못했습니다."
+        )
+
+    district_conditions = [
+        support_facilities.facility_type == facility_type,
+        support_facilities.address.is_not(None),
+        support_facilities.address.contains(region_1depth),
     ]
 
-    statement = (
-        select(support_facilities)
-        .where(
-            support_facilities.facility_type
-            == facility_type,
-            support_facilities.address.is_not(
-                None
-            ),
-            support_facilities.address.contains(
-                region_1depth
-            ),
+    if region_2depth:
+        district_conditions.append(
             support_facilities.address.contains(
                 region_2depth
-            ),
+            )
+        )
+
+    result = await db.execute(
+        select(support_facilities)
+        .where(
+            *district_conditions,
+        )
+        .order_by(
+            support_facilities.facility_name.asc()
         )
     )
-
-    facilities = db.execute(
-        statement
-    ).scalars().all()
+    facilities = list(result.scalars().all())
 
     # 같은 구에 기관이 없으면 시·도 범위로 확대
     if not facilities:
@@ -254,16 +259,16 @@ def recommend_nearest_facility(
             )
         )
 
-        facilities = db.execute(
-            statement
-        ).scalars().all()
+        result = await db.execute(statement)
+        facilities = list(result.scalars().all())
 
     recommendations = []
 
     for facility in facilities:
-        place = search_facility_on_kakao(
+        place = await to_thread(
+            search_facility_on_kakao,
             facility_name=facility.facility_name,
-            address=facility.address,
+            address=facility.address or "",
             latitude=latitude,
             longitude=longitude,
         )

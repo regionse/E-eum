@@ -53,7 +53,10 @@ export default function FamilyLetter() {
 
   return (
     <div className="container page">
-      <PageHead title="💌 가족편지" sub="가족이 함께 남기는 돌봄 기록 — 이 기록이 곧 ‘돌봄일지’예요." />
+      {/* 설명(PageHead)도 아래 컨텐츠와 같은 760 컬럼에 맞춰 가운데 정렬 — 왼쪽 치우침 교정 */}
+      <div style={{ maxWidth: 760, margin: '0 auto' }}>
+        <PageHead title="💌 가족편지" sub="가족이 함께 남기는 돌봄 기록 — 이 기록이 곧 ‘돌봄일지’예요." />
+      </div>
       <RequireLogin axis="가족편지">
         {!familyLinked ? <EmptyState /> : (
           <div style={{ maxWidth: 760, margin: '0 auto' }}>

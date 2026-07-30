@@ -37,6 +37,7 @@ import CareDiary from './pages/family/CareDiary.jsx'
 import CareDiaryDetail from './pages/family/CareDiaryDetail.jsx'
 // 관리자
 import AdminLogin from './pages/admin/AdminLogin.jsx'
+import Dashboard from './pages/admin/Dashboard.jsx'
 import AdminUsers from './pages/admin/AdminUsers.jsx'
 import AdminNotices from './pages/admin/AdminNotices.jsx'
 import AdminNoticeEdit from './pages/admin/AdminNoticeEdit.jsx'
@@ -94,8 +95,10 @@ export default function App() {
         {/* 관리자 */}
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route element={<AdminLayout />}>
+          {/* 첫 화면은 회원관리 — 대시보드는 아래 메뉴로 남긴다(2026-07-30) */}
           <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
           <Route path="/admin/users" element={<AdminUsers />} />
+          <Route path="/admin/dashboard" element={<Dashboard />} />
           <Route path="/admin/notices" element={<AdminNotices />} />
           <Route path="/admin/notices/new" element={<AdminNoticeEdit />} />
           <Route path="/admin/notices/:id" element={<AdminNoticeEdit />} />

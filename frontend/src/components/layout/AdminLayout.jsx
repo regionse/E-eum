@@ -4,6 +4,7 @@ import { useAuth } from '../../store/auth.jsx'
 // 그룹이 있으면 서브메뉴(덜다), 없으면 단일 항목
 const MENU = [
   { to: '/admin/users', label: '회원관리' },
+  { to: '/admin/dashboard', label: '대시보드' },   // 첫 화면은 회원관리 · 대시보드는 그 아래(2026-07-30)
   { to: '/admin/notices', label: '공지관리' },
   { to: '/admin/inquiries', label: '문의관리' },
   { to: '/admin/welfare', label: '덜다 · 정책 임베딩' },

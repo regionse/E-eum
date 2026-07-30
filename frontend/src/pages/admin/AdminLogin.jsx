@@ -37,8 +37,8 @@ export default function AdminLogin() {
             <input type="password" className={`input ${err.pw ? 'error' : ''}`} placeholder="••••••••" value={form.pw} onChange={set('pw')} />{err.pw && <span className="err">{err.pw}</span>}</div>
           <button className="btn btn-primary btn-block btn-lg" disabled={busy}>{busy ? '로그인 중…' : '로그인'}</button>
         </form>
-        <p className="hint center" style={{ marginTop: 12 }}>관리자 권한(<code>is_admin</code>) 계정으로 로그인하세요.</p>
-        <div className="center" style={{ marginTop: 12 }}><Link to="/" className="muted" style={{ fontSize: 13 }}>← 사용자 사이트로</Link></div>
+        {/* (2026-07-30) 'is_admin 계정으로 로그인하세요' 안내 제거 — 내부 컬럼명 노출이고 안내도 불필요. */}
+        <div className="center" style={{ marginTop: 16 }}><Link to="/" className="muted" style={{ fontSize: 13 }}>← 사용자 사이트로</Link></div>
       </div>
     </div>
   )

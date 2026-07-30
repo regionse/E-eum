@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from pathlib import Path
@@ -5,8 +6,8 @@ import requests
 from dotenv import load_dotenv
 from sqlalchemy import select
 
-from nanuda.database import SessionLocal
-from nanuda.support_facilities.models import (
+from app.database import SessionLocal
+from app.nanuda.models import (
     support_facilities,
 )
 
@@ -118,7 +119,7 @@ def request_family_centers(
     return items, total_count
 
 
-def save_family_centers():
+async def save_family_centers():
     db = SessionLocal()
 
     page_no = 1
@@ -130,9 +131,10 @@ def save_family_centers():
 
     try:
         while True:
-            items, total_count = request_family_centers(
-                page_no=page_no,
-                num_of_rows=num_of_rows,
+            items, total_count = await asyncio.to_thread(
+                request_family_centers,
+                page_no,
+                num_of_rows,
             )
 
             if not items:
@@ -173,9 +175,8 @@ def save_family_centers():
                     )
                 )
 
-                existing = db.execute(
-                    statement
-                ).scalar_one_or_none()
+                result = await db.execute(statement)
+                existing = result.scalar_one_or_none()
 
                 representative_phone = clean_value(
                     item.get("rprsTelno")
@@ -230,7 +231,7 @@ def save_family_centers():
                     db.add(facility)
                     created_count += 1
 
-            db.commit()
+            await db.commit()
 
             print(
                 f"{page_no}페이지 처리 완료 "
@@ -252,12 +253,12 @@ def save_family_centers():
         print("저장 제외:", skipped_count)
 
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
     finally:
-        db.close()
+        await db.close()
 
 
 if __name__ == "__main__":
-    save_family_centers()
+    asyncio.run(save_family_centers())

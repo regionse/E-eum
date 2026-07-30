@@ -20,22 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 
-# ── .env 읽기 (etc/.env 까지 뒤진다 — 팀 load_dotenv 의 한계 회피) ──
-def _read_env():
-    d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                s = line.strip()
-                if '=' in s and not s.startswith('#'):
-                    k, v = s.split('=', 1)
-                    d.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-        except FileNotFoundError:
-            continue
-    return d
-
-_ENV = {**_read_env(), **os.environ}
+# ── .env 읽기 — 공용 로더 하나만 쓴다(2026-07-30, app/itda/env.py) ──
+#  예전엔 이 파일·itda_core·match 가 각자 read_env 를 갖고 경로 목록이 서로 달랐다.
+try:
+    from .env import ENV as _ENV
+except ImportError:                     # CLI: path 에 app/itda 가 들어와 있을 때
+    from env import ENV as _ENV
 
 DB_HOST = _ENV.get('DB_HOST', 'localhost')
 DB_PORT = _ENV.get('DB_PORT', '3306')

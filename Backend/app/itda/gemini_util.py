@@ -1,135 +1,74 @@
 # -*- coding: utf-8 -*-
-"""Gemini 호출 공용 — 무료 키 우선 · 분당 한도는 대기 · 유료는 '하루' 소진 때만 (2026-07-24)
+"""Gemini 호출 공용 — 유료 키 1개 · 일시 오류만 재시도 (2026-07-30 슬림화 2차)
 
-사용자 정책
-  · 무료 키(GEMINI_API_KEY, GEMINI_API_KEY2)로 계속 돈다.
-  · 분당 한도(429 PerMinute)에 걸리면 → retryDelay 만큼 기다렸다 같은 키로 재시도.
-    (유료로 넘어가지 않는다 — 분당 한도는 1분 뒤 풀리니까)
-  · 하루 한도(429 PerDay)에 걸린 키만 '오늘 죽은 키'로 표시하고 다음 키로.
-  · 무료 키가 전부 하루 소진됐을 때 → 그제서야 유료 키(GEMINI_API_KEY3).
-  · ITDA_NO_PAID=1 이면 유료를 아예 안 쓴다.
+키 정책 (확정)
+  · 유료 키 **하나**(`GEMINI_API_KEY`)만 쓴다. 키 회전·무료/유료 승격은 하지 않는다.
+  · 유료 티어는 분당 한도가 넉넉해 429 가 드물지만, 몰리면 나올 수 있다.
+    그때 그냥 실패시키면 데모 중 대화가 툭 끊기므로 짧게 한 번 기다렸다 재시도한다.
+  · 네트워크 타임아웃·5xx 도 같은 이유로 한 번 흡수한다.
 
-유료/무료 구분은 키 이름으로 한다. 유료 키 이름은 ITDA_PAID_KEY_NAMES 로 바꿀 수 있고
-기본값은 'GEMINI_API_KEY3'. itda_core·match 양쪽이 이 한 곳을 쓴다.
+지운 것 (2026-07-30)
+  · 무료/유료 키 분리·유료 승격, ITDA_NO_PAID·ITDA_PAID_KEY_NAMES  (키 1개라 죽은 로직)
+  · 하루한도 소진 키 표시(_DEAD)와 자정 리셋                        (키 회전 전제 로직)
+  · 여러 키 순회                                                     (유료키 1개 확정)
+  되살릴 일이 생기면 git 이력(c83949e 이전)에 남아 있다.
+
+itda_core(대화)·match(임베딩) 양쪽이 이 한 곳을 쓴다.
 """
 import re
 import json
 import asyncio
-import datetime
 import urllib.request
 import urllib.error
 
-
-def split_keys(env):
-    """ENV → (무료 키 목록, 유료 키 목록). 이름으로 가른다."""
-    paid_names = [s.strip() for s in
-                  (env.get('ITDA_PAID_KEY_NAMES') or 'GEMINI_API_KEY3').split(',') if s.strip()]
-    items = sorted((k, v) for k, v in env.items() if k.startswith('GEMINI_API_KEY') and v)
-    free = list(dict.fromkeys(v for k, v in items if k not in paid_names))
-    paid = list(dict.fromkeys(v for k, v in items if k in paid_names))
-    return (free or [None]), paid
+KEY_NAME = 'GEMINI_API_KEY'      # 유료 키. 이름을 바꿀 일이 생기면 여기만 고친다.
 
 
-# 오늘 하루 한도가 소진된 키(값). 프로세스가 사는 동안만 기억한다.
-_DEAD = set()
-_DEAD_DATE = None          # _DEAD 를 기록한 날짜 — 날이 바뀌면(자정 지나 쿼터 리셋) 자동으로 비운다
+def get_key(env):
+    """유료 Gemini 키. 없으면 None (호출부가 상태표시·에러로 쓴다)."""
+    return env.get(KEY_NAME) or None
 
 
-def _parse_429(body):
-    """429 본문에서 (하루한도인가, 재시도 대기초) 를 뽑는다. 못 읽으면 (False, 30)."""
-    is_daily, retry = False, 30.0
+def _retry_after(body):
+    """429 본문의 retryDelay(초). 못 읽으면 20초."""
     try:
-        det = (json.loads(body).get('error', {}) or {}).get('details', []) or []
-        for d in det:
-            t = d.get('@type', '')
-            if 'QuotaFailure' in t:
-                for v in d.get('violations', []):
-                    qid = (str(v.get('quotaId', '')) + str(v.get('quotaMetric', ''))).lower()
-                    if 'perday' in qid or 'per_day' in qid:
-                        is_daily = True
-            if 'RetryInfo' in t:
+        for d in (json.loads(body).get('error', {}) or {}).get('details', []) or []:
+            if 'RetryInfo' in d.get('@type', ''):
                 m = re.match(r'(\d+)', str(d.get('retryDelay', '')))
                 if m:
-                    retry = float(m.group(1))
+                    return float(m.group(1))
     except Exception:
         pass
-    return is_daily, retry
+    return 20.0
 
 
-async def call(make_request, env, *, keys_override=None, max_rpm_wait=4):
-    """make_request(key) -> bytes (POST 실행) 를 무료→(하루소진 시)유료 순으로 호출.
+async def call(make_request, env, *, key=None, max_retry=2):
+    """make_request(key) -> bytes (POST 실행). 반환: 파싱된 json(dict).
 
-    반환: 파싱된 json(dict). 분당 한도는 내부에서 기다렸다 재시도한다.
-    keys_override 가 있으면 그 키들만 쓴다(테스트/명시 키). 유료 승격 없음.
+    429(한도)·5xx(일시)·네트워크/파싱 오류는 최대 max_retry 회 재시도한다.
+    400·404(요청이 잘못됨)·403(권한/결제)은 재시도해도 같으니 즉시 올린다.
     """
-    if keys_override is not None:
-        free, paid = list(keys_override), []
-    else:
-        free, paid = split_keys(env)
-    no_paid = (env.get('ITDA_NO_PAID') or '') not in ('', '0', 'false', 'False')
+    k = key or get_key(env)
+    if not k:
+        raise RuntimeError(f'{KEY_NAME} 없음 — etc/.env 확인')
 
-    global _DEAD_DATE                       # 날짜 바뀌면 하루한도 죽은 키 초기화(자정 쿼터 리셋 반영)
-    _today = datetime.date.today()
-    if _today != _DEAD_DATE:
-        _DEAD.clear()
-        _DEAD_DATE = _today
-
-    last = None
-    # ── 1) 무료(또는 지정) 키 — 분당 한도는 기다렸다 재시도 ──
-    #   에러코드별로 갈라야 유료 폴백이 제대로 산다(코드감사 #2):
-    #     하루한도·403(망가진 키) → _DEAD 표시 → 무료가 다 죽으면 유료로.
-    #     분당한도 → 기다렸다 재시도, 초과하면 다음 키(죽은 건 아님 → 유료 안 감, 비용 규율).
-    #     5xx(일시) → 다른 무료 키 시도.  400·404(요청 문제) → 다른 키로도 같으니 즉시 중단.
-    for key in free:
-        if key in _DEAD:
-            last = 'daily/권한 소진'
-            continue
-        waits = 0
-        while True:
-            try:
-                return json.loads(await asyncio.to_thread(make_request, key))
-            except urllib.error.HTTPError as e:
-                body = e.read().decode('utf-8', 'replace')
-                if e.code == 429:
-                    is_daily, retry = _parse_429(body)
-                    if is_daily:
-                        _DEAD.add(key); last = 'daily 소진'
-                        print('[gemini] 무료 키 하루 소진 → 죽은 키 표시(유료 후보)')
-                        break
-                    if waits < max_rpm_wait:
-                        waits += 1; last = f'분당한도 — {retry:.0f}s 대기'
-                        await asyncio.sleep(min(retry + 1, 65)); continue
-                    last = '분당한도 초과'; break                       # 다음 키 (죽은 건 아님)
-                if e.code == 403:
-                    _DEAD.add(key); last = '403(권한/결제)'
-                    print('[gemini] 무료 키 403(권한/결제) → 죽은 키 표시')
-                    break                                              # 망가진 키 → 유료 후보로
-                if e.code in (500, 502, 503):
-                    last = f'{e.code}(일시)'; break                     # 다른 무료 키 시도
+    tries = 0
+    while True:
+        try:
+            return json.loads(await asyncio.to_thread(make_request, k))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', 'replace')
+            transient = e.code == 429 or e.code in (500, 502, 503)
+            if not transient or tries >= max_retry:
                 raise RuntimeError(f'Gemini {e.code}: {body[:150]}') from None
-            except (urllib.error.URLError, TimeoutError, ValueError) as e:
-                # 네트워크(타임아웃·연결실패)·JSON 파싱 오류 — HTTPError 밖이라 예전엔 키회전 못 하고
-                # 그 턴이 통째 실패했다(코드감사). 이제 일시 오류로 보고 다음 무료 키를 시도한다.
-                last = f'네트워크/파싱({type(e).__name__})'; break
-
-    # ── 2) 유료 키 — '무료 키가 전부 하루 소진'됐을 때만 ──
-    if paid and not no_paid and keys_override is None and all(k in _DEAD for k in free):
-        print('[gemini] 무료 키 전부 하루 소진 → 유료 키로 전환')
-        for key in paid:
-            try:
-                return json.loads(await asyncio.to_thread(make_request, key))
-            except urllib.error.HTTPError as e:
-                body = e.read().decode('utf-8', 'replace')
-                if e.code in (429, 503):
-                    _, retry = _parse_429(body)
-                    await asyncio.sleep(min(retry + 1, 65))
-                    try:
-                        return json.loads(await asyncio.to_thread(make_request, key))
-                    except urllib.error.HTTPError as e2:
-                        body = e2.read().decode('utf-8', 'replace')
-                        raise RuntimeError(f'Gemini(유료) {e2.code}: {body[:150]}') from None
-                raise RuntimeError(f'Gemini(유료) {e.code}: {body[:150]}') from None
-
-    raise RuntimeError(
-        f'Gemini 무료 키 소진 (마지막: {last}). '
-        f'분당 한도면 잠시 뒤 다시 시도돼요. 무료 하루 한도가 전부 빠졌으면 유료로 자동 전환됩니다.')
+            wait = _retry_after(body) if e.code == 429 else 2.0
+            tries += 1
+            print(f'[gemini] {e.code} — {wait:.0f}s 후 재시도 ({tries}/{max_retry})')
+            await asyncio.sleep(min(wait + 1, 65))
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            # 네트워크(타임아웃·연결실패)·JSON 파싱 오류 — 일시 오류로 보고 재시도.
+            if tries >= max_retry:
+                raise RuntimeError(f'Gemini 호출 실패 — {type(e).__name__}: {str(e)[:110]}') from None
+            tries += 1
+            print(f'[gemini] {type(e).__name__} — 2s 후 재시도 ({tries}/{max_retry})')
+            await asyncio.sleep(2.0)

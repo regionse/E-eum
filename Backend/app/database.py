@@ -2,9 +2,14 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+# from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import declarative_base, sessionmaker
-
+from sqlalchemy.orm import DeclarativeBase
 
 # database.py가 있는 app 폴더의 .env를 읽는다.
 ENV_PATH = (
@@ -66,7 +71,7 @@ engine = create_async_engine(
 # Session
 # ==========================
 
-SessionLocal = sessionmaker(
+SessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
     autocommit=False,
@@ -79,7 +84,10 @@ SessionLocal = sessionmaker(
 # Base
 # ==========================
 
-Base = declarative_base()
+# Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
 
@@ -109,6 +117,7 @@ async def init_db() -> None:
     # 모델을 import해야 Base.metadata가 테이블을 인식한다.
     from app.user import models as user_models
     from app.delda import models as delda_models  # noqa: F401
+    from app.nanuda import models as nanuda_models  
 
     async with engine.begin() as connection:
         await connection.run_sync(

@@ -10,7 +10,6 @@
 · itda_core 는 async 다(2026-07-24). db 세션은 라우터가 Depends(get_db)로 주입한다.
 """
 import json
-import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -36,17 +35,26 @@ def get_engine():
 
 # ── 카드 → 프론트 goal ──────────────────────────────────────────────
 def _exam_text(exam):
-    """exam = (회차, 필기시작, 실기시작, 발표) → 사람이 읽는 한 줄"""
+    """exam(dict) → 사람이 읽는 한 줄. **접수 마감일을 맨 앞에** 둔다.
+
+    사용자가 놓쳐서 1년을 기다리게 되는 날짜는 시험일이 아니라 접수 마감일이다.
+    (2026-07-30: 위치 언패킹 → 키 접근으로 변경 — 컬럼 추가에 조용히 깨지지 않게.)
+    """
     if not exam:
         return "다음 시험 일정이 아직 공고되지 않았어요"
-    seq, doc, prac, pas = exam
+    if not isinstance(exam, dict):             # 옛 튜플 형태 방어(저장된 카드 등)
+        seq, doc, prac, pas = (list(exam) + [None] * 4)[:4]
+        exam = {'seq': seq, 'doc': doc, 'prac': prac, 'pass': pas}
     bits = []
-    if doc:
-        bits.append(f"필기 {doc}")
-    if prac:
-        bits.append(f"실기 {prac}")
-    if pas:
-        bits.append(f"발표 {pas}")
+    if exam.get("reg_end"):
+        bits.append(f"접수 ~{exam['reg_end']}")
+    if exam.get("doc"):
+        bits.append(f"필기 {exam['doc']}")
+    if exam.get("prac"):
+        bits.append(f"실기 {exam['prac']}")
+    if exam.get("pass"):
+        bits.append(f"발표 {exam['pass']}")
+    seq = exam.get("seq")
     return f"제{seq}회 · " + " · ".join(bits) if bits else f"제{seq}회"
 
 
@@ -63,7 +71,7 @@ def _to_goal(card) -> Goal:
         free = bool(c.get("entry_free"))
         certs.append(CertStep(
             cert=c["cert"], grade=c.get("grade") or "", entry_free=free,
-            entry="지금 바로 응시 가능" if free else "응시자격 확인 필요",
+            entry="조건 없음" if free else "응시자격 확인 필요",
             entry_note="" if free else (c.get("entry_note") or ""),
             exam=_exam_text(c.get("exam")),
             verified=bool(c.get("verified")),
@@ -115,7 +123,6 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
 
     profile = r["profile"]
     st["profile"] = profile
-    st["done"] = bool(r.get("card"))
     done, total = _progress(profile)
 
     kind = r["kind"]
@@ -176,6 +183,9 @@ async def _saved_goal(db, map_id: int) -> Goal:
         "SELECT jc.job_name, jc.job_mcls_name, jc.job_description "
         "FROM itda_map im JOIN job_catalog jc ON jc.job_code = im.job_code "
         "WHERE im.map_id = :mid"), {"mid": map_id})).fetchone()
+    #  JOIN 이 안 맞으면(직업코드가 카탈로그에서 사라진 경우) m 이 None 이라 아래에서 500 이 났다.
+    if not m:
+        raise HTTPException(status_code=404, detail="지도의 직업 정보를 찾을 수 없어요.")
     cert_rows = (await db.execute(text(
         "SELECT c.jm_name, COALESCE(c.grade_std, c.grade), c.entry_free, c.entry_note "
         "FROM itda_map_cert mc JOIN certification c ON c.cert_id = mc.cert_id "
@@ -185,7 +195,7 @@ async def _saved_goal(db, map_id: int) -> Goal:
         "FROM itda_map_course mco JOIN course co ON co.course_id = mco.course_id "
         "WHERE mco.map_id = :mid ORDER BY mco.`rank`"), {"mid": map_id})).fetchall()
     certs = [CertStep(cert=r[0], grade=r[1] or "", entry_free=(r[2] == 1),
-                      entry="지금 바로 응시 가능" if r[2] == 1 else "응시자격 확인 필요",
+                      entry="조건 없음" if r[2] == 1 else "응시자격 확인 필요",
                       entry_note="" if r[2] == 1 else (r[3] or "")) for r in cert_rows]
     courses = [Course(title=r[0], professor=r[1] or "", classfy=r[2] or "",
                       url=r[3] or "", score=float(r[4] or 0)) for r in course_rows]
@@ -203,10 +213,45 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     st = session.get(session_id)
     card = st.get("last_card") or {}
     job_code = (card.get("job") or {}).get("code")
+
+    #  ★ '이어서하기' 세션 대응(2026-07-30 · 사용자 신고) — resume 로 들어온 세션은 새 대화를 안 했으니
+    #    last_card 가 비어 있다. 예전엔 그 상태에서 저장을 누르면 400("아직 저장할 결과가 없어요")만 떴다.
+    #    이미 저장된 그 지도를 already=True 로 돌려준다(프론트가 안내하고 목록으로 보낼 수 있게).
     if not job_code:
+        rid = st.get("resumed_map_id")
+        if rid:
+            row = (await db.execute(text(
+                "SELECT im.map_id, jc.job_name FROM itda_map im "
+                "JOIN job_catalog jc ON jc.job_code = im.job_code "
+                "WHERE im.map_id = :mid AND im.user_id = :uid"),
+                {"mid": rid, "uid": user_id})).fetchone()
+            if row:
+                return {"ok": True, "map_id": row[0], "job": row[1], "already": True}
         raise HTTPException(status_code=400,
                             detail="아직 저장할 결과가 없어요. 대화로 직업을 찾은 뒤 저장해 주세요.")
+
     profile = st.get("profile") or {}
+
+    #  ★ 중복 저장 방지 — 같은 직업 지도를 이미 갖고 있으면 새 행을 만들지 않는다.
+    #    단, '그냥 옛 지도를 돌려주기'만 하면 대화를 더 해서 갱신된 카드(자격증·강좌·슬롯)가
+    #    조용히 버려진다 → 사용자는 저장했다고 믿는데 내용이 옛것이다. 그래서 **덮어쓴다**.
+    dup = (await db.execute(text(
+        "SELECT map_id FROM itda_map WHERE user_id = :uid AND job_code = :jc "
+        "ORDER BY created_at DESC LIMIT 1"), {"uid": user_id, "jc": job_code})).fetchone()
+    if dup:
+        map_id = dup[0]
+        done, _ = _progress(profile)
+        await db.execute(text(
+            "UPDATE itda_map SET progress_step = :ps, profile_json = :pj WHERE map_id = :mid"),
+            {"ps": done, "pj": json.dumps(profile, ensure_ascii=False), "mid": map_id})
+        #  자격증·강좌는 통째로 다시 넣는다(카드가 바뀌었을 수 있다).
+        await db.execute(text("DELETE FROM itda_map_cert WHERE map_id = :mid"), {"mid": map_id})
+        await db.execute(text("DELETE FROM itda_map_course WHERE map_id = :mid"), {"mid": map_id})
+        await _fill_map_children(db, map_id, card)
+        await db.commit()
+        return {"ok": True, "map_id": map_id,
+                "job": (card.get("job") or {}).get("name") or "", "already": True}
+
     done, _ = _progress(profile)
     res = await db.execute(text(
         "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
@@ -214,6 +259,14 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         {"uid": user_id, "jc": job_code, "ps": done,
          "pj": json.dumps(profile, ensure_ascii=False)})
     map_id = res.lastrowid
+    await _fill_map_children(db, map_id, card)
+    await db.commit()
+    return {"ok": True, "map_id": map_id,
+            "job": (card.get("job") or {}).get("name") or "", "already": False}
+
+
+async def _fill_map_children(db, map_id: int, card: dict) -> None:
+    """지도의 자격증·강좌 행을 넣는다 — 신규 저장과 덮어쓰기가 같은 코드를 쓰게(2026-07-30)."""
     for i, c in enumerate(card.get("certs") or []):
         if c.get("cert_id"):
             await db.execute(text(
@@ -225,8 +278,6 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
                 "INSERT INTO itda_map_course (map_id, course_id, `rank`, similarity_score) "
                 "VALUES (:m, :c, :r, :s)"),
                 {"m": map_id, "c": c["course_id"], "r": i + 1, "s": c.get("score")})
-    await db.commit()
-    return {"ok": True, "map_id": map_id, "job": (card.get("job") or {}).get("name") or ""}
 
 
 async def list_maps(db, user_id: int) -> list[dict]:
@@ -242,6 +293,18 @@ async def list_maps(db, user_id: int) -> list[dict]:
              "n_cert": r[6], "n_course": r[7]} for r in rows]
 
 
+async def get_map(db, user_id: int, map_id: int) -> dict:
+    """저장된 지도 상세 — 세션을 건드리지 않는 '읽기 전용' 조회(잇다 홈 팝업용, 2026-07-30).
+    resume_map 은 세션 슬롯을 덮어써서 단순 열람에는 쓸 수 없었다."""
+    own = (await db.execute(text(
+        "SELECT 1 FROM itda_map WHERE map_id = :mid AND user_id = :uid"),
+        {"mid": map_id, "uid": user_id})).fetchone()
+    if not own:
+        raise HTTPException(status_code=404, detail="지도를 찾을 수 없어요.")
+    goal = await _saved_goal(db, map_id)
+    return {"ok": True, "map_id": map_id, "goal": goal.model_dump()}
+
+
 async def resume_map(db, user_id: int, map_id: int, session_id: str) -> dict:
     """저장된 지도를 이어서 — 슬롯(profile)을 세션에 복원 + goal 재구성해 돌려준다."""
     row = (await db.execute(text(
@@ -253,11 +316,15 @@ async def resume_map(db, user_id: int, map_id: int, session_id: str) -> dict:
     if row[0]:
         try:
             profile = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-        except Exception:
+        except Exception as e:
+            #  조용히 {} 로 밀어버리면 사용자는 슬롯이 왜 사라졌는지 알 수 없다 → 로그를 남긴다.
+            print(f"[itda] 지도 {map_id} profile_json 파싱 실패 — 슬롯 복원 없이 진행: "
+                  f"{type(e).__name__}: {e}")
             profile = {}
     st = session.get(session_id)
     st["profile"] = profile                       # 세션에 슬롯 복원 → 대화 이어감
     st["last_card"] = None
+    st["resumed_map_id"] = map_id                 # 저장 버튼이 '이미 저장됨'을 알 수 있게(save_map 참고)
     goal = await _saved_goal(db, map_id)
     return {"ok": True, "session_id": session_id, "profile": profile,
             "goal": goal.model_dump()}
