@@ -35,7 +35,7 @@ class Notice(Base):
     # 관리자 식별번호
     admin_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("admin.admin_id"),
+        ForeignKey("user.user_id", ondelete="RESTRICT"),
         nullable=False,
     )
 
@@ -85,8 +85,8 @@ class Notice(Base):
     )
 
     # 조회수
-    view_cnt: Mapped[int | None] = mapped_column(
+    view_cnt: Mapped[int] = mapped_column(
         Integer,
-        nullable=True,
+        nullable=False,
         default=0,
     )
