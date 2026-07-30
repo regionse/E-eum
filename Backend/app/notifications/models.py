@@ -1,6 +1,6 @@
 from datetime import datetime
 # from enum import Enum
-from nanuda.shared.existing_tables import user_table
+from user import User
 from nanuda.database import Base
 from sqlalchemy import (
     DateTime,
