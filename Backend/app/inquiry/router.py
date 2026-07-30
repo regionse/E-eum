@@ -1,6 +1,7 @@
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
     Query,
     status,
 )
@@ -30,7 +31,7 @@ from app.inquiry.schemas import (
 # =========================================================
 user_router = APIRouter(
     prefix="/inquiries",
-    tags=["사용자 문의"],
+    tags=["문의"],
 )
 
 
@@ -44,10 +45,8 @@ admin_router = APIRouter(
 
 
 # =========================================================
-# 사용자 문의 API
+# 사용자: 문의 등록
 # =========================================================
-
-
 @user_router.post(
     "",
     response_model=InquiryDetailResponse,
@@ -55,21 +54,24 @@ admin_router = APIRouter(
     summary="문의 등록",
 )
 async def create_inquiry(
-    request: InquiryCreateRequest,
+    inquiry_data: InquiryCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     return await controllers.create_inquiry(
         db=db,
-        request=request,
+        inquiry_data=inquiry_data,
     )
 
 
+# =========================================================
+# 사용자: 본인 문의 목록 조회
+# =========================================================
 @user_router.get(
     "",
     response_model=InquiryListResponse,
-    summary="내 문의 목록 조회",
+    summary="본인 문의 목록 조회",
 )
-async def get_my_inquiries(
+async def get_user_inquiries(
     user_id: int = Query(
         ...,
         gt=0,
@@ -78,11 +80,13 @@ async def get_my_inquiries(
     page: int = Query(
         default=1,
         ge=1,
+        description="페이지 번호",
     ),
     size: int = Query(
         default=10,
         ge=1,
         le=100,
+        description="페이지당 문의 개수",
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -94,12 +98,15 @@ async def get_my_inquiries(
     )
 
 
+# =========================================================
+# 사용자: 본인 문의 상세 조회
+# =========================================================
 @user_router.get(
     "/{inquiry_id}",
     response_model=InquiryDetailResponse,
-    summary="내 문의 상세 조회",
+    summary="본인 문의 상세 조회",
 )
-async def get_my_inquiry_detail(
+async def get_user_inquiry(
     inquiry_id: int,
     user_id: int = Query(
         ...,
@@ -108,19 +115,30 @@ async def get_my_inquiry_detail(
     ),
     db: AsyncSession = Depends(get_db),
 ):
-    return await controllers.get_user_inquiry_detail(
+    inquiry = await controllers.get_user_inquiry_by_id(
         db=db,
         inquiry_id=inquiry_id,
         user_id=user_id,
     )
 
+    if inquiry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="문의를 찾을 수 없습니다.",
+        )
 
+    return inquiry
+
+
+# =========================================================
+# 사용자: 본인 문의 삭제
+# =========================================================
 @user_router.delete(
     "/{inquiry_id}",
     response_model=MessageResponse,
-    summary="내 문의 삭제",
+    summary="본인 문의 삭제",
 )
-async def delete_my_inquiry(
+async def delete_user_inquiry(
     inquiry_id: int,
     user_id: int = Query(
         ...,
@@ -136,15 +154,13 @@ async def delete_my_inquiry(
     )
 
     return MessageResponse(
-        message="문의가 삭제되었습니다."
+        message="문의가 삭제되었습니다.",
     )
 
 
 # =========================================================
-# 관리자 문의 API
+# 관리자: 문의 목록 조회
 # =========================================================
-
-
 @admin_router.get(
     "",
     response_model=AdminInquiryListResponse,
@@ -154,11 +170,13 @@ async def get_admin_inquiries(
     page: int = Query(
         default=1,
         ge=1,
+        description="페이지 번호",
     ),
     size: int = Query(
         default=10,
         ge=1,
         le=100,
+        description="페이지당 문의 개수",
     ),
     inquiry_type: InquiryType | None = Query(
         default=None,
@@ -166,12 +184,12 @@ async def get_admin_inquiries(
     ),
     inquiry_status: InquiryStatus | None = Query(
         default=None,
-        description="처리 상태 필터",
+        description="문의 처리 상태 필터",
     ),
     keyword: str | None = Query(
         default=None,
         max_length=100,
-        description="제목 또는 사용자 번호 검색",
+        description="제목, 내용 또는 사용자 번호 검색",
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -185,68 +203,105 @@ async def get_admin_inquiries(
     )
 
 
+# =========================================================
+# 관리자: 문의 상세 조회
+# =========================================================
 @admin_router.get(
     "/{inquiry_id}",
     response_model=AdminInquiryDetailResponse,
     summary="관리자 문의 상세 조회",
 )
-async def get_admin_inquiry_detail(
+async def get_admin_inquiry(
     inquiry_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    return await controllers.get_admin_inquiry_detail(
+    inquiry = await controllers.get_admin_inquiry_by_id(
         db=db,
         inquiry_id=inquiry_id,
     )
 
+    if inquiry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="문의를 찾을 수 없습니다.",
+        )
 
+    return inquiry
+
+
+# =========================================================
+# 관리자: 문의 답변 등록
+# =========================================================
 @admin_router.post(
     "/{inquiry_id}/answer",
     response_model=AdminInquiryDetailResponse,
-    summary="관리자 답변 등록",
+    summary="관리자 문의 답변 등록",
 )
 async def create_inquiry_answer(
     inquiry_id: int,
-    request: InquiryAnswerRequest,
+    answer_data: InquiryAnswerRequest,
+    admin_id: int = Query(
+        ...,
+        gt=0,
+        description="현재 로그인한 관리자 번호",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     return await controllers.create_inquiry_answer(
         db=db,
         inquiry_id=inquiry_id,
-        request=request,
+        admin_id=admin_id,
+        answer_data=answer_data,
     )
 
 
-@admin_router.put(
+# =========================================================
+# 관리자: 문의 답변 수정
+# =========================================================
+@admin_router.patch(
     "/{inquiry_id}/answer",
     response_model=AdminInquiryDetailResponse,
-    summary="관리자 답변 수정",
+    summary="관리자 문의 답변 수정",
 )
 async def update_inquiry_answer(
     inquiry_id: int,
-    request: InquiryAnswerUpdateRequest,
+    answer_data: InquiryAnswerUpdateRequest,
+    admin_id: int = Query(
+        ...,
+        gt=0,
+        description="현재 로그인한 관리자 번호",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     return await controllers.update_inquiry_answer(
         db=db,
         inquiry_id=inquiry_id,
-        request=request,
+        admin_id=admin_id,
+        answer_data=answer_data,
     )
 
 
+# =========================================================
+# 관리자: 문의 처리 상태 변경
+# =========================================================
 @admin_router.patch(
     "/{inquiry_id}/status",
     response_model=AdminInquiryDetailResponse,
-    summary="문의 처리 상태 변경",
+    summary="관리자 문의 처리 상태 변경",
 )
 async def update_inquiry_status(
     inquiry_id: int,
-    request: InquiryStatusUpdateRequest,
+    status_data: InquiryStatusUpdateRequest,
+    admin_id: int = Query(
+        ...,
+        gt=0,
+        description="현재 로그인한 관리자 번호",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     return await controllers.update_inquiry_status(
         db=db,
         inquiry_id=inquiry_id,
-        admin_id=request.admin_id,
-        new_status=request.inquiry_status,
+        admin_id=admin_id,
+        inquiry_status=status_data.inquiry_status,
     )
