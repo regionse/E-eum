@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useToast, Modal } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
 import { useAuth } from '../../store/auth.jsx'
-import { chatItda, saveMap, loadItdaDraft, saveItdaDraft } from '../../api/learn.js'
+import { chatItda, saveMap, loadItdaDraft, saveItdaDraft, clearItdaDraft } from '../../api/learn.js'
 import { BAD_WORDS } from '../../utils/text.js'
 
 // 잇다 대화 — 관심·가치를 말하면 AI가 대화로 이해해 '방향(직업)'을 잡고,
@@ -16,6 +16,7 @@ export default function LearnChat() {
   const toast = useToast()
   const loc = useLocation()
   const { user } = useAuth()
+  const nav = useNavigate()
   const uid = user?.user_id                          // ★ 대화 draft를 사용자별로 분리(계정 섞임 방지)
   const rs = loc.state?.goal ? loc.state : null      // '이어서하기'로 들어온 경우(복원된 세션+지도)
   const draft = loadItdaDraft(uid)                   // 이 사용자의 보관 대화만 복원. '새 지도/이어서하기'는 LearnHub가 비운다.
@@ -54,7 +55,13 @@ export default function LearnChat() {
       return
     }
     push({ role: 'me', kind: 'text', text: q })
-    if (BAD_WORDS.some((w) => q.includes(w))) {
+    //  ★ 자기 위해 신호는 프론트에서 막지 않는다(2026-07-30). 공유 BAD_WORDS 에 '죽어'가 있어
+    //    "죽어버리고 싶어요" 같은 말이 여기서 걸려 "그런 쪽은 도와드리기 어려워요"가 떴다.
+    //    백엔드가 상담 연락처를 안내하도록 그대로 보낸다. (text.js 는 덜다도 쓰므로 건드리지 않는다.)
+    const flat = q.replace(/\s/g, '')
+    const selfHarm = ['자살', '죽고싶', '죽어버리', '살기싫', '사라지고싶', '없어지고싶',
+      '자해', '끝내고싶', '죽는게', '죽어야'].some((w) => flat.includes(w))
+    if (!selfHarm && BAD_WORDS.some((w) => q.includes(w))) {
       push({ role: 'bot', kind: 'text', text: '그런 쪽은 도와드리기 어려워요. 되고 싶은 모습이나 관심 있는 걸 들려주세요.' })
       return
     }
@@ -64,9 +71,11 @@ export default function LearnChat() {
       const res = await chatItda(sid, q)
       if (sid !== sidRef.current) return
       if (res.type === 'result') {
+        //  ★ 지도를 바로 펼치지 않는다(2026-07-30) — 대화 도중 카드가 갑자기 나오면
+        //    사용자가 확인할 틈 없이 결론이 던져지는(충동적인) 느낌을 준다.
+        //    한 번 더 "이 방향 맞을까요?"로 확인받고, 누를 때 지도를 연다. 데이터는 이미 받아뒀다.
         if (res.reply) push({ role: 'bot', kind: 'text', text: res.reply })
-        push({ role: 'bot', kind: 'goal', goal: res.goal, alternatives: res.alternatives || [] })
-        setMapped(true)
+        push({ role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] })
       } else {
         push({ role: 'bot', kind: 'text', text: res.reply })
       }
@@ -78,12 +87,25 @@ export default function LearnChat() {
     }
   }
 
+  //  확인 카드('이 방향 맞을까요?')를 눌렀을 때 → 그 자리를 실제 지도로 바꾼다.
+  //  대화 기록에 남으므로 새로고침·이어서하기에도 지도가 그대로 보인다.
+  const openGoal = (proposeMsg) => {
+    setMsgs((prev) => prev.map((m) => (m === proposeMsg
+      ? { ...m, kind: 'goal' }
+      : m)))
+    setMapped(true)
+  }
+
   // 저장 — 백엔드가 세션에 캐시한 '마지막 카드'를 담는다 → session_id 만 넘기면 됨.
   const doSave = async () => {
     setAskSave(null); setSaving(true)
     try {
       const r = await saveMap(sidRef.current)
-      toast.show(`미래설계지도에 저장했어요 · ${r.job}`)
+      //  already=true 는 '이어서하기로 들어와 이미 저장된 지도' 또는 '같은 직업을 이미 저장'한 경우.
+      //  예전엔 이 상황이 400 이라 "아직 저장할 결과가 없어요"만 떠서 아무 일도 안 하는 것처럼 보였다.
+      toast.show(r.already ? `이미 저장된 지도예요 · ${r.job}` : `미래설계지도에 저장했어요 · ${r.job}`)
+      clearItdaDraft(uid)                       // 저장했으니 임시 대화는 비운다
+      setTimeout(() => nav('/learn'), 900)      // 저장 후 잇다 홈(지도 목록)으로
     } catch (e) {
       toast.show(e?.message || '저장에 실패했어요. 로그인 상태를 확인해 주세요.')
     } finally { setSaving(false) }
@@ -115,7 +137,7 @@ export default function LearnChat() {
           <div className="chat-wrap" role="log" aria-live="polite"
             style={{ height: 500, fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
-              <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} />
+              <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal} />
             ))}
             {busy && <TypingBubble />}
             <div ref={endRef} />
@@ -149,10 +171,47 @@ export default function LearnChat() {
   )
 }
 
-function ChatItem({ m, onSave }) {
+// 지도 직전 '확인' 단계 — 방향을 제안하고, 사용자가 누를 때 비로소 지도를 펼친다.
+//  대화 중 결론이 갑자기 던져지는 느낌을 없애기 위한 한 박자 (2026-07-30).
+function ProposeCard({ goal, alternatives, onOpen }) {
+  return (
+    <div className="card card-pad" style={{ alignSelf: 'stretch', borderColor: 'var(--teal-200)' }}>
+      <div style={{ fontSize: 15.5, lineHeight: 1.7 }}>
+        말씀 주신 걸 들어보니, 이런 방향이 맞을 것 같아요. <b>이거 맞으실까요?</b>
+      </div>
+
+      <button className="card card-hover" onClick={onOpen}
+        style={{ display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+          marginTop: 14, padding: '16px 18px', borderColor: 'var(--teal-300)',
+          background: 'var(--teal-50)' }}>
+        <div className="muted" style={{ fontSize: 12.5, marginBottom: 4 }}>제가 추천하는 방향</div>
+        <div className="row" style={{ justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+          <b style={{ fontSize: 21, color: 'var(--teal-700)' }}>{goal.job}</b>
+          {goal.group && <span className="badge badge-gray" style={{ fontSize: 12 }}>{goal.group}</span>}
+        </div>
+        <div style={{ fontSize: 13.5, color: 'var(--teal-700)', marginTop: 10, fontWeight: 700 }}>
+          눌러서 미래설계지도 보기 →
+        </div>
+      </button>
+
+      {alternatives?.length > 0 && (
+        <div className="muted" style={{ fontSize: 13.5, marginTop: 12, lineHeight: 1.7 }}>
+          이 방향이 아니라면 · {alternatives.join(' · ')}<br />
+          <span style={{ fontSize: 13 }}>아래에 다시 말씀해 주시면 다른 방향으로 찾아드려요.</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChatItem({ m, onSave, onOpenGoal }) {
   if (m.kind === 'text') return (
     <div className={`bubble ${m.role === 'me' ? 'me' : 'bot'}`}
       style={{ fontSize: 15.5, lineHeight: 1.7, padding: '12px 16px' }}>{m.text}</div>
+  )
+  if (m.kind === 'propose') return (
+    <ProposeCard goal={m.goal} alternatives={m.alternatives}
+      onOpen={() => onOpenGoal(m)} />
   )
   if (m.kind === 'goal') return <GoalCard goal={m.goal} alternatives={m.alternatives} onSave={onSave} />
   return null
@@ -169,19 +228,13 @@ function Examples({ items, onPick }) {
   )
 }
 
-const THINK_STEPS = ['말씀을 읽고 있어요…', '어울리는 방향을 찾고 있어요…', '자격증·무료강좌·국비훈련을 맞춰보고 있어요…']
-
+// 로딩 문구 — 단계별로 바꾸던 3문장을 한 문장으로 통일(2026-07-30).
+//  단계를 시간(1.3s·3.2s)으로 추측해 바꾸다 보니 실제 진행과 어긋나고 산만했다.
 function TypingBubble() {
-  const [i, setI] = useState(0)
-  useEffect(() => {
-    const t1 = setTimeout(() => setI(1), 1300)
-    const t2 = setTimeout(() => setI(2), 3200)
-    return () => { clearTimeout(t1); clearTimeout(t2) }
-  }, [])
   return (
     <div className="bubble bot" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, width: 'fit-content', fontSize: 15 }}>
       <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-      {THINK_STEPS[i]}
+      대화하신 내용을 이해하고 있어요…
     </div>
   )
 }
@@ -219,21 +272,23 @@ function GoalCard({ goal, alternatives, onSave }) {
         <div className="section-title" style={{ fontSize: 16, marginBottom: 12 }}>
           {goal.no_cert_path ? '이 방향으로 가는 길' : '이 방향의 자격증'}
         </div>
+        {/* 자격증 목록 — 카드 하나에 얇은 구분선으로 붙인다.
+            예전엔 자격증마다 큰 카드였고 이름과 배지 사이가 통째로 비어 한 줄을 낭비했다. */}
         {certs.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="card" style={{ padding: '2px 14px' }}>
             {certs.map((s, i) => (
-              <div key={i} className="card" style={{ padding: '14px 16px', borderColor: s.entry_free ? 'var(--teal-200)' : 'var(--line)' }}>
-                <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <b style={{ fontSize: 16.5 }}>{s.cert}</b>
-                  {s.grade && <span className="muted" style={{ fontSize: 13 }}>{s.grade}</span>}
-                  <span style={{ flex: 1, minWidth: 12 }} />
-                  <span className={`badge ${s.entry_free ? 'badge-teal' : 'badge-amber'}`}
-                    title={s.entry_free ? '제한 없이 응시 가능' : (s.entry_note || '응시자격 확인 필요')}
-                    style={{ fontSize: 12.5, cursor: s.entry_free ? 'default' : 'help' }}>
-                    {s.entry_free ? '✓ 지금 바로 응시 가능' : 'ⓘ 응시자격 확인'}
-                  </span>
-                </div>
-                {s.exam && <div className="muted" style={{ fontSize: 13.5, marginTop: 9 }}>📅 다음 시험 · {s.exam}</div>}
+              <div key={i} style={{
+                display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+                padding: '11px 0', borderTop: i ? '1px solid var(--line)' : 'none',
+              }}>
+                <b style={{ fontSize: 15.5 }}>{s.cert}</b>
+                {s.grade && <span className="muted" style={{ fontSize: 12.5 }}>{s.grade}</span>}
+                <span className={`badge ${s.entry_free ? 'badge-teal' : 'badge-amber'}`}
+                  title={s.entry_free ? '응시 조건이 없어요' : (s.entry_note || '응시자격 확인 필요')}
+                  style={{ fontSize: 12, cursor: s.entry_free ? 'default' : 'help' }}>
+                  {s.entry_free ? '조건 없음' : 'ⓘ 응시자격 확인'}
+                </span>
+                {s.exam && <span className="muted" style={{ fontSize: 12.5 }}>· 다음 시험 {s.exam}</span>}
               </div>
             ))}
           </div>

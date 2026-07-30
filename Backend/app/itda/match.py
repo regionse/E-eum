@@ -15,7 +15,7 @@
 ※ 임베딩(embed_course_·embed_cert_) 끝난 뒤에 동작함.
 """
 import os, re, sys, json, asyncio
-import urllib.request, urllib.error
+import urllib.request              # urllib.error 는 여기서 안 쓴다(HTTP 오류는 gemini_util 이 처리)
 from sqlalchemy import text, bindparam
 from pinecone import Pinecone
 
@@ -25,7 +25,7 @@ try:
 except ImportError:
     from db import async_session
 
-# Gemini 호출 공용 (무료 우선·분당 대기·유료는 하루소진 때만) — itda_core 와 같은 정책.
+# Gemini 호출 공용 (분당 한도는 기다렸다 재시도) — itda_core 와 같은 정책.
 try:
     from . import gemini_util as _gutil
 except ImportError:
@@ -37,21 +37,13 @@ NS_CERT   = 'cert'
 NS_JOB    = 'job'              # 직업 먼저(2026-07-27) — understanding → 직업 벡터
 
 
-def read_env():
-    d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', r'C:\e-um-1\e-um\etc\.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                s = line.strip()
-                if '=' in s and not s.startswith('#'):
-                    k, v = s.split('=', 1)
-                    d.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-        except FileNotFoundError:
-            continue
-    return d
-
-ENV = {**read_env(), **os.environ}
-# Gemini 키 회전은 gemini_util 이 ENV 에서 직접 가른다(무료 우선·유료는 하루소진 때만).
+# .env — 공용 로더 하나만 쓴다(2026-07-30). 예전엔 이 파일만 '../../etc/.env' 후보가 빠져
+#  실행 위치에 따라 DB 는 붙는데 PINECONE_API_KEY 만 None 이 되는 조합이 있었다.
+try:
+    from .env import ENV
+except ImportError:
+    from env import ENV
+# Gemini 키는 gemini_util 이 ENV 에서 찾는다(키 1개 · 분당 한도는 기다렸다 재시도).
 PINECONE_KEY = ENV.get('PINECONE_API_KEY')
 INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-itda')   # 임베딩 스크립트와 동일해야 함(안 그러면 빈 인덱스 조회)
 
@@ -69,7 +61,7 @@ async def embed_query(content):
                                      headers={'Content-Type': 'application/json'})
         return urllib.request.urlopen(req, timeout=30).read()
 
-    j = await _gutil.call(_post, ENV)              # 무료 우선·분당 대기·유료는 하루소진 때만
+    j = await _gutil.call(_post, ENV)              # 분당 한도는 기다렸다 재시도
     return j['embedding']['values']
 
 
@@ -101,6 +93,9 @@ def _pinecone():
 #  실패(쿼터·네트워크·권한)하면 원래 순서를 그대로 쓴다 — 리랭크는 '개선'이지 '필수'가 아니다.
 RERANK_MODEL = os.environ.get('ITDA_RERANK_MODEL') or ENV.get('ITDA_RERANK_MODEL') or 'bge-reranker-v2-m3'
 
+_RERANK_WARNED = False        # 리랭커 실패 경고를 프로세스당 1회만 찍기 위한 플래그
+
+
 async def rerank(query_text, docs, top_n=None):
     """[(문서문자열)] 을 질의와의 관련도로 재정렬 → [(원래인덱스, 점수)] 관련도 높은 순.
     docs 가 비었거나 리랭크가 실패하면 [] 를 돌려준다(호출부가 원래 순서로 폴백)."""
@@ -113,7 +108,14 @@ async def rerank(query_text, docs, top_n=None):
             model=RERANK_MODEL, query=q, documents=list(docs),
             top_n=n, return_documents=False))
         return [(int(row.index), float(row.score)) for row in res.data]
-    except Exception:
+    except Exception as e:
+        #  ★ 조용히 삼키면 안 된다(2026-07-30) — 리랭커가 상시 고장나도(키 만료·모델명 오타·쿼터)
+        #    아무 신호 없이 품질만 영구 저하됐다. 프로세스당 한 번만 찍어 로그를 도배하지 않는다.
+        global _RERANK_WARNED
+        if not _RERANK_WARNED:
+            _RERANK_WARNED = True
+            print(f'[itda] ⚠️ 리랭커 사용 불가 — 폴백으로 계속 진행합니다. '
+                  f'model={RERANK_MODEL} · {type(e).__name__}: {str(e)[:120]}')
         return []                                  # 폴백은 호출부에서 (원래 순서 유지)
 
 
@@ -148,7 +150,9 @@ async def match_courses(db, query_text, top_k=5, min_score=0.0):
         return []
 
     ids = [i for i, _ in id_score]
-    stmt = text("SELECT kmooc_id, title, classfy_name, professor, course_url, course_id "
+    #  summary 를 함께 뽑는다(2026-07-30) — 크로스인코더 리랭크의 판단 재료이자 화면 표시용.
+    #    DB 채움률 99%인데 그동안 아무도 안 읽었다(코드감사 지적).
+    stmt = text("SELECT kmooc_id, title, classfy_name, professor, course_url, course_id, summary "
                 "FROM course WHERE kmooc_id IN :ids").bindparams(
                     bindparam("ids", expanding=True))
     rows = (await db.execute(stmt, {"ids": ids})).fetchall()
@@ -165,7 +169,8 @@ async def match_courses(db, query_text, top_k=5, min_score=0.0):
         seen.add(key)
         out.append({'kmooc_id': r[0], 'title': r[1], 'classfy': r[2],
                     'professor': r[3], 'url': r[4], 'score': round(score, 3),
-                    'course_id': r[5]})         # 미래설계지도 저장용 (itda_map_course FK)
+                    'course_id': r[5],          # 미래설계지도 저장용 (itda_map_course FK)
+                    'summary': r[6]})
         if len(out) >= top_k:
             break
     return out

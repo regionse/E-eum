@@ -17,21 +17,22 @@ def get(session_id: str) -> dict:
     profile 은 itda_map.profile_json 과 같은 모양이라 그대로 저장·복원할 수 있다.
     """
     s = _SESSIONS.get(session_id)
-    if s is None:
-        # 상한 초과 시 가장 오래전에 만든 세션부터 축출(FIFO — dict 는 삽입순 보존).
-        while len(_SESSIONS) >= _MAX_SESSIONS:
-            _SESSIONS.pop(next(iter(_SESSIONS)), None)
-        s = {"profile": {}, "done": False}
-        _SESSIONS[session_id] = s
+    if s is not None:
+        #  ★ 최근 사용 순으로 끌어올린다(2026-07-30) — 예전엔 '만든 순서(FIFO)'로 축출해서
+        #    한창 대화 중인(먼저 시작한) 세션이 먼저 잘리고, 방금 들어와 아무것도 안 한 세션이
+        #    살아남았다. dict 는 삽입순을 지키므로 pop→재삽입이 곧 LRU 갱신이다.
+        _SESSIONS[session_id] = _SESSIONS.pop(session_id)
+        return s
+    # 상한 초과 시 '가장 오래 안 쓴' 세션부터 축출(위 갱신 덕분에 LRU 가 된다).
+    while len(_SESSIONS) >= _MAX_SESSIONS:
+        _SESSIONS.pop(next(iter(_SESSIONS)), None)
+    s = {"profile": {}}
+    _SESSIONS[session_id] = s
     return s
 
 
 def reset(session_id: str) -> None:
     _SESSIONS.pop(session_id, None)
 
-
-def snapshot() -> dict:
-    """디버깅용 — 지금 살아있는 세션 요약."""
-    return {sid: {"slots": len([v for v in s.get("profile", {}).values() if v]),
-                  "done": s.get("done", False)}
-            for sid, s in _SESSIONS.items()}
+#  (2026-07-30) snapshot() 제거 — 호출부·엔드포인트가 없었다. 함께 쓰던 세션 "done" 키도 제거
+#   (controllers 가 매 턴 쓰기만 하고 읽는 곳은 snapshot 뿐이었다).

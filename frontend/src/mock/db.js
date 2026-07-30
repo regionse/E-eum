@@ -177,6 +177,19 @@ export let inquiries = [
   { id: 1, title: '서비스 이용 문의', type: '서비스문의', date: '2026-07-01', status: '처리중', body: '나누다 지도가 안 보여요.', answer: '' },
 ]
 
+// ---------- 관리자 · 대시보드 지표 ----------
+//  (2026-07-30 복구) '/admin 첫 화면을 회원관리로' 요청을 대시보드 삭제로 잘못 처리했다가 되살림.
+//  대시보드는 첫 화면이 아니라 회원관리 아래 메뉴로 둔다.
+export const dashboardKpis = { totalUsers: 1240, todayLogins: 380, apiFailures: 17, aiRuns: 95 }
+export const aiTrend = [ // 최근 7일 AI 실행 추이
+  { d: '07-01', v: 42 }, { d: '07-02', v: 55 }, { d: '07-03', v: 48 },
+  { d: '07-04', v: 71 }, { d: '07-05', v: 63 }, { d: '07-06', v: 88 }, { d: '07-07', v: 95 },
+]
+export const featureUsage = [ // 기능별 사용량
+  { name: '덜다 정책 추천', v: 420 },
+  { name: '잇다 추천', v: 210 }, { name: '나누다 기관검색', v: 130 },
+]
+
 // ---------- 관리자 · 회원 목록 ----------
 export const adminUsers = [
   { id: 'U-10293', age: 27, joined: '2026-05-12', status: '활성', role: '뷰어' },

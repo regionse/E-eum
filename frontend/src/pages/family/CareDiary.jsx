@@ -155,7 +155,7 @@ export default function CareDiary() {
             <div className="card card-pad" style={{ marginTop: 'var(--sp-4)', border: '1px solid var(--teal-200)' }}>
               <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
                 <span style={{ fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  🤖 AI 분석
+                  AI 분석
                   {analysis.count > 0 && (
                     <span className={`badge ${analysis.anomaly ? 'badge-amber' : 'badge-gray'}`}>
                       {analysis.anomaly ? '이상징후' : '안정'}
@@ -176,7 +176,8 @@ export default function CareDiary() {
                       </p>
                       {analysis.anomaly ? (
                         <div style={{ display: 'grid', gap: 12 }}>
-                          {analysis.findings.map((f, i) => (
+                          {/* 여러 건이 잡혀도 가장 우선순위 높은 1건만 노출 (복약 누락 > 신호 count 순) */}
+                          {analysis.findings.slice(0, 1).map((f, i) => (
                             <div key={i} className="callout-warn">
                               <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ 이상징후 · {f.label}</div>
                               <div style={{ fontSize: 14.5 }}>

@@ -10,10 +10,6 @@ export function chatItda(sessionId, message) {
   return request('/itda/message', { method: 'POST', body: { session_id: sessionId, message } })
 }
 
-export function resetItda(sessionId) {
-  return request('/itda/reset', { method: 'POST', body: { session_id: sessionId } }).catch(() => {})
-}
-
 // ── 미래설계지도 (로그인 필요 · DB 저장) ─────────────────────────────
 // 저장: 지금 세션의 '마지막 카드'를 백엔드가 그대로 담는다 → session_id 만 넘기면 됨.
 export function saveMap(sessionId) {
@@ -23,6 +19,11 @@ export function saveMap(sessionId) {
 // 내 지도 목록(최신순) — [{map_id, job, group, status, progress_step, created_at, n_cert, n_course}]
 export function listMaps() {
   return request('/itda/maps')
+}
+
+// 지도 상세(읽기 전용) — 세션을 건드리지 않고 저장된 지도 내용만 → {map_id, goal}
+export function getMap(mapId) {
+  return request(`/itda/map/${mapId}`)
 }
 
 // 이어서하기 — 저장된 지도를 새 세션(sessionId)에 복원 → {session_id, profile, goal}

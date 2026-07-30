@@ -51,12 +51,20 @@ export async function request(path, { method = 'GET', body, timeout = 60000 } = 
   } finally {
     clearTimeout(timer)
   }
-  if (res.status === 401) {                       // 만료·위조 → 토큰 정리 후 알림
+  //  ★ 401 처리(2026-07-30 수정) — 예전엔 모든 401을 "로그인이 만료되었어요"로 뭉갰다.
+  //    그래서 **로그인 화면에서 비번/아이디를 틀려도** 같은 문구가 떠서(로그인 실패도 401)
+  //    사용자는 "로그인 기능이 고장났다"고 오해했다(실사용 신고).
+  //    → 토큰은 정리하되, 문구는 백엔드 detail("아이디 또는 비밀번호가…")을 그대로 쓴다.
+  //      토큰이 아예 없던 요청(=로그인 시도)엔 만료 문구를 쓰지 않는다.
+  const wasLoggedIn = !!token
+  if (res.status === 401) {
     clearToken()
-    throw new Error('로그인이 필요하거나 만료되었어요. 다시 로그인해 주세요.')
   }
   if (!res.ok) {                                  // 백엔드가 준 detail(409 중복·400 약관·422 검증)을 그대로
-    let msg = `요청 실패 (${res.status})`
+    let msg = res.status === 401
+      ? (wasLoggedIn ? '로그인이 만료되었어요. 다시 로그인해 주세요.'
+                     : '아이디 또는 비밀번호를 확인해 주세요.')
+      : `요청 실패 (${res.status})`
     try {
       const j = await res.json()
       if (j && j.detail) {

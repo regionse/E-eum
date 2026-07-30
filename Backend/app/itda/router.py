@@ -22,7 +22,7 @@ router = APIRouter(
 @router.post(
     "/message",
     response_model=MessageResponse,
-    summary="상담 대화 한 턴 (물어보거나 / 자격증 결과를 준다)",
+    summary="상담 대화 한 턴 (물어보거나 / 직업 방향 카드를 준다)",
 )
 async def message(request: MessageRequest, db: AsyncSession = Depends(get_db)):
     return await controllers.handle_message(
@@ -41,10 +41,9 @@ async def reset(request: ResetRequest):
 @router.get("/health", summary="상태 확인 (실제 엔진과 같은 키 소스로 판정)")
 async def health():
     # 코드감사 #5 — 예전엔 config.GEMINI_KEY(다른 로더)로 판정해 실제 상태와 어긋났다.
-    #  이제 엔진이 쓰는 gemini_util.split_keys(ENV) 로 같은 키를 본다.
-    free, paid = gemini_util.split_keys(ENV)
-    has_key = any(k for k in (free + paid))
-    return {"ok": True, "provider": ENV.get("ITDA_PROVIDER") or "gemini",
+    #  이제 엔진이 쓰는 gemini_util.get_key(ENV) 로 같은 키를 본다.
+    has_key = bool(gemini_util.get_key(ENV))
+    return {"ok": True, "provider": "gemini",
             "brain": "llm" if has_key else "stub"}
 
 
@@ -60,6 +59,13 @@ async def save_map(request: SaveMapRequest,
 async def list_maps(db: AsyncSession = Depends(get_db),
                     user: User = Depends(get_current_user)):
     return await controllers.list_maps(db, user.user_id)
+
+
+@router.get("/map/{map_id}", summary="저장된 지도 상세 (읽기 전용 · 잇다 홈 팝업)")
+async def get_map(map_id: int,
+                  db: AsyncSession = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    return await controllers.get_map(db, user.user_id, map_id)
 
 
 @router.post("/map/{map_id}/resume", summary="저장된 지도 이어서하기 (슬롯 복원)")
