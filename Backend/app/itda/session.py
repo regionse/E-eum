@@ -6,6 +6,7 @@
 """
 
 _SESSIONS: dict[str, dict] = {}
+_MAX_SESSIONS = 5000    # 상한 — 넘으면 가장 오래된 세션부터 버린다(TTL/evict 없어 메모리 무한증가하던 것, 코드감사)
 
 
 def get(session_id: str) -> dict:
@@ -15,10 +16,14 @@ def get(session_id: str) -> dict:
     그래서 턴이 길어져도 토큰이 늘지 않고, 앞부분을 잊는 문제도 없다.
     profile 은 itda_map.profile_json 과 같은 모양이라 그대로 저장·복원할 수 있다.
     """
-    return _SESSIONS.setdefault(
-        session_id,
-        {"profile": {}, "done": False},
-    )
+    s = _SESSIONS.get(session_id)
+    if s is None:
+        # 상한 초과 시 가장 오래전에 만든 세션부터 축출(FIFO — dict 는 삽입순 보존).
+        while len(_SESSIONS) >= _MAX_SESSIONS:
+            _SESSIONS.pop(next(iter(_SESSIONS)), None)
+        s = {"profile": {}, "done": False}
+        _SESSIONS[session_id] = s
+    return s
 
 
 def reset(session_id: str) -> None:
