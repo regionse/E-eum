@@ -1,7 +1,4 @@
-from datetime import (
-    date,
-    datetime,
-)
+from datetime import date, datetime
 from enum import Enum
 
 from sqlalchemy import (
@@ -12,29 +9,20 @@ from sqlalchemy import (
     String,
     func,
 )
-from sqlalchemy.orm import (
-    Mapped,
-    mapped_column,
-)
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
 
 class UserStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    SUSPENDED = "SUSPENDED"
-    DORMANT = "DORMANT"
-    WITHDRAWN = "WITHDRAWN"
+    #  값은 실제 DB enum('정상','정지','휴면','탈퇴')과 반드시 일치(멤버명은 코드 가독성용 영문 유지).
+    ACTIVE = "정상"
+    SUSPENDED = "정지"
+    DORMANT = "휴면"
+    WITHDRAWN = "탈퇴"
 
 
 class User(Base):
-    """
-    정책 추천 기능 연결 테스트를 위한 임시 User 모델.
-
-    실제 회원 담당자의 User 모델이 합쳐지면
-    이 파일을 실제 모델 파일로 교체한다.
-    """
-
     __tablename__ = "user"
 
     user_id: Mapped[int] = mapped_column(
@@ -82,16 +70,16 @@ class User(Base):
         comment="가입일",
     )
 
-    last_login_at: Mapped[
-        datetime | None
-    ] = mapped_column(
+    last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,
         comment="마지막 로그인 시간",
     )
 
     status: Mapped[UserStatus] = mapped_column(
-        SqlEnum(UserStatus),
+        #  values_callable — SqlEnum 기본은 멤버'명'(ACTIVE)을 저장하는데 DB enum 은 '정상' 등 '값'이라,
+        #  그대로 두면 INSERT 시 Data truncated 로 가입 자체가 실패한다(실측 2026-07-28). 값으로 저장 강제.
+        SqlEnum(UserStatus, values_callable=lambda e: [m.value for m in e]),
         nullable=False,
         default=UserStatus.ACTIVE,
         server_default=UserStatus.ACTIVE.value,

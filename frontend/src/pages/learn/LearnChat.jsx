@@ -8,7 +8,7 @@ import { BAD_WORDS } from '../../utils/text.js'
 // 잇다 대화 — 관심·가치를 말하면 AI가 대화로 이해해 '자격증 목표'를 잡고,
 // 그 자격증에 맞는 무료강좌(또는 훈련 안내) + 시험일을 미래설계지도로 그려준다.
 //  · 대화(이해)는 백엔드의 LLM이, 결과(자격증·강좌·시험일)는 코드가 정한다. (자유로운 상담 + 갇힌 출력)
-const GREET = { role: 'bot', kind: 'text', text: '어떤 일이 잘 맞을지 같이 찾아봐요. 관심 있는 것이나 좋아하는 걸 편하게 말해주세요 — 막연해도 괜찮아요.' }
+const GREET = { role: 'bot', kind: 'text', text: '어떤 일이 잘 맞을지 같이 찾아봐요. 관심 있는 것이나 좋아하는 걸 편하게 말해주세요.' }
 const GOAL_EXAMPLES = ['나무나 식물을 다루는 일', '컴퓨터로 뭔가 만드는 일', '사람에게 도움이 되는 일']
 
 export default function LearnChat() {
@@ -37,12 +37,12 @@ export default function LearnChat() {
     const meaningful = q.replace(/[^가-힣a-zA-Z]/g, '')
     if (!meaningful || /^[ㄱ-ㅎㅏ-ㅣ\s]+$/.test(q)) {
       push({ role: 'me', kind: 'text', text: q })
-      push({ role: 'bot', kind: 'text', text: '앗, 잘 이해하지 못했어요. 관심 있는 분야나 좋아하는 걸 말로 적어주시겠어요?' })
+      push({ role: 'bot', kind: 'text', text: '잘 이해하지 못했어요. 관심 있는 분야나 좋아하는 것들을 말로 적어주시겠어요?' })
       return
     }
     push({ role: 'me', kind: 'text', text: q })
     if (BAD_WORDS.some((w) => q.includes(w))) {
-      push({ role: 'bot', kind: 'text', text: '그런 쪽은 도와드리기 어려워요. 되고 싶은 모습이나 관심 있는 걸 들려주세요.' })
+      push({ role: 'bot', kind: 'text', text: '저는 교육 강좌 추천 AI봇이라 그런 쪽은 도와드리기 어려워요. ㅠㅡㅠ 되고 싶은 모습이나 관심 있는 걸 들려주세요.' })
       return
     }
     setBusy(true)
@@ -59,7 +59,7 @@ export default function LearnChat() {
       if (typeof res.turn === 'number') setTurn(res.turn)
       if (typeof res.max_turn === 'number') setMaxTurn(res.max_turn)
     } catch {
-      push({ role: 'bot', kind: 'text', text: '잠시 문제가 생겼어요. 잠깐 뒤 다시 말씀해 주세요.' })
+      push({ role: 'bot', kind: 'text', text: '죄송해요. 저희 측에 잠시 문제가 생겼어요. 잠깐 뒤 다시 말씀해 주세요.' })
     } finally {
       setBusy(false)
     }

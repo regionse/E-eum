@@ -25,12 +25,61 @@ export async function mockResolve(data, ms = 700, failRate = 0) {
 }
 
 // 진짜 백엔드 붙일 때 쓸 fetch 래퍼 (지금은 미사용).
-export async function request(path, { method = 'GET', body } = {}) {
-  const res = await fetch(`/api${path}`, {
+export async function request(
+  path,
+  {
+    method = 'GET',
+    body,
+    signal,
+  } = {},
+) {
+  const response = await fetch(`/api${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body:
+      body !== undefined
+        ? JSON.stringify(body)
+        : undefined,
+    signal,
   })
-  if (!res.ok) throw new Error(`요청 실패 (${res.status})`)
-  return res.json()
+
+  const contentType =
+    response.headers.get('content-type') || ''
+
+  const data = contentType.includes(
+    'application/json',
+  )
+    ? await response.json()
+    : null
+
+  if (!response.ok) {
+    let message =
+      `요청에 실패했습니다. (${response.status})`
+
+    if (typeof data?.detail === 'string') {
+      message = data.detail
+    } else if (data?.detail?.message) {
+      message = data.detail.message
+    } else if (Array.isArray(data?.detail)) {
+      message = data.detail
+        .map((error) => {
+          const field = error.loc
+            ?.filter(
+              (value) => value !== 'body',
+            )
+            .join('.')
+
+          return field
+            ? `${field}: ${error.msg}`
+            : error.msg
+        })
+        .join('\n')
+    }
+
+    throw new Error(message)
+  }
+
+  return data
 }
