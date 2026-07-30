@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import User
-from .schemas import SignupRequest, FindIdRequest, ResetPasswordRequest
+from .schemas import SignupRequest, FindIdRequest, ResetPasswordRequest, UpdateMeRequest
 from .security import hash_password, verify_password
 
 
@@ -118,3 +118,19 @@ async def reset_password(db: AsyncSession, data: ResetPasswordRequest) -> None:
 
     user.password = hash_password(data.new_password)
     await db.commit()
+
+
+async def update_me(db: AsyncSession, user: User, data: UpdateMeRequest) -> User:
+    """마이페이지 내 정보 수정 — 비밀번호로 본인확인 후 연락처·지역만 변경(아이디·생년월일 불변)."""
+    if not verify_password(data.password, user.password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="비밀번호가 일치하지 않아요. 다시 확인해주세요.",
+        )
+    if data.phone_number is not None:
+        user.phone_number = data.phone_number
+    if data.region_sido is not None:
+        user.region_sido = data.region_sido
+    await db.commit()
+    await db.refresh(user)
+    return user

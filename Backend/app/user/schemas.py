@@ -89,6 +89,13 @@ class TokenResponse(BaseModel):
 # 사용자 정보 응답
 # - 비밀번호는 절대 내보내지 않음
 # =========================================================
+class UpdateMeRequest(BaseModel):
+    """내 정보 수정(마이페이지 MYP-102/103) — 비밀번호로 본인확인 후 연락처·지역 변경."""
+    password: str
+    phone_number: str | None = Field(default=None, max_length=20)
+    region_sido: str | None = Field(default=None, max_length=20)
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

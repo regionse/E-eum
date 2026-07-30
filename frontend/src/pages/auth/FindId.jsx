@@ -10,6 +10,7 @@ export default function FindId() {
   const [err, setErr] = useState({})
   const [result, setResult] = useState(null)
   const [notFound, setNotFound] = useState(false)
+  const [loading, setLoading] = useState(false)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -18,10 +19,12 @@ export default function FindId() {
     if (!okPhone(form.phone)) er.phone = '연락처 형식이 올바르지 않아요 (예: 010-1234-5678)'
     setErr(er)
     if (Object.keys(er).length) return
+    setLoading(true)
     try {
       const { id } = await findId(form)
       setResult(id)
     } catch { setNotFound(true) }
+    finally { setLoading(false) }
   }
 
   return (
@@ -34,7 +37,7 @@ export default function FindId() {
         <div className="field"><label>전화번호<span className="req">*</span></label>
           <input className={`input ${err.phone ? 'error' : ''}`} placeholder="010-0000-0000" maxLength={13} inputMode="numeric"
             value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: formatPhone(e.target.value) }))} />{err.phone && <span className="err">{err.phone}</span>}</div>
-        <button className="btn btn-primary btn-block btn-lg">아이디 찾기</button>
+        <button className="btn btn-primary btn-block btn-lg" disabled={loading}>{loading ? '찾는 중…' : '아이디 찾기'}</button>
       </form>
       {result && (
         <Modal title="아이디 찾기 완료" onClose={() => setResult(null)}

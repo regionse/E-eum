@@ -1,6 +1,6 @@
 // 인증 · 회원 — 실제 백엔드(/auth) 연동, JWT (2026-07-28)
 //  로그인/가입/관리자로그인은 진짜 FastAPI를 친다. 토큰은 client.js가 저장·전송한다.
-//  아이디/비밀번호 찾기는 아직 백엔드 엔드포인트가 없어 mock 유지.
+//  아이디 찾기·비밀번호 재설정도 백엔드 연동 완료(/auth/find-id · /auth/reset-password).
 import { request, setToken, clearToken } from './client.js'
 
 // 로그인 → JWT 토큰 저장 → 내 정보(/auth/me) 반환
@@ -62,5 +62,13 @@ export function resetPassword({ id, birth, phone, newPw }) {
   return request('/auth/reset-password', {
     method: 'POST',
     body: { username: id, birthdate: birth, phone_number: phone, new_password: newPw },
+  })
+}
+
+// 내 정보 수정 — 비밀번호 확인 후 연락처·지역 변경 (마이페이지, 백엔드 PATCH /auth/me) → 갱신된 user 반환
+export function updateMe({ password, phone, region }) {
+  return request('/auth/me', {
+    method: 'PATCH',
+    body: { password, phone_number: phone, region_sido: region },
   })
 }

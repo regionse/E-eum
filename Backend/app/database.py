@@ -57,7 +57,8 @@ DATABASE_URL = (
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,
+    pool_pre_ping=True,   # 유휴 후 MySQL이 끊은 죽은 커넥션을 넘겨줘 요청이 30~60초 매달리던 것 방지 (2026-07-30)
+    pool_recycle=3600,    # 1시간마다 커넥션 재생성(stale 방지)
 )
 
 

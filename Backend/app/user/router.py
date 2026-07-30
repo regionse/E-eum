@@ -11,6 +11,7 @@ from app.user.schemas import (
     ResetPasswordRequest,
     SignupRequest,
     TokenResponse,
+    UpdateMeRequest,
     UserResponse,
 )
 from app.user.security import create_access_token, get_current_user
@@ -81,6 +82,19 @@ async def get_me(
     current_user: User = Depends(get_current_user),
 ):
     return current_user
+
+
+@router.patch(
+    "/me",
+    response_model=UserResponse,
+    summary="내 정보 수정 (마이페이지 — 비밀번호 확인 후 연락처·지역 변경)",
+)
+async def update_me(
+    request: UpdateMeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await controllers.update_me(db, current_user, request)
 
 
 # =========================================================

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { NavLink, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../store/auth.jsx'
 import { useToast, PageHead, Modal } from '../../components/ui/index.jsx'
+import { updateMe } from '../../api/auth.js'
+import { formatPhone } from '../../utils/form.js'
 
 const TABS = [
   { to: '/mypage', end: true, label: '내 정보' },
@@ -10,23 +12,69 @@ const TABS = [
   { to: '/mypage/withdraw', label: '회원 탈퇴' },
 ]
 
+// 내 정보 (MYP-101~104) — 수정 시 비밀번호 확인 후 연락처·지역만 변경(아이디·생년월일 불변).
+//  백엔드 PATCH /auth/me 호출 → 갱신된 user 로 스토어 갱신.
 function Info() {
-  const { user } = useAuth()
+  const { user, login } = useAuth()
   const [edit, setEdit] = useState(false)
+  const [form, setForm] = useState({ phone: '', region: '', pw: '' })
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
   const toast = useToast()
+
+  const startEdit = () => {
+    setForm({ phone: user?.phone_number || '', region: user?.region_sido || '', pw: '' })
+    setErr(''); setEdit(true)
+  }
+  const save = async () => {
+    if (!form.pw) { setErr('본인 확인을 위해 현재 비밀번호를 입력해주세요.'); return }
+    setSaving(true); setErr('')
+    try {
+      const updated = await updateMe({ password: form.pw, phone: form.phone, region: form.region })
+      login(updated)                       // 스토어·localStorage 갱신
+      setEdit(false)
+      toast.show('정보가 수정되었어요')
+    } catch (e) {
+      setErr(e?.message || '수정에 실패했어요. 비밀번호를 다시 확인해주세요.')
+    } finally { setSaving(false) }
+  }
+
   const rows = [['아이디', user?.username], ['생년월일', user?.birthdate], ['연락처', user?.phone_number], ['지역', user?.region_sido]]
+
   return (
     <div className="card card-pad">
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <h3>내 정보</h3>
-        <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(!edit); if (edit) toast.show('정보가 수정되었어요') }}>{edit ? '수정 완료' : '수정'}</button>
+        {!edit && <button className="btn btn-ghost btn-sm" onClick={startEdit}>수정</button>}
       </div>
-      {rows.map(([k, v]) => (
-        <div key={k} className="list-row">
-          <span className="muted">{k}</span>
-          {edit && k !== '아이디' && k !== '생년월일' ? <input className="input" style={{ maxWidth: 260 }} defaultValue={v} /> : <span style={{ fontWeight: 600 }}>{v || '—'}</span>}
-        </div>
-      ))}
+
+      {!edit ? (
+        rows.map(([k, v]) => (
+          <div key={k} className="list-row">
+            <span className="muted">{k}</span>
+            <span style={{ fontWeight: 600 }}>{v || '—'}</span>
+          </div>
+        ))
+      ) : (
+        <>
+          <div className="list-row"><span className="muted">아이디</span><span style={{ fontWeight: 600 }}>{user?.username}</span></div>
+          <div className="list-row"><span className="muted">생년월일</span><span style={{ fontWeight: 600 }}>{user?.birthdate || '—'}</span></div>
+          <div className="field" style={{ marginTop: 10 }}><label>연락처</label>
+            <input className="input" placeholder="010-0000-0000" maxLength={13} inputMode="numeric"
+              value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: formatPhone(e.target.value) }))} /></div>
+          <div className="field"><label>지역</label>
+            <input className="input" placeholder="○○시/도" value={form.region}
+              onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))} /></div>
+          <div className="field"><label>비밀번호 확인 <span className="req">*</span></label>
+            <input type="password" className={`input ${err ? 'error' : ''}`} placeholder="본인 확인용 현재 비밀번호"
+              value={form.pw} onChange={(e) => setForm((f) => ({ ...f, pw: e.target.value }))} /></div>
+          {err && <p className="err">{err}</p>}
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
+            <button className="btn btn-plain" onClick={() => setEdit(false)} disabled={saving}>취소</button>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? '저장 중…' : '수정 완료'}</button>
+          </div>
+        </>
+      )}
       {toast.node}
     </div>
   )

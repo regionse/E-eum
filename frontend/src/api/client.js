@@ -27,16 +27,30 @@ export function getToken() { return localStorage.getItem(TOKEN_KEY) }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 
 // 진짜 백엔드(FastAPI) fetch 래퍼. 토큰이 있으면 Bearer 로 싣고, 백엔드 detail 문구를 그대로 올린다.
-export async function request(path, { method = 'GET', body } = {}) {
+export async function request(path, { method = 'GET', body, timeout = 60000 } = {}) {
   const token = getToken()
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  // 타임아웃(2026-07-30) — 백엔드가 응답 안 하면 무한 대기 대신 실패시켜 UI가 복구되게.
+  //  (무한 "불러오는 중"·"아무 일도 안 일어남" 방지 — 호출부 catch 가 빈 상태·에러를 띄운다)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeout)
+  let res
+  try {
+    res = await fetch(`/api${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    })
+  } catch (e) {
+    throw new Error(e.name === 'AbortError'
+      ? '서버 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요.'
+      : '서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.')
+  } finally {
+    clearTimeout(timer)
+  }
   if (res.status === 401) {                       // 만료·위조 → 토큰 정리 후 알림
     clearToken()
     throw new Error('로그인이 필요하거나 만료되었어요. 다시 로그인해 주세요.')

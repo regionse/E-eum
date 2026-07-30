@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { resetPassword } from '../../api/auth.js'
+import { findId, resetPassword } from '../../api/auth.js'
 import { Modal } from '../../components/ui/index.jsx'
 import AuthShell from './AuthShell.jsx'
 import { sanitizeId, formatBirth, okBirth, formatPhone, okPhone } from '../../utils/form.js'
@@ -11,9 +11,12 @@ export default function FindPw() {
   const [form, setForm] = useState({ id: '', birth: '', phone: '', pw: '', pw2: '' })
   const [err, setErr] = useState({})
   const [done, setDone] = useState(false)
+  const [verifying, setVerifying] = useState(false)
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
-  const verify = (e) => {
+  // 본인확인 — 형식 검사 후, find-id 로 (생년월일+전화)→아이디를 찾아 입력한 아이디와 일치해야 통과.
+  //  (스토리보드 AUTH-003: 검증 통과해야 재설정 단계로. 이전엔 형식만 보고 넘어가 '막 눌러도 진행'됐음)
+  const verify = async (e) => {
     e.preventDefault()
     const er = {}
     if (!/^[A-Za-z0-9]{4,10}$/.test(form.id)) er.id = '아이디는 영문+숫자 4~10자예요'
@@ -21,7 +24,20 @@ export default function FindPw() {
     if (!okPhone(form.phone)) er.phone = '연락처 형식이 올바르지 않아요 (예: 010-1234-5678)'
     setErr(er)
     if (Object.keys(er).length) return
-    setPhase('reset')
+    setVerifying(true)
+    try {
+      const { id } = await findId({ birth: form.birth, phone: form.phone })
+      if (id !== form.id) {
+        setErr({ submit: '입력하신 정보와 일치하는 회원이 없어요. 다시 확인해 주세요.' })
+        return
+      }
+      setErr({})
+      setPhase('reset')
+    } catch {
+      setErr({ submit: '일치하는 회원 정보를 찾을 수 없어요. 정보를 다시 확인해 주세요.' })
+    } finally {
+      setVerifying(false)
+    }
   }
   const reset = async (e) => {
     e.preventDefault()
@@ -54,7 +70,7 @@ export default function FindPw() {
           <div className="field"><label>전화번호<span className="req">*</span></label>
             <input className={`input ${err.phone ? 'error' : ''}`} placeholder="010-0000-0000" maxLength={13} inputMode="numeric" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: formatPhone(e.target.value) }))} />{err.phone && <span className="err">{err.phone}</span>}</div>
           {err.submit && <p className="err" style={{ marginTop: 4, marginBottom: 8 }}>{err.submit}</p>}
-          <button className="btn btn-primary btn-block btn-lg">다음</button>
+          <button className="btn btn-primary btn-block btn-lg" disabled={verifying}>{verifying ? '확인 중…' : '다음'}</button>
         </form>
       ) : (
         <form onSubmit={reset}>
