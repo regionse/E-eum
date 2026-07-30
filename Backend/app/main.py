@@ -68,9 +68,9 @@ app.include_router(delda_user_router)
 app.include_router(delda_admin_router)
 
 app.include_router(itda_router)   # 잇다 진로상담 (/itda/*)
-app.include_router(auth_router)   # 로그인/회원 (user)
+app.include_router(auth_router)   # 로그인/회원 (user)  
 
-
+  
 @app.get("/")
 async def root():
     return {
