@@ -26,7 +26,7 @@ from .schemas import (
 )
 
 
-router = APIRouter(prefix="", tags=["나누다"])
+router = APIRouter(tags=["나누다"])
 
 
 @router.post(
