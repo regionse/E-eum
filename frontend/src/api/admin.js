@@ -17,16 +17,6 @@ import {
 // 기존 관리자 mock API
 // =========================================================
 
-export function getDashboard() {
-  return mockResolve(
-    () => ({
-      kpis: dashboardKpis,
-      aiTrend,
-      featureUsage,
-    }),
-    600,
-  )
-}
 
 export function listAdminUsers() {
   return mockResolve(
@@ -74,5 +64,19 @@ export function getLatestPolicySyncResult() {
 export function getPolicySyncResult(executionId) {
   return request(
     `/admin/policy-sync/${executionId}`,
+  )
+}
+
+
+// =========================================================
+// 관리자 대시보드 API
+// =========================================================
+export function getDashboard(
+  period = '7d',
+) {
+  return request(
+    `/admin/dashboard?period=${
+      encodeURIComponent(period)
+    }`,
   )
 }

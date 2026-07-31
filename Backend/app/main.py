@@ -35,20 +35,33 @@ from app.inquiry.router import (
     user_router as user_inquiry_router,
 )
 from app.itda.router import router as itda_router
+from app.nanuda.router import router as nanuda_router
 from app.notice.router import (
     admin_router as admin_notice_router,
     user_router as user_notice_router,
 )
-from app.delda.router import (
-    admin_router as delda_admin_router,
-    user_router as delda_user_router,
-)
-from app.itda.router import router as itda_router   # 잇다 (진로상담)
-from app.user.router import router as auth_router    # 로그인/회원
-
-from app.nanuda.router import router as nanuda_router
-
 from app.user.router import router as auth_router
+from app.dashboard.router import router as dashboard_router
+
+
+# =========================================================
+# CORS 허용 주소
+# =========================================================
+
+def _cors_origins() -> list[str]:
+    origins = os.getenv(
+        "ALLOWED_ORIGINS",
+        (
+            "http://localhost:5173,"
+            "http://127.0.0.1:5173"
+        ),
+    )
+
+    return [
+        origin.strip()
+        for origin in origins.split(",")
+        if origin.strip()
+    ]
 
 
 # =========================================================
@@ -104,10 +117,12 @@ app.include_router(admin_inquiry_router)
 app.include_router(delda_user_router)
 app.include_router(delda_admin_router)
 
-app.include_router(itda_router)   # 잇다 진로상담 (/itda/*)
-app.include_router(auth_router)   # 로그인/회원 (user)  
-
+app.include_router(itda_router)
 app.include_router(nanuda_router)
+
+app.include_router(auth_router)
+
+app.include_router(dashboard_router)
 
 
 # =========================================================

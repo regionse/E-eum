@@ -571,247 +571,214 @@ export default function AdminWelfare() {
         && result
         && (
           <>
-            {/* 현재 상태 */}
             <section
               className="card card-pad"
               style={{
-                marginBottom: 'var(--sp-4)',
+                width: '100%',
+                maxWidth: 780,
+                boxSizing: 'border-box',
+                borderRadius: 18,
+                padding: 28,
               }}
             >
+              {/* 카드 제목과 상태 */}
               <div
                 className="row"
                 style={{
                   justifyContent: 'space-between',
-                  alignItems: 'flex-start',
+                  alignItems: 'center',
                   gap: 16,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div>
-                  <div
-                    className="row"
-                    style={{
-                      gap: 9,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <h3>
-                      최근 정책 최신화 결과
-                    </h3>
-
-                    {statusInfo && (
-                      <span
-                        className="badge"
-                        style={{
-                          background:
-                            statusInfo.badgeBackground,
-                          color:
-                            statusInfo.badgeColor,
-                        }}
-                      >
-                        {statusInfo.label}
-                      </span>
-                    )}
-                  </div>
-
-                  <p
-                    className="muted"
-                    style={{
-                      marginTop: 7,
-                      fontSize: 14,
-                    }}
-                  >
-                    {statusInfo?.description}
-                  </p>
-                </div>
-
-                <div
-                  className="muted"
-                  style={{
-                    fontSize: 13,
-                  }}
-                >
-                  실행 ID · {result.id}
-                </div>
-              </div>
-
-
-              {/* 진행 단계 */}
-              <div
-                style={{
-                  marginTop: 24,
-                  paddingTop: 22,
-                  borderTop:
-                    '1px solid var(--line)',
-                }}
-              >
-                <PolicySyncProgress
-                  status={result.status}
-                />
-              </div>
-            </section>
-
-
-            {/* 집계 결과 */}
-            <section
-              style={{
-                marginBottom: 'var(--sp-4)',
-              }}
-            >
-              <div
-                className="row"
-                style={{
-                  justifyContent: 'space-between',
-                  marginBottom: 10,
-                  gap: 12,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <h3>
-                  정책 처리 결과
-                </h3>
-
-                <span
-                  className="muted"
-                  style={{
-                    fontSize: 13,
-                  }}
-                >
-                  현재 정책 테이블 기준
-                </span>
-              </div>
-
-              <div
-                className="grid kpi-grid"
-              >
-                <ResultStatCard
-                  label="총 정책 수"
-                  value={
-                    result.total_policy_count
-                  }
-                />
-
-                <ResultStatCard
-                  label="신규 정책"
-                  value={result.new_count}
-                />
-
-                <ResultStatCard
-                  label="변경된 정책"
-                  value={result.updated_count}
-                />
-
-                <ResultStatCard
-                  label="처리 실패"
-                  value={result.failed_count}
-                  danger={
-                    result.failed_count > 0
-                  }
-                />
-              </div>
-            </section>
-
-
-            {/* 단계별 완료 시각 */}
-            <section
-              className="card card-pad"
-            >
-              <div
-                className="row"
-                style={{
-                  justifyContent: 'space-between',
-                  gap: 12,
                   flexWrap: 'wrap',
                   marginBottom: 18,
                 }}
               >
-                <div>
-                  <h3>
-                    단계별 처리 시각
-                  </h3>
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: 22,
+                  }}
+                >
+                  정책 데이터 관리
+                </h3>
 
-                  <p
-                    className="muted"
+                {statusInfo && (
+                  <span
+                    className="badge"
                     style={{
-                      marginTop: 5,
-                      fontSize: 13.5,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      padding: '7px 12px',
+                      background:
+                        statusInfo.badgeBackground,
+                      color:
+                        statusInfo.badgeColor,
                     }}
                   >
-                    각 단계가 완료된 시각을 확인할 수 있어요.
-                  </p>
-                </div>
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: '50%',
+                        background:
+                          statusInfo.badgeColor,
+                      }}
+                    />
 
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={running}
-                  onClick={loadLatestResult}
-                >
-                  새로고침
-                </button>
+                    {statusInfo.label}
+                  </span>
+                )}
               </div>
 
-              <div
-                className="stack"
-                style={{
-                  gap: 0,
-                }}
-              >
-                <MilestoneRow
-                  label="중앙부처 API 동기화"
+
+              {/* 처리 단계와 시간 */}
+              <div>
+                <SummaryRow
+                  label="현재 상태"
+                  value={
+                    statusInfo?.label
+                    || '-'
+                  }
+                />
+
+                <SummaryRow
+                  label="마지막 API 동기화"
                   value={getMilestoneText({
                     value: result.api_sync_at,
                     status: result.status,
-                    activeStatus: 'api_syncing',
+                    activeStatus:
+                      'api_syncing',
                   })}
-                  active={
-                    result.status
-                    === 'api_syncing'
-                  }
                 />
 
-                <MilestoneRow
-                  label="서울·경기 정책 크롤링"
+                <SummaryRow
+                  label="마지막 정책 크롤링"
                   value={getMilestoneText({
                     value: result.crawling_at,
                     status: result.status,
-                    activeStatus: 'crawling',
+                    activeStatus:
+                      'crawling',
                   })}
-                  active={
-                    result.status
-                    === 'crawling'
-                  }
                 />
 
-                <MilestoneRow
-                  label="해시 비교 및 임베딩"
+                <SummaryRow
+                  label="마지막 임베딩"
                   value={getMilestoneText({
                     value: result.embedding_at,
                     status: result.status,
-                    activeStatus: 'embedding',
+                    activeStatus:
+                      'embedding',
                   })}
-                  active={
-                    result.status
-                    === 'embedding'
-                  }
-                  last
                 />
+              </div>
+
+
+              {/* 처리 결과 구분선 */}
+              <div
+                style={{
+                  marginTop: 12,
+                  paddingTop: 12,
+                  borderTop:
+                    '1px solid var(--line)',
+                }}
+              >
+                <SummaryRow
+                  label="전체 정책"
+                  value={`${formatNumber(
+                    result.total_policy_count,
+                  )} 건`}
+                  strong
+                />
+
+                <SummaryRow
+                  label="신규"
+                  value={`${formatNumber(
+                    result.new_count,
+                  )} 건`}
+                  strong
+                />
+
+                <SummaryRow
+                  label="변경"
+                  value={`${formatNumber(
+                    result.updated_count,
+                  )} 건`}
+                  strong
+                />
+
+                <SummaryRow
+                  label="실패"
+                  value={`${formatNumber(
+                    result.failed_count,
+                  )} 건`}
+                  strong
+                  danger={
+                    Number(
+                      result.failed_count,
+                    ) > 0
+                  }
+                />
+              </div>
+
+
+              {/* 상태 설명 */}
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 16,
+                  borderTop:
+                    '1px solid var(--line)',
+                }}
+              >
+                <p
+                  className="muted"
+                  style={{
+                    margin: 0,
+                    fontSize: 13.5,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {statusInfo?.description}
+                </p>
               </div>
             </section>
 
 
-            <p
-              className="muted"
+            {/* 카드 하단 안내 */}
+            <div
+              className="row"
               style={{
+                width: '100%',
+                maxWidth: 780,
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
                 marginTop: 12,
-                fontSize: 13,
+                flexWrap: 'wrap',
               }}
             >
-              정책 최신화는 중앙부처 API 조회,
-              서울·경기 정책 크롤링,
-              내용 해시 비교,
-              신규·변경 정책 임베딩 순서로 진행됩니다.
-            </p>
+              <p
+                className="muted"
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                중앙부처 API 조회 → 서울·경기 정책 크롤링
+                → 해시 비교 → 신규·변경 정책 임베딩
+                순서로 진행됩니다.
+              </p>
+
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={running}
+                onClick={loadLatestResult}
+              >
+                새로고침
+              </button>
+            </div>
           </>
         )}
 
@@ -924,54 +891,14 @@ export default function AdminWelfare() {
 
 
 // =========================================================
-// 처리 결과 카드
+// 정책 데이터 결과 행
 // =========================================================
 
-function ResultStatCard({
+function SummaryRow({
   label,
   value,
+  strong = false,
   danger = false,
-}) {
-  return (
-    <div className="card kpi">
-      <div
-        className="n"
-        style={{
-          fontSize: 26,
-          color: danger
-            ? 'var(--danger)'
-            : 'var(--teal-700)',
-        }}
-      >
-        {formatNumber(value)}
-        <span
-          style={{
-            marginLeft: 4,
-            fontSize: 14,
-            fontWeight: 700,
-          }}
-        >
-          건
-        </span>
-      </div>
-
-      <div className="l">
-        {label}
-      </div>
-    </div>
-  )
-}
-
-
-// =========================================================
-// 단계별 완료 시각 행
-// =========================================================
-
-function MilestoneRow({
-  label,
-  value,
-  active = false,
-  last = false,
 }) {
   return (
     <div
@@ -979,55 +906,36 @@ function MilestoneRow({
       style={{
         justifyContent: 'space-between',
         alignItems: 'center',
-        gap: 16,
-        padding: '15px 0',
-        borderBottom: last
-          ? 'none'
-          : '1px solid var(--line)',
+        gap: 20,
+        minHeight: 39,
+        padding: '7px 0',
       }}
     >
-      <div
-        className="row"
+      <span
         style={{
-          gap: 9,
+          color: 'var(--ink-soft)',
+          fontSize: 15,
         }}
       >
-        <span
-          style={{
-            width: 9,
-            height: 9,
-            flexShrink: 0,
-            borderRadius: '50%',
-            background: active
-              ? 'var(--teal-500)'
-              : 'var(--line)',
-            boxShadow: active
-              ? '0 0 0 4px var(--teal-100)'
-              : 'none',
-          }}
-        />
-
-        <span
-          style={{
-            fontWeight: 700,
-          }}
-        >
-          {label}
-        </span>
-      </div>
+        {label}
+      </span>
 
       <span
         style={{
-          color: active
-            ? 'var(--teal-700)'
-            : 'var(--ink-soft)',
-          fontWeight: active
-            ? 700
-            : 600,
+          fontSize: strong
+            ? 17
+            : 15,
+          fontWeight: strong
+            ? 800
+            : 700,
+          color: danger
+            ? 'var(--danger)'
+            : 'var(--ink)',
           textAlign: 'right',
+          wordBreak: 'keep-all',
         }}
       >
-        {value}
+        {value ?? '-'}
       </span>
     </div>
   )
