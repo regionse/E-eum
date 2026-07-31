@@ -39,6 +39,9 @@ export default function LearnChat() {
   useEffect(() => {   // 새로고침·중간이탈에도 이어지도록 마지막 대화를 이 사용자 키에 저장
     saveItdaDraft(uid, { sid: sidRef.current, msgs, mapped })
   }, [msgs, mapped, uid])
+  //  언마운트 뒤에도 응답을 저장할 수 있게 최신 msgs 를 ref 로 들고 있는다(send 참고).
+  const msgsRef = useRef(msgs)
+  useEffect(() => { msgsRef.current = msgs }, [msgs])
 
   const push = (m) => setMsgs((p) => [...p, m])
 
@@ -69,6 +72,17 @@ export default function LearnChat() {
     const sid = sidRef.current                 // 이 요청이 속한 세션 — 응답 전 '새 목표'로 바뀌면 버린다
     try {
       const res = await chatItda(sid, q)
+      //  ★ 응답을 '먼저 저장'한다(2026-07-30) — 답을 기다리는 중에 화면을 떠나면 컴포넌트가
+      //    언마운트돼 setMsgs 가 무효화되고, 그 답이 draft 에도 안 남아 영구히 사라졌다.
+      //    (백엔드는 이미 처리해 슬롯을 갱신한 상태라, 사용자만 '무응답'으로 보였다.)
+      //    localStorage 저장은 React 상태와 무관하므로 떠나도 살아남는다 → 돌아오면 답이 보인다.
+      const added = res.type === 'result'
+        ? [...(res.reply ? [{ role: 'bot', kind: 'text', text: res.reply }] : []),
+           { role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] }]
+        : [{ role: 'bot', kind: 'text', text: res.reply,
+             options: res.options || [], notes: res.option_notes || [] }]
+      saveItdaDraft(uid, { sid, msgs: [...msgsRef.current, ...added], mapped })
+
       if (sid !== sidRef.current) return
       if (res.type === 'result') {
         //  ★ 지도를 바로 펼치지 않는다(2026-07-30) — 대화 도중 카드가 갑자기 나오면
@@ -77,7 +91,9 @@ export default function LearnChat() {
         if (res.reply) push({ role: 'bot', kind: 'text', text: res.reply })
         push({ role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] })
       } else {
-        push({ role: 'bot', kind: 'text', text: res.reply })
+        //  좁히기 선택지가 오면 클릭 chip 으로 그린다(2026-07-30) — 예전엔 NCS 원문을 손으로 타이핑해야 했다.
+        push({ role: 'bot', kind: 'text', text: res.reply,
+               options: res.options || [], notes: res.option_notes || [] })
       }
     } catch {
       if (sid === sidRef.current)
@@ -134,10 +150,15 @@ export default function LearnChat() {
                 style={{ width: 30, height: 30, borderRadius: 999, border: '1.5px solid var(--teal-300)', background: '#fff', color: 'var(--teal-700)', fontSize: 18, fontWeight: 800, lineHeight: 1, cursor: 'pointer' }}>＋</button>
             </div>
           </div>
+          {/*  높이를 화면에 맞춘다(2026-07-30) — 고정 500px 이라 작은 화면(667×714 실측)에서는
+               대화창이 화면을 넘겨 '바깥 스크롤 + 안쪽 스크롤'이 겹치고, 정작 아래 빈 공간은 남았다.
+               미래설계지도는 긴 카드라 좁은 창에서 계속 스크롤해야 했다. clamp 로 화면에 맞춘다. */}
           <div className="chat-wrap" role="log" aria-live="polite"
-            style={{ height: 500, fontSize: 15.5, zoom: chatZoom }}>
+            style={{ height: 'clamp(320px, calc(100vh - 300px), 620px)',
+                     fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
-              <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal} />
+              <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal}
+                onPick={(o) => send(o)} />
             ))}
             {busy && <TypingBubble />}
             <div ref={endRef} />
@@ -167,6 +188,64 @@ export default function LearnChat() {
           </Modal>
         )}
       </RequireLogin>
+    </div>
+  )
+}
+
+// 자격증 한 줄 — 누르면 시험방법·전망이 펼쳐진다(2026-07-30).
+//  DB(certification.exam_method 66% · career_outlook 35%)에 있는데 화면에 안 쓰던 데이터.
+//  줄 자체는 컴팩트하게 유지하고, 궁금한 사람만 펼쳐 보게 한다.
+function CertRow({ s, first }) {
+  const [open, setOpen] = useState(false)
+  //  entry_note 는 예전에 badge 의 title(hover) 뿐이라 **모바일에서 응시자격을 볼 방법이 없었다**(2026-07-30).
+  //  이제 펼침 패널에 원문을 넣는다 — 카드에서 실제로 막히는 문이 이것이다.
+  const more = s.exam_method || s.outlook || s.entry_note || s.evidence
+  return (
+    <div style={{ padding: '11px 0', borderTop: first ? 'none' : '1px solid var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <b style={{ fontSize: 15.5 }}>{s.cert}</b>
+        {s.grade && <span className="muted" style={{ fontSize: 12.5 }}>{s.grade}</span>}
+        <span className={`badge ${s.entry_free ? 'badge-teal' : 'badge-amber'}`}
+          title={s.entry_free ? '응시 조건이 없어요' : (s.entry_note || '응시자격 확인 필요')}
+          style={{ fontSize: 12, cursor: s.entry_free ? 'default' : 'help' }}>
+          {s.entry_free ? '조건 없음' : 'ⓘ 응시자격 확인'}
+        </span>
+        {s.exam && <span className="muted" style={{ fontSize: 12.5 }}>· {s.exam}</span>}
+        {more && (
+          <button className="btn btn-plain btn-sm" onClick={() => setOpen((v) => !v)}
+            style={{ marginLeft: 'auto', fontSize: 12.5, padding: '2px 8px' }}>
+            {open ? '접기' : '자세히'}
+          </button>
+        )}
+      </div>
+      {open && more && (
+        <div style={{ marginTop: 9, paddingLeft: 2, display: 'grid', gap: 7 }}>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {s.qual_gb && <span className="muted" style={{ fontSize: 12.5 }}>구분 · {s.qual_gb}</span>}
+            {/* 이 자격증을 이 직업에 이은 근거 — 'AI가 고른 게 아니라 데이터가 이었다'의 증거 */}
+            {s.evidence && (
+              <span className="badge badge-gray" style={{ fontSize: 11.5 }}
+                title="이 자격증을 이 직업에 연결한 근거 (데이터 기준)">연결 근거 · {s.evidence}</span>
+            )}
+          </div>
+          {!s.entry_free && s.entry_note && (
+            <div style={{ fontSize: 13.5, lineHeight: 1.65 }}>
+              <b style={{ fontSize: 12.5, color: 'var(--amber-700, #92400e)' }}>응시자격</b><br />
+              {s.entry_note}
+            </div>
+          )}
+          {s.exam_method && (
+            <div style={{ fontSize: 13.5, lineHeight: 1.65 }}>
+              <b style={{ fontSize: 12.5, color: 'var(--teal-700)' }}>시험 방법</b><br />{s.exam_method}
+            </div>
+          )}
+          {s.outlook && (
+            <div style={{ fontSize: 13.5, lineHeight: 1.65 }}>
+              <b style={{ fontSize: 12.5, color: 'var(--teal-700)' }}>전망</b><br />{s.outlook}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -204,10 +283,29 @@ function ProposeCard({ goal, alternatives, onOpen }) {
   )
 }
 
-function ChatItem({ m, onSave, onOpenGoal }) {
+function ChatItem({ m, onSave, onOpenGoal, onPick }) {
   if (m.kind === 'text') return (
-    <div className={`bubble ${m.role === 'me' ? 'me' : 'bot'}`}
-      style={{ fontSize: 15.5, lineHeight: 1.7, padding: '12px 16px' }}>{m.text}</div>
+    <div style={{ alignSelf: m.role === 'me' ? 'flex-end' : 'stretch' }}>
+      <div className={`bubble ${m.role === 'me' ? 'me' : 'bot'}`}
+        style={{ fontSize: 15.5, lineHeight: 1.7, padding: '12px 16px' }}>{m.text}</div>
+      {/* 좁히기 선택지 — 눌러서 고른다(2026-07-30). 설명 한 줄로 NCS 원문의 뜻을 알려준다. */}
+      {m.options?.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+          {m.options.map((o, i) => (
+            <button key={o} className="card card-hover" onClick={() => onPick(o)}
+              style={{ textAlign: 'left', cursor: 'pointer', padding: '11px 14px',
+                width: '100%', display: 'block', borderColor: 'var(--teal-200)' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--teal-700)' }}>{o}</div>
+              {m.notes?.[i] && (
+                <div className="muted" style={{ fontSize: 12.5, marginTop: 3, lineHeight: 1.5 }}>
+                  {m.notes[i]}…
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
   if (m.kind === 'propose') return (
     <ProposeCard goal={m.goal} alternatives={m.alternatives}
@@ -276,21 +374,7 @@ function GoalCard({ goal, alternatives, onSave }) {
             예전엔 자격증마다 큰 카드였고 이름과 배지 사이가 통째로 비어 한 줄을 낭비했다. */}
         {certs.length > 0 ? (
           <div className="card" style={{ padding: '2px 14px' }}>
-            {certs.map((s, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
-                padding: '11px 0', borderTop: i ? '1px solid var(--line)' : 'none',
-              }}>
-                <b style={{ fontSize: 15.5 }}>{s.cert}</b>
-                {s.grade && <span className="muted" style={{ fontSize: 12.5 }}>{s.grade}</span>}
-                <span className={`badge ${s.entry_free ? 'badge-teal' : 'badge-amber'}`}
-                  title={s.entry_free ? '응시 조건이 없어요' : (s.entry_note || '응시자격 확인 필요')}
-                  style={{ fontSize: 12, cursor: s.entry_free ? 'default' : 'help' }}>
-                  {s.entry_free ? '조건 없음' : 'ⓘ 응시자격 확인'}
-                </span>
-                {s.exam && <span className="muted" style={{ fontSize: 12.5 }}>· 다음 시험 {s.exam}</span>}
-              </div>
-            ))}
+            {certs.map((s, i) => <CertRow key={i} s={s} first={i === 0} />)}
           </div>
         ) : (
           <div style={{ background: 'var(--teal-50)', borderRadius: 12, padding: '16px 18px', fontSize: 14.5, lineHeight: 1.75 }}>

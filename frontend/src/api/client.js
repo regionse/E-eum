@@ -26,6 +26,13 @@ export function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t) }
 export function getToken() { return localStorage.getItem(TOKEN_KEY) }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 
+// ── 백엔드 주소 (2026-07-31 · AWS 배포 대비) ──────────────────────────────
+//  개발: 값이 없으면 '/api' → vite 개발서버가 8000 으로 프록시한다(지금까지와 동일).
+//  배포: vite 개발서버가 없으므로 프록시도 없다. 그대로 두면 프론트가 백엔드를 못 찾아 전부 실패한다.
+//        빌드할 때 VITE_API_BASE 를 주면 그 주소로 부른다.
+//          예) VITE_API_BASE=https://api.우리도메인.com  npm run build
+const API_BASE = (import.meta.env?.VITE_API_BASE || '/api').replace(/\/$/, '')
+
 // 진짜 백엔드(FastAPI) fetch 래퍼.
 // 토큰이 있으면 Bearer 로 싣고,
 // 백엔드 detail 문구를 그대로 올린다.
@@ -81,7 +88,7 @@ export async function request(
   let res
 
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method,
 
       headers: {
@@ -138,7 +145,6 @@ export async function request(
   const wasLoggedIn = !!token
   if (res.status === 401) {
     clearToken()
-    throw new Error('로그인이 필요하거나 만료되었어요. 다시 로그인해 주세요.')
   }
   if (!res.ok) {                                  // 백엔드가 준 detail(409 중복·400 약관·422 검증)을 그대로
     let msg = res.status === 401

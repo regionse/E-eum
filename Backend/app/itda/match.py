@@ -9,7 +9,7 @@
         ③ 그 상세를 MySQL에서 꺼내 반환
 
 네임스페이스
-  하나의 인덱스를 둘로 나눠 쓴다.  course = 강좌 8,273 / cert = 자격증 613
+  하나의 인덱스를 둘로 나눠 쓴다.  job = 직업 1,094 / course = 강좌 8,371 / cert = 자격증 613 (2026-07-30 실측)
   안 나누면 '강좌 추천'에 자격증이 섞여 나온다. 질의할 때 반드시 지정할 것.
 
 ※ 임베딩(embed_course_·embed_cert_) 끝난 뒤에 동작함.
@@ -313,13 +313,38 @@ async def _keyword_jobs(db, query_text, over_fetch):
 
 
 async def match_jobs(db, query_text, top_k=6, min_score=0.0):
-    vec = await _search(query_text, NS_JOB, max(top_k * 3, 12), min_score)   # [(job_code, cosine)]
-    kw = await _keyword_jobs(db, query_text, max(top_k * 3, 12))             # [(job_code, kw_score)]
-    if not vec and not kw:
+    """질의(문자열 또는 문자열 목록) → 직업 후보. 하이브리드(벡터+키워드) RRF.
+
+    ★ 다질의 융합(RAG-Fusion, 2026-07-30)
+      query_text 에 **여러 질의**를 주면 각각 검색해 모든 순위를 RRF 로 함께 합친다.
+      왜: 남은 품질 편차의 원인이 'LLM 이 만든 질의 한 개'였다. 표현이 조금 달라지면
+      벡터 순위가 흔들려 카드/되묻기가 뒤집혔다(실측). 여러 표현으로 검색해 합치면
+      한 표현의 운에 덜 좌우된다 — 여러 순위에 공통으로 오르는 후보가 위로 올라온다.
+      이게 업계에서 말하는 Multi-Query Retrieval / RAG-Fusion 이고, 융합기(_rrf)는 이미 있었다.
+      비용: 질의 변형은 **기존 턴 호출 한 번에서 함께 받으므로 LLM 추가 비용 0**.
+      늘어나는 건 임베딩(실측 9회 34토큰 ≈ 0원)과 Pinecone 쿼리뿐이다.
+    """
+    queries = [q for q in ([query_text] if isinstance(query_text, str) else list(query_text or []))
+               if q and q.strip()]
+    if not queries:
         return []
-    vec_score = {c: s for c, s in vec}
-    kw_score = {c: s for c, s in kw}
-    order = _rrf([c for c, _ in vec], [c for c, _ in kw])                    # 두 순위를 RRF 로 합침
+    #  중복 제거 · 최대 4개(비용 상한). **앞자리가 우선**이므로 호출부는 결정론적 앵커
+    #  (사용자 원문 · 슬롯 질의)를 앞에 두고 LLM 변형을 뒤에 둔다 — 잘려도 앵커는 남는다.
+    queries = list(dict.fromkeys(queries))[:4]
+
+    ranked, vec_score, kw_score = [], {}, {}
+    for q in queries:
+        vec = await _search(q, NS_JOB, max(top_k * 3, 12), min_score)        # [(job_code, cosine)]
+        kw = await _keyword_jobs(db, q, max(top_k * 3, 12))                  # [(job_code, kw_score)]
+        ranked.append([c for c, _ in vec])
+        ranked.append([c for c, _ in kw])
+        for c, s in vec:                              # 점수는 '가장 높게 나온 값'을 남긴다
+            vec_score[c] = max(vec_score.get(c, 0.0), s)   # (임계 판정은 최선의 표현을 기준으로)
+        for c, s in kw:
+            kw_score[c] = max(kw_score.get(c, 0.0), s)
+    if not vec_score and not kw_score:
+        return []
+    order = _rrf(*ranked)                             # 모든 순위(질의×2)를 한 번에 RRF
     codes = list(vec_score.keys() | kw_score.keys())
     stmt = text("SELECT jc.job_code, jc.job_name, jc.job_mcls_name, jc.job_description, "
                 "       COUNT(cj.cert_id) "
