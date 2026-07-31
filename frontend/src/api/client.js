@@ -26,6 +26,14 @@ export function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t) }
 export function getToken() { return localStorage.getItem(TOKEN_KEY) }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 
+// ── 백엔드 주소 (2026-07-31 · AWS 배포 대비) ──────────────────────────────
+//  개발: 값이 없으면 '/api' → vite 개발서버가 8000 으로 프록시한다(지금까지와 동일).
+//  배포: vite 개발서버가 없으므로 프록시도 없다. 그대로 두면 프론트가 백엔드를 못 찾아 전부 실패한다.
+//        빌드할 때 VITE_API_BASE 를 주면 그 주소로 부른다.
+//          예) VITE_API_BASE=https://api.우리도메인.com  npm run build
+//        같은 도메인에서 웹서버가 /api 를 백엔드로 넘겨주는 구성이면 값을 안 줘도 된다.
+const API_BASE = (import.meta.env?.VITE_API_BASE || '/api').replace(/\/$/, '')
+
 // 진짜 백엔드(FastAPI) fetch 래퍼. 토큰이 있으면 Bearer 로 싣고, 백엔드 detail 문구를 그대로 올린다.
 export async function request(path, { method = 'GET', body, timeout = 60000 } = {}) {
   const token = getToken()
@@ -35,7 +43,7 @@ export async function request(path, { method = 'GET', body, timeout = 60000 } = 
   const timer = setTimeout(() => ctrl.abort(), timeout)
   let res
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',

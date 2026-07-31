@@ -30,8 +30,13 @@ class CertStep(BaseModel):
     entry_free: bool = False        # 제한없음(지금 바로 응시 가능) 확인?
     entry: str = ""                 # 「지금 바로 응시 가능」 / 「응시자격 확인 필요」
     entry_note: str = ""            # 미확인일 때 등급별 조건 원문 (hover)
-    exam: str = ""                  # 다음 시험일
+    exam: str = ""                  # 다음 시험일(접수 마감일 포함)
     verified: bool = False          # cert_job 검증된 연결인지
+    #  (2026-07-30) DB 에 있으나 화면에 안 쓰던 실데이터를 노출 — 자격증 상세에서 보여준다.
+    exam_method: str = ""           # 시험 방법(무엇을 공부하나) — certification.exam_method
+    outlook: str = ""               # 이 자격의 전망 — certification.career_outlook
+    qual_gb: str = ""               # 국가기술자격 / 국가전문자격
+    evidence: str = ""              # 이 자격증을 이 직업에 이은 근거(cert_job.evidence) — '데이터가 골랐다'의 증거
 
 
 class Hire(BaseModel):
@@ -62,9 +67,11 @@ class MessageResponse(BaseModel):
     turn: int = 0
     max_turn: int = 3
     understanding: str = ""         # LLM이 이해한 요약 (디버깅·투명성용)
-    mode: str = "gemini"            # "gemini" | "stub"  ← 폴백 발동 여부
+    mode: str = "gemini"            # "gemini" | "error"  ← 턴 실패 여부(stub 폴백은 없다)
     goal: Goal | None = None        # type=result일 때만
     alternatives: list[str] = []    # 다른 후보 직업
+    options: list[str] = []         # 좁히기 선택지 — 프론트가 클릭 chip 으로 그린다(2026-07-30)
+    option_notes: list[str] = []    # 각 선택지의 한 줄 설명(같은 순서) — NCS 원문만 보여주면 못 고른다
 
 
 # ── 미래설계지도 (저장·이어서하기) 요청 (2026-07-29) ──

@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -41,6 +42,19 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
+# ── 허용할 프론트 주소 (2026-07-31 · AWS 배포 대비) ──────────────────────────
+#  브라우저는 '다른 주소에서 온 요청'을 기본으로 막는다(CORS). 그래서 백엔드가
+#  "이 주소는 괜찮다"고 명단을 갖고 있어야 한다. 지금까지는 내 노트북 주소만 있었다.
+#  배포하면 프론트 주소가 달라지므로, 그 주소를 명단에 넣지 않으면 화면이 통째로 막힌다.
+#    · 환경변수 CORS_ORIGINS 에 쉼표로 적으면 그 주소들이 추가된다.
+#        예) CORS_ORIGINS=https://eum.example.com,https://www.eum.example.com
+#    · 값을 안 주면 지금까지와 완전히 동일하게 동작한다(로컬 개발 무영향).
+def _cors_origins() -> list[str]:
+    base = ["http://localhost:5173", "http://localhost:3000"]
+    extra = [o.strip().rstrip("/") for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+    return list(dict.fromkeys(base + extra))
+
+
 app = FastAPI(
     lifespan=lifespan,
 )
@@ -48,10 +62,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

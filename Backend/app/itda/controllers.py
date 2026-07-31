@@ -18,9 +18,9 @@ from app.itda import session
 from app.itda.schemas import Goal, CertStep, Course, Hire, MessageResponse
 
 try:                                   # 서버(패키지) 경로
-    from app.itda.itda_core import ItdaEngine, missing_slots, ASK_ORDER
+    from app.itda.itda_core import ItdaEngine, missing_slots, ASK_ORDER, kst_today, kst_now
 except ImportError:                    # standalone 실행 경로
-    from itda_core import ItdaEngine, missing_slots, ASK_ORDER
+    from itda_core import ItdaEngine, missing_slots, ASK_ORDER, kst_today, kst_now
 
 
 # 엔진은 프로세스당 하나 — DB·직무분야 목록을 매 요청마다 다시 읽지 않는다.
@@ -31,6 +31,14 @@ def get_engine():
     if _ENGINE is None:
         _ENGINE = ItdaEngine()         # 지연 초기화(첫 요청 때 1회). think_level 미지정 → Gemini 기본(dynamic)
     return _ENGINE
+
+
+#  ★ 프론트로 내보낼 profile — '_' 로 시작하는 내부 상태는 뺀다(2026-07-30).
+#    좁히기 이력(_narrowed·_narrow_opts)·'모르겠다' 카운터(_unsure)가 브라우저로 새어나갔다.
+#    사용자에게 의미도 없고, 내부 판단 로직을 그대로 노출하는 것이라 막는다.
+def _public_profile(profile: dict) -> str:
+    known = {k: v for k, v in (profile or {}).items() if v and not str(k).startswith("_")}
+    return json.dumps(known, ensure_ascii=False)
 
 
 # ── 카드 → 프론트 goal ──────────────────────────────────────────────
@@ -47,7 +55,15 @@ def _exam_text(exam):
         exam = {'seq': seq, 'doc': doc, 'prac': prac, 'pass': pas}
     bits = []
     if exam.get("reg_end"):
-        bits.append(f"접수 ~{exam['reg_end']}")
+        #  ★ D-day(2026-07-30) — 사용자가 놓쳐서 1년을 기다리는 건 접수 마감일이다.
+        #    날짜만 적어두면 남은 일수를 사용자가 손으로 세야 한다.
+        tag = ""
+        try:
+            d = (exam["reg_end"] - kst_today()).days
+            tag = f" (D-{d})" if 0 <= d <= 60 else (" (마감)" if d < 0 else "")
+        except Exception:
+            tag = ""
+        bits.append(f"접수 ~{exam['reg_end']}{tag}")
     if exam.get("doc"):
         bits.append(f"필기 {exam['doc']}")
     if exam.get("prac"):
@@ -75,6 +91,10 @@ def _to_goal(card) -> Goal:
             entry_note="" if free else (c.get("entry_note") or ""),
             exam=_exam_text(c.get("exam")),
             verified=bool(c.get("verified")),
+            exam_method=c.get("exam_method") or "",
+            outlook=c.get("outlook") or "",
+            qual_gb=c.get("qual_gb") or "",
+            evidence=c.get("evidence") or "",
         ))
     job = card.get("job") or {}
     hd = card.get("hire") or {}
@@ -117,7 +137,7 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
             type="blocked",
             reply="지금 잠시 연결이 원활하지 않아요. 잠시 후 다시 말씀해 주실래요?",
             turn=done, max_turn=total,
-            understanding=json.dumps(profile, ensure_ascii=False),
+            understanding=_public_profile(profile),
             mode="error",
         )
 
@@ -157,10 +177,12 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
         reply=reply,
         turn=done,
         max_turn=total,
-        understanding=json.dumps(profile, ensure_ascii=False),
+        understanding=_public_profile(profile),
         mode="gemini",
         goal=goal,
         alternatives=alts,
+        options=r.get("options") or [],
+        option_notes=r.get("option_notes") or [],
     )
 
 
@@ -180,7 +202,7 @@ def _hire(job_name: str) -> Hire:
 async def _saved_goal(db, map_id: int) -> Goal:
     """저장된 지도(map_id) → Goal 재구성 (직무·설명·자격·강좌·국비링크)."""
     m = (await db.execute(text(
-        "SELECT jc.job_name, jc.job_mcls_name, jc.job_description "
+        "SELECT jc.job_name, jc.job_mcls_name, jc.job_description, im.profile_json "
         "FROM itda_map im JOIN job_catalog jc ON jc.job_code = im.job_code "
         "WHERE im.map_id = :mid"), {"mid": map_id})).fetchone()
     #  JOIN 이 안 맞으면(직업코드가 카탈로그에서 사라진 경우) m 이 None 이라 아래에서 500 이 났다.
@@ -199,8 +221,16 @@ async def _saved_goal(db, map_id: int) -> Goal:
                       entry_note="" if r[2] == 1 else (r[3] or "")) for r in cert_rows]
     courses = [Course(title=r[0], professor=r[1] or "", classfy=r[2] or "",
                       url=r[3] or "", score=float(r[4] or 0)) for r in course_rows]
+    #  저장할 때 profile_json 안에 담아둔 추천 이유를 되살린다(save_map 의 '_job_reason').
+    reason = ""
+    try:
+        pj = m[3]
+        pj = json.loads(pj) if isinstance(pj, str) else (pj or {})
+        reason = (pj or {}).get("_job_reason") or ""
+    except Exception:
+        reason = ""
     return Goal(
-        job=m[0], group=m[1] or "", description=m[2] or "",
+        job=m[0], group=m[1] or "", description=m[2] or "", reason=reason,
         certs=certs, no_cert_path=(len(certs) == 0),
         guide=('이 방향은 국가기술자격으로 바로 이어지진 않아요. 국민내일배움카드로 '
                '훈련비를 지원받아 아래 강좌부터 시작할 수 있어요.') if not certs else "",
@@ -230,7 +260,11 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         raise HTTPException(status_code=400,
                             detail="아직 저장할 결과가 없어요. 대화로 직업을 찾은 뒤 저장해 주세요.")
 
-    profile = st.get("profile") or {}
+    profile = dict(st.get("profile") or {})
+    #  ★ 추천 이유를 함께 저장한다(2026-07-30) — 대화 카드엔 나오는데 저장된 지도엔 없었다.
+    #    itda_map 에 컬럼이 없어 profile_json 안에 '_' 키로 담는다('_' 는 노출 필터가 걸러낸다).
+    if card.get("job_reason"):
+        profile["_job_reason"] = card["job_reason"]
 
     #  ★ 중복 저장 방지 — 같은 직업 지도를 이미 갖고 있으면 새 행을 만들지 않는다.
     #    단, '그냥 옛 지도를 돌려주기'만 하면 대화를 더 해서 갱신된 카드(자격증·강좌·슬롯)가
@@ -255,9 +289,10 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     done, _ = _progress(profile)
     res = await db.execute(text(
         "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
-        "VALUES (:uid, :jc, '진행중', :ps, :pj, NOW())"),
+        "VALUES (:uid, :jc, '진행중', :ps, :pj, :now)"),
         {"uid": user_id, "jc": job_code, "ps": done,
-         "pj": json.dumps(profile, ensure_ascii=False)})
+         "pj": json.dumps(profile, ensure_ascii=False),
+         "now": kst_now()})
     map_id = res.lastrowid
     await _fill_map_children(db, map_id, card)
     await db.commit()
