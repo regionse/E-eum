@@ -31,33 +31,111 @@ export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 //  배포: vite 개발서버가 없으므로 프록시도 없다. 그대로 두면 프론트가 백엔드를 못 찾아 전부 실패한다.
 //        빌드할 때 VITE_API_BASE 를 주면 그 주소로 부른다.
 //          예) VITE_API_BASE=https://api.우리도메인.com  npm run build
-//        같은 도메인에서 웹서버가 /api 를 백엔드로 넘겨주는 구성이면 값을 안 줘도 된다.
 const API_BASE = (import.meta.env?.VITE_API_BASE || '/api').replace(/\/$/, '')
 
-// 진짜 백엔드(FastAPI) fetch 래퍼. 토큰이 있으면 Bearer 로 싣고, 백엔드 detail 문구를 그대로 올린다.
-export async function request(path, { method = 'GET', body, timeout = 60000 } = {}) {
+// 진짜 백엔드(FastAPI) fetch 래퍼.
+// 토큰이 있으면 Bearer 로 싣고,
+// 백엔드 detail 문구를 그대로 올린다.
+export async function request(
+  path,
+  {
+    method = 'GET',
+    body,
+    timeout = 60000,
+
+    // 추가된 부분:
+    // 호출한 화면에서 요청을 취소할 때 사용하는 signal
+    signal,
+  } = {},
+) {
   const token = getToken()
-  // 타임아웃(2026-07-30) — 백엔드가 응답 안 하면 무한 대기 대신 실패시켜 UI가 복구되게.
-  //  (무한 "불러오는 중"·"아무 일도 안 일어남" 방지 — 호출부 catch 가 빈 상태·에러를 띄운다)
+
+  // 기존 타임아웃용 AbortController
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeout)
+
+  // 추가된 부분:
+  // 화면에서 취소한 것인지 구분하기 위한 값
+  let abortedByCaller = false
+
+  // 추가된 부분:
+  // PolicyFind.jsx에서 전달한 signal이 중단되면
+  // 기존 ctrl도 중단시켜 실제 fetch를 취소한다.
+  const abortFromCaller = () => {
+    abortedByCaller = true
+    ctrl.abort()
+  }
+
+  // 추가된 부분:
+  // 이미 중단된 signal일 수도 있으므로 먼저 확인한다.
+  if (signal?.aborted) {
+    abortFromCaller()
+  } else {
+    signal?.addEventListener(
+      'abort',
+      abortFromCaller,
+      {
+        once: true,
+      },
+    )
+  }
+
+  // 기존 타임아웃 처리
+  const timer = setTimeout(
+    () => ctrl.abort(),
+    timeout,
+  )
+
   let res
+
   try {
     res = await fetch(`${API_BASE}${path}`, {
       method,
+
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
+        ...(token
+          ? {
+            Authorization: `Bearer ${token}`,
+          }
+          : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+
+      body: body
+        ? JSON.stringify(body)
+        : undefined,
+
+      // 기존 ctrl.signal 그대로 사용
       signal: ctrl.signal,
     })
   } catch (e) {
-    throw new Error(e.name === 'AbortError'
-      ? '서버 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요.'
-      : '서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.')
+    // 추가된 부분:
+    // 사용자가 추천 중단 버튼을 누른 경우에는
+    // AbortError를 그대로 전달한다.
+    //
+    // PolicyFind.jsx가 이 오류를 확인하고
+    // 오류 문구 없이 입력 폼으로 돌아간다.
+    if (
+      e.name === 'AbortError'
+      && abortedByCaller
+    ) {
+      throw e
+    }
+
+    // 기존 오류 처리 그대로 유지
+    throw new Error(
+      e.name === 'AbortError'
+        ? '서버 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요.'
+        : '서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.',
+    )
   } finally {
     clearTimeout(timer)
+    // 추가된 부분:
+    // 요청이 끝나면 이벤트 리스너도 제거한다.
+    signal?.removeEventListener(
+      'abort',
+      abortFromCaller,
+    )
   }
   //  ★ 401 처리(2026-07-30 수정) — 예전엔 모든 401을 "로그인이 만료되었어요"로 뭉갰다.
   //    그래서 **로그인 화면에서 비번/아이디를 틀려도** 같은 문구가 떠서(로그인 실패도 401)
@@ -75,12 +153,25 @@ export async function request(path, { method = 'GET', body, timeout = 60000 } = 
       : `요청 실패 (${res.status})`
     try {
       const j = await res.json()
+
       if (j && j.detail) {
-        msg = typeof j.detail === 'string' ? j.detail
-            : Array.isArray(j.detail) ? (j.detail[0]?.msg || msg) : msg
+        msg =
+          typeof j.detail === 'string'
+            ? j.detail
+            : Array.isArray(j.detail)
+              ? (
+                j.detail[0]?.msg
+                || msg
+              )
+              : msg
       }
-    } catch { /* 응답 본문 없음 */ }
+    } catch {
+      // 응답 본문 없음
+    }
+
     throw new Error(msg)
   }
+
+  // 기존 성공 응답 처리 그대로 유지
   return res.json()
 }

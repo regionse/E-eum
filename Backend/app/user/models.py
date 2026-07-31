@@ -4,6 +4,7 @@ from enum import Enum
 from sqlalchemy import (
     Boolean,
     Date,
+    Integer,
     DateTime,
     Enum as SqlEnum,
     String,
@@ -26,6 +27,7 @@ class User(Base):
     __tablename__ = "user"
 
     user_id: Mapped[int] = mapped_column(
+        Integer,
         primary_key=True,
         autoincrement=True,
         comment="사용자 식별 번호",

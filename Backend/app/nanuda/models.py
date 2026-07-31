@@ -1,7 +1,7 @@
 from datetime import datetime
 from app.database import Base
 
-from app.user.models import user_table
+from app.user.models import User
 
 from sqlalchemy import (
     DateTime,
@@ -12,7 +12,7 @@ from sqlalchemy import (
     func,
     Boolean,
     false,
-    BigInteger,
+    Integer,
     UniqueConstraint,
     JSON,
     Float,
@@ -29,7 +29,7 @@ class care_groups(Base):
         comment="가족 방 식별번호",
     )
 
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"),
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id", ondelete="CASCADE"),
         nullable=False,
         comment="사용자 번호",
     )
@@ -39,7 +39,7 @@ class care_groups(Base):
 class care_group_members(Base):
     __tablename__ = "care_group_members"
 
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"),
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id", ondelete="CASCADE"),
         primary_key=True,
         comment="사용자 번호"
     )
@@ -67,7 +67,7 @@ class care_group_letters(Base):
         comment="편지 식별 번호",
     )
 
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"),
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id", ondelete="CASCADE"),
         nullable=False, index=True,
         comment="사용자 번호"
     )
