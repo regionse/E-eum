@@ -35,13 +35,23 @@ export default function LearnChat() {
   const endRef = useRef(null)
   const sidRef = useRef(null)
   if (!sidRef.current) sidRef.current = draft?.sid || rs?.sid || ('itda-' + Math.random().toString(36).slice(2))
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs, busy])
+  //  ★ 스크롤 앵커링(2026-07-31) — 예전엔 새 메시지가 오면 **무조건** 맨 아래로 끌어내려서,
+  //    사용자가 위로 올려 지난 카드(자격증·시험일)를 보고 있어도 강제로 튕겨 내려갔다.
+  //    '이미 바닥 근처를 보고 있을 때만' 따라 내려간다(실무 표준).
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [msgs, busy])
   useEffect(() => {   // 새로고침·중간이탈에도 이어지도록 마지막 대화를 이 사용자 키에 저장
     saveItdaDraft(uid, { sid: sidRef.current, msgs, mapped })
   }, [msgs, mapped, uid])
   //  언마운트 뒤에도 응답을 저장할 수 있게 최신 msgs 를 ref 로 들고 있는다(send 참고).
   const msgsRef = useRef(msgs)
   useEffect(() => { msgsRef.current = msgs }, [msgs])
+  const abortRef = useRef(null)          // 진행 중인 요청(취소용)
+  const wrapRef = useRef(null)           // 대화 스크롤 영역(앵커링용)
 
   const push = (m) => setMsgs((p) => [...p, m])
 
@@ -69,9 +79,13 @@ export default function LearnChat() {
       return
     }
     setBusy(true)
+    //  ★ 취소(2026-07-31) — 응답이 3~10초 걸리는데 멈출 방법이 없었다.
+    //    client.js 의 signal 을 쓴다(덜다에서 추가된 배관을 그대로 활용).
+    const ac = new AbortController()
+    abortRef.current = ac
     const sid = sidRef.current                 // 이 요청이 속한 세션 — 응답 전 '새 목표'로 바뀌면 버린다
     try {
-      const res = await chatItda(sid, q)
+      const res = await chatItda(sid, q, ac.signal)
       //  ★ 응답을 '먼저 저장'한다(2026-07-30) — 답을 기다리는 중에 화면을 떠나면 컴포넌트가
       //    언마운트돼 setMsgs 가 무효화되고, 그 답이 draft 에도 안 남아 영구히 사라졌다.
       //    (백엔드는 이미 처리해 슬롯을 갱신한 상태라, 사용자만 '무응답'으로 보였다.)
@@ -95,13 +109,24 @@ export default function LearnChat() {
         push({ role: 'bot', kind: 'text', text: res.reply,
                options: res.options || [], notes: res.option_notes || [] })
       }
-    } catch {
-      if (sid === sidRef.current)
-        push({ role: 'bot', kind: 'text', text: '잠시 문제가 생겼어요. 잠깐 뒤 다시 말씀해 주세요.' })
+    } catch (e) {
+      if (sid !== sidRef.current) return
+      //  사용자가 직접 멈춘 것이면 오류로 취급하지 않는다(중단 안내만).
+      if (e?.name === 'AbortError' || ac.signal.aborted) {
+        push({ role: 'bot', kind: 'text', text: '요청을 멈췄어요. 다시 말씀해 주셔도 좋아요.' })
+      } else {
+        //  ★ 실패해도 사용자가 쓴 글을 되돌려준다(2026-07-31) — 예전엔 보내기 전에 지워버려
+        //    긴 문장을 쓰다 네트워크가 흔들리면 통째로 다시 써야 했다. 제일 화나는 UX였다.
+        setInput(q)
+        push({ role: 'bot', kind: 'text', text: '잠시 문제가 생겼어요. 아래 입력창에 글이 그대로 있으니 다시 보내보세요.', retry: q })
+      }
     } finally {
-      if (sid === sidRef.current) setBusy(false)
+      if (sid === sidRef.current) { setBusy(false); abortRef.current = null }
     }
   }
+
+  //  진행 중인 요청 취소 — 사용자가 [멈추기] 를 누를 때
+  const cancel = () => { abortRef.current?.abort() }
 
   //  확인 카드('이 방향 맞을까요?')를 눌렀을 때 → 그 자리를 실제 지도로 바꾼다.
   //  대화 기록에 남으므로 새로고침·이어서하기에도 지도가 그대로 보인다.
@@ -153,14 +178,14 @@ export default function LearnChat() {
           {/*  높이를 화면에 맞춘다(2026-07-30) — 고정 500px 이라 작은 화면(667×714 실측)에서는
                대화창이 화면을 넘겨 '바깥 스크롤 + 안쪽 스크롤'이 겹치고, 정작 아래 빈 공간은 남았다.
                미래설계지도는 긴 카드라 좁은 창에서 계속 스크롤해야 했다. clamp 로 화면에 맞춘다. */}
-          <div className="chat-wrap" role="log" aria-live="polite"
+          <div className="chat-wrap" role="log" aria-live="polite" ref={wrapRef}
             style={{ height: 'clamp(320px, calc(100vh - 300px), 620px)',
                      fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
               <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal}
-                onPick={(o) => send(o)} />
+                onPick={(o) => send(o)} onRetry={send} />
             ))}
-            {busy && <TypingBubble />}
+            {busy && <TypingBubble onCancel={cancel} />}
             <div ref={endRef} />
           </div>
 
@@ -283,11 +308,16 @@ function ProposeCard({ goal, alternatives, onOpen }) {
   )
 }
 
-function ChatItem({ m, onSave, onOpenGoal, onPick }) {
+function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry }) {
   if (m.kind === 'text') return (
     <div style={{ alignSelf: m.role === 'me' ? 'flex-end' : 'stretch' }}>
       <div className={`bubble ${m.role === 'me' ? 'me' : 'bot'}`}
         style={{ fontSize: 15.5, lineHeight: 1.7, padding: '12px 16px' }}>{m.text}</div>
+      {/* 실패한 요청은 그 자리에서 다시 보낼 수 있게 (2026-07-31) */}
+      {m.retry && (
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
+          onClick={() => onRetry?.(m.retry)}>다시 보내기 ↻</button>
+      )}
       {/* 좁히기 선택지 — 눌러서 고른다(2026-07-30). 설명 한 줄로 NCS 원문의 뜻을 알려준다. */}
       {m.options?.length > 0 && (
         <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
@@ -326,13 +356,27 @@ function Examples({ items, onPick }) {
   )
 }
 
-// 로딩 문구 — 단계별로 바꾸던 3문장을 한 문장으로 통일(2026-07-30).
-//  단계를 시간(1.3s·3.2s)으로 추측해 바꾸다 보니 실제 진행과 어긋나고 산만했다.
-function TypingBubble() {
+// 로딩 표시 (2026-07-31)
+//  응답이 3~10초 걸리므로 그 동안 '살아있다'는 신호가 필요하다.
+//  ※ 단계 문구를 시간으로 추측해 바꾸는 방식은 2026-07-30 에 폐기했다(실제 진행과 어긋나 산만했다).
+//    대신 ①문구는 하나로 고정 ②경과 초를 실제로 세어 보여주고 ③오래 걸리면 멈출 수 있게 한다.
+//    경과 시간은 추측이 아니라 사실이라 어긋날 일이 없다.
+function TypingBubble({ onCancel }) {
+  const [sec, setSec] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setSec((s) => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
   return (
-    <div className="bubble bot" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, width: 'fit-content', fontSize: 15 }}>
+    <div className="bubble bot" style={{ display: 'inline-flex', alignItems: 'center',
+      gap: 10, width: 'fit-content', fontSize: 15, flexWrap: 'wrap' }}>
       <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-      대화하신 내용을 이해하고 있어요…
+      <span>대화하신 내용을 이해하고 있어요…</span>
+      {sec >= 3 && <span className="muted" style={{ fontSize: 12.5 }}>{sec}초</span>}
+      {sec >= 6 && onCancel && (
+        <button className="btn btn-plain btn-sm" onClick={onCancel}
+          style={{ fontSize: 12.5, padding: '2px 10px' }}>멈추기</button>
+      )}
     </div>
   )
 }
