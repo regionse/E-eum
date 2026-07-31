@@ -1,17 +1,11 @@
 // 공지사항 · 문의
 import {
-  delay,
-  mockResolve,
   request,
 } from './client.js'
 
-import {
-  inquiries,
-} from '../mock/db.js'
-
 
 // =========================================================
-// 공지사항 공통 Query String 생성
+// 공지사항 Query String
 // =========================================================
 
 function buildNoticeQuery({
@@ -59,20 +53,6 @@ function buildNoticeQuery({
 // 사용자 공지사항 API
 // =========================================================
 
-/**
- * 사용자 공지사항 목록 조회
- *
- * 활성 상태인 공지만 조회한다.
- *
- * 응답:
- * {
- *   items: [],
- *   total: 0,
- *   page: 1,
- *   size: 10,
- *   total_pages: 0
- * }
- */
 export function listNotices({
   page = 1,
   size = 10,
@@ -92,11 +72,6 @@ export function listNotices({
 }
 
 
-/**
- * 사용자 공지사항 상세 조회
- *
- * 상세 조회 시 백엔드에서 조회수가 1 증가한다.
- */
 export function getNotice(
   noticeId,
 ) {
@@ -110,12 +85,6 @@ export function getNotice(
 // 관리자 공지사항 API
 // =========================================================
 
-/**
- * 관리자 공지사항 목록 조회
- *
- * 활성·비활성 공지를 모두 조회한다.
- * 관리자 토큰이 필요하다.
- */
 export function listAdminNotices({
   page = 1,
   size = 10,
@@ -135,11 +104,6 @@ export function listAdminNotices({
 }
 
 
-/**
- * 관리자 공지사항 상세 조회
- *
- * 활성·비활성 상태와 관계없이 조회한다.
- */
 export function getAdminNotice(
   noticeId,
 ) {
@@ -149,16 +113,6 @@ export function getAdminNotice(
 }
 
 
-/**
- * 관리자 공지사항 등록
- *
- * data:
- * {
- *   notice_category,
- *   notice_title,
- *   notice_content
- * }
- */
 export function createAdminNotice(
   data,
 ) {
@@ -166,6 +120,7 @@ export function createAdminNotice(
     '/admin/notices',
     {
       method: 'POST',
+
       body: {
         notice_category:
           data.notice_category,
@@ -181,11 +136,6 @@ export function createAdminNotice(
 }
 
 
-/**
- * 관리자 공지사항 수정
- *
- * 활성·비활성 상태는 이 API에서 수정하지 않는다.
- */
 export function updateAdminNotice(
   noticeId,
   data,
@@ -194,6 +144,7 @@ export function updateAdminNotice(
     `/admin/notices/${noticeId}`,
     {
       method: 'PUT',
+
       body: {
         notice_category:
           data.notice_category,
@@ -209,9 +160,6 @@ export function updateAdminNotice(
 }
 
 
-/**
- * 관리자 공지사항 활성·비활성 변경
- */
 export function updateAdminNoticeStatus(
   noticeId,
   noticeStatus,
@@ -220,6 +168,7 @@ export function updateAdminNoticeStatus(
     `/admin/notices/${noticeId}/status`,
     {
       method: 'PATCH',
+
       body: {
         notice_status:
           noticeStatus,
@@ -230,46 +179,201 @@ export function updateAdminNoticeStatus(
 
 
 // =========================================================
-// 문의 API
-// - 문의 백엔드 연동 전까지 기존 Mock 유지
+// 문의 Query String
 // =========================================================
 
-export function listInquiries() {
-  return mockResolve(
-    inquiries,
-    500,
+function buildInquiryQuery({
+  page = 1,
+  size = 10,
+  inquiry_type = '',
+  inquiry_status = '',
+  keyword = '',
+} = {}) {
+  const params = new URLSearchParams()
+
+  params.set(
+    'page',
+    String(page),
+  )
+
+  params.set(
+    'size',
+    String(size),
+  )
+
+  if (inquiry_type) {
+    params.set(
+      'inquiry_type',
+      inquiry_type,
+    )
+  }
+
+  if (inquiry_status) {
+    params.set(
+      'inquiry_status',
+      inquiry_status,
+    )
+  }
+
+  const cleanedKeyword = keyword.trim()
+
+  if (cleanedKeyword) {
+    params.set(
+      'keyword',
+      cleanedKeyword,
+    )
+  }
+
+  return `?${params.toString()}`
+}
+
+
+// =========================================================
+// 사용자 문의 API
+// =========================================================
+
+export function listInquiries({
+  page = 1,
+  size = 10,
+} = {}) {
+  const query = buildInquiryQuery({
+    page,
+    size,
+  })
+
+  return request(
+    `/inquiries${query}`,
   )
 }
 
 
 export function getInquiry(
-  id,
+  inquiryId,
 ) {
-  return mockResolve(
-    () => inquiries.find(
-      (inquiry) =>
-        String(inquiry.id) === String(id),
-    ),
-    400,
+  return request(
+    `/inquiries/${inquiryId}`,
   )
 }
 
 
-export async function submitInquiry(
+export function submitInquiry(
   data,
 ) {
-  await delay(700)
+  return request(
+    '/inquiries',
+    {
+      method: 'POST',
 
-  inquiries.unshift({
-    id: Date.now(),
-    status: '접수',
-    answer: '',
-    date: '2026-07-07',
-    ...data,
-  })
+      body: {
+        inquiry_type:
+          data.inquiry_type,
 
-  return {
-    ok: true,
-  }
+        inquiry_title:
+          data.inquiry_title,
+
+        inquiry_content:
+          data.inquiry_content,
+      },
+    },
+  )
 }
 
+
+export function deleteInquiry(
+  inquiryId,
+) {
+  return request(
+    `/inquiries/${inquiryId}`,
+    {
+      method: 'DELETE',
+    },
+  )
+}
+
+
+// =========================================================
+// 관리자 문의 API
+// =========================================================
+
+export function listAdminInquiries({
+  page = 1,
+  size = 10,
+  inquiry_type = '',
+  inquiry_status = '',
+  keyword = '',
+} = {}) {
+  const query = buildInquiryQuery({
+    page,
+    size,
+    inquiry_type,
+    inquiry_status,
+    keyword,
+  })
+
+  return request(
+    `/admin/inquiries${query}`,
+  )
+}
+
+
+export function getAdminInquiry(
+  inquiryId,
+) {
+  return request(
+    `/admin/inquiries/${inquiryId}`,
+  )
+}
+
+
+export function updateAdminInquiryStatus(
+  inquiryId,
+  inquiryStatus,
+) {
+  return request(
+    `/admin/inquiries/${inquiryId}/status`,
+    {
+      method: 'PATCH',
+
+      body: {
+        inquiry_status:
+          inquiryStatus,
+      },
+    },
+  )
+}
+
+
+export function createAdminInquiryAnswer(
+  inquiryId,
+  answerContent,
+) {
+  return request(
+    `/admin/inquiries/${inquiryId}/answer`,
+    {
+      method: 'POST',
+
+      body: {
+        inquiry_answer_content:
+          answerContent,
+      },
+    },
+  )
+}
+
+
+export function updateAdminInquiryAnswer(
+  inquiryId,
+  answerContent,
+) {
+  return request(
+    `/admin/inquiries/${inquiryId}/answer`,
+    {
+      method: 'PATCH',
+
+      body: {
+        inquiry_answer_content:
+          answerContent,
+      },
+    },
+  )
+}
