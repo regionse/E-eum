@@ -31,8 +31,8 @@ def get_api_key():
     k = os.environ.get('DATA_GO_KR_KEY')
     if k:
         return k.strip()
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
         try:
             for line in open(p, encoding='utf-8'):
                 if line.strip().startswith('DATA_GO_KR_KEY') and '=' in line:
@@ -81,7 +81,8 @@ def _env(key):
     v = os.environ.get(key)
     if v:
         return v
-    for p in ['.env', 'etc/.env', '../etc/.env', r'C:\e-um-1\e-um\etc\.env']:
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
         try:
             for line in open(p, encoding='utf-8'):
                 if line.strip().startswith(key) and '=' in line:
@@ -91,9 +92,12 @@ def _env(key):
     return None
 
 pw = _env('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306,
-                       user='user2604', password=pw,
-                       database='eum', charset='utf8mb4')
+conn = pymysql.connect(host=_env('DB_HOST', 'localhost'),
+                       port=int(_env('DB_PORT', 3306)),
+                       user=_env('DB_USER', 'user2604'),
+                       password=pw,
+                       database=_env('DB_NAME', 'eum'),
+                       charset='utf8mb4')
 
 # ── ④ 대상 목록 (루프의 '재료') ─────────────────────────────────────
 #  등급 인자를 주면 그 등급만, 없으면 613종 전부.

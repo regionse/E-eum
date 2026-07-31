@@ -37,8 +37,8 @@ API = 'http://openapi.q-net.or.kr/api/service/rest/InquiryExamQualItemSVC/getLis
 
 def read_env():
     d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
         try:
             for line in open(p, encoding='utf-8'):
                 s = line.strip()
@@ -106,8 +106,12 @@ for k, v in sorted(COND.items(), key=lambda x: -len(x[1])):
 
 # ── DB ──────────────────────────────────────────────────────────────
 pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = pymysql.connect(host=ENV.get('DB_HOST', 'localhost'),
+                       port=int(ENV.get('DB_PORT', 3306)),
+                       user=ENV.get('DB_USER', 'user2604'),
+                       password=pw,
+                       database=ENV.get('DB_NAME', 'eum'),
+                       charset='utf8mb4')
 
 NEW_COLS = [('grade_std', "VARCHAR(20)", '실제 응시 등급 (종목명 접미사 판정 · grade 보정)'),
             ('entry_note', 'TEXT',       '해당 등급의 응시자격 조건 (Q-Net)')]

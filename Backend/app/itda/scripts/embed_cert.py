@@ -78,8 +78,8 @@ def build_meta(row):
 # ── .env ───────────────────────────────────────────────────────────
 def read_env():
     d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
         try:
             for line in open(p, encoding='utf-8'):
                 s = line.strip()
@@ -103,8 +103,12 @@ if not PINECONE_KEY:
 
 # ── DB 에서 자격증 읽기 ─────────────────────────────────────────────
 pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = pymysql.connect(host=ENV.get('DB_HOST', 'localhost'),
+                       port=int(ENV.get('DB_PORT', 3306)),
+                       user=ENV.get('DB_USER', 'user2604'),
+                       password=pw,
+                       database=ENV.get('DB_NAME', 'eum'),
+                       charset='utf8mb4')
 with conn.cursor() as cur:
     # grade 가 아니라 grade_std 를 쓴다 — grade(=Q-Net seriesnm)는 산업기사 114종을
     # '기사'로 뭉뚱그린다. set_entry_note_등급조건.py 가 보정한 값이 grade_std 다.

@@ -382,7 +382,7 @@ function TypingBubble({ onCancel }) {
 }
 
 // 미래설계지도 카드 — '방향(직업)'이 주인공. 선고 아닌 안내(2026-07-29 NCS).
-//  방향(직무+설명) → 자격증(≤3) 또는 내일배움카드 → 무료강의(K-MOOC+열림강의) → 국비 실전훈련.
+//  방향(직무+설명) → 자격증(≤3) 또는 내일배움카드 → 무료강의(K-MOOC) → 국비 실전훈련.
 //  세로로 나눠 '다다다닥' 대신 섹션마다 숨 쉬게 배치(가독성).
 function GoalCard({ goal, alternatives, onSave }) {
   const [openCourse, setOpenCourse] = useState(null)
@@ -432,7 +432,8 @@ function GoalCard({ goal, alternatives, onSave }) {
         )}
       </div>
 
-      {/* ③ 배움 순서 — 무료강의(K-MOOC) → 실전(국비). 단계로 이어준다. (열림강의는 URL 없어 제거 2026-07-29) */}
+      {/* ③ 배움 순서 — 무료강의(K-MOOC) → 실전(국비). 단계로 이어준다.
+          (열림강의 98건은 kmooc_id·URL 이 없어 검색에 잡히지도 않았다 → DB 에서 삭제 2026-07-31) */}
       <div>
         <div className="section-title" style={{ fontSize: 16, marginBottom: 3 }}>이 방향, 이렇게 배워나가요</div>
         <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>무료 강의로 배우고 → 국비 실전훈련까지, 순서대로 이어드려요.</div>

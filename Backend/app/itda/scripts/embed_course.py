@@ -6,9 +6,15 @@ course 강좌 → Gemini 임베딩 → Pinecone 저장 배치
 동작 :  ① course 테이블에서 강좌(제목 + 분류)를 읽어
         ② Gemini(gemini-embedding-2, 3072차원)로 벡터화(배치)
         ③ Pinecone 인덱스에 저장(id=kmooc_id)
-        ④ course_embedding_result에 로그.
+        ④ course.content_hash 기록 + itda_sync_log 에 실행 로그.
 장치 :  · 인덱스 없으면 자동 생성   · Gemini 키 여러 개 자동 로테이션(429 대비)
         · 이미 저장된 강좌는 건너뜀(이어받기)   · 배치라 요청 수 적음
+
+※ 2026-07-31 수정 — 로그 대상 테이블이 틀려서 마지막에 죽고 있었다.
+   `course_embedding_result` 는 존재하지 않는 테이블이라 임베딩을 다 끝낸 뒤
+   INSERT 에서 예외가 나고 commit 이 안 됐다(Pinecone 저장 자체는 되어 있었다).
+   실제 스키마의 로그 테이블은 `itda_sync_log` 다 → 그쪽에 남기도록 교체.
+   덜다·나누다의 관리자 임베딩 화면이 이 테이블을 읽는다.
 
 ※ 2026-07-23 변경 — 강좌상세(summary)를 임베딩에서 뺐다.
    상세는 강좌당 평균 1,300자인데 그 중 운영일정·이수기준·환불규정이 20~25%다.
@@ -16,10 +22,20 @@ course 강좌 → Gemini 임베딩 → Pinecone 저장 배치
    상세는 DB에 그대로 있고 카드에서 보여주면 된다 — '검색에 쓸 값'과 '보여줄 값'은 다르다.
    토큰 약 1/10 (2.07M → 0.21M) → 무료 한도 안에서 8,273개를 하루에 끝낼 수 있다.
 """
-import os, sys, time, getpass, json
+import os, sys, time, getpass, json, hashlib, datetime
 import urllib.request, urllib.error
 import pymysql
 from pinecone import Pinecone, ServerlessSpec
+
+#  Windows 콘솔 기본 인코딩(cp949)은 '✅' 같은 문자를 못 찍어 UnicodeEncodeError 로 죽는다.
+#  임베딩·커밋이 다 끝난 뒤 마지막 print 에서 터져서 "실패한 줄 알았는데 데이터는 들어가 있는"
+#  헷갈리는 상황이 났다(2026-07-31). load_exam_schedule.py 와 같은 처리를 넣는다.
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
+STARTED_AT = datetime.datetime.now()   # itda_sync_log.started_at 용
 
 MODEL = 'gemini-embedding-2'   # 2026-07 실측: 차원 3072(001과 동일) · inputTokenLimit 8192(001은 2048)
 DIM   = 3072                   # ※ match.py의 MODEL과 반드시 같아야 함. 다르면 검색이 전부 엉킴
@@ -47,10 +63,24 @@ def build_text(row):
     return ' · '.join(x.strip() for x in (title, classfy, middle) if x and x.strip())
 
 
+# ── content_hash — '이 강좌가 어떤 텍스트로 임베딩됐는가'의 지문 ─────
+#  왜 필요한가
+#    이게 없으면 「최신화」를 누를 때마다 8,273개를 전부 다시 임베딩해야 한다.
+#    무엇이 바뀌었는지 알 수 없기 때문이다. 해시가 있으면 값이 달라진 것만 고르면 된다.
+#    관리자 화면의 "신규 N건 / 변경 N건" 도 이 비교에서 나온다.
+#
+#  ★ 해시 대상은 '임베딩에 실제로 들어간 텍스트'여야 한다.
+#    summary 는 임베딩에서 뺐으므로(위 2026-07-23 주석) 해시에도 넣지 않는다.
+#    안 그러면 요약만 고쳐도 "변경됨"으로 잡혀 쓸데없이 재임베딩한다.
+def content_hash(row):
+    return hashlib.sha256(build_text(row).encode('utf-8')).hexdigest()
+
+
 # ── .env + 환경변수에서 키 읽기 ────────────────────────────────────
 def read_env():
     d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env', r'C:\e-um-1\e-um\etc\.env']:
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
         try:
             for line in open(p, encoding='utf-8'):
                 s = line.strip()
@@ -133,8 +163,12 @@ print(f'Pinecone에 이미 {len(already)}개 있음')
 
 # ── DB에서 강좌 읽기 ────────────────────────────────────────────────
 pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = pymysql.connect(host=ENV.get('DB_HOST', 'localhost'),
+                       port=int(ENV.get('DB_PORT', 3306)),
+                       user=ENV.get('DB_USER', 'user2604'),
+                       password=pw,
+                       database=ENV.get('DB_NAME', 'eum'),
+                       charset='utf8mb4')
 with conn.cursor() as cur:
     # summary(강좌상세)는 안 읽는다 — 임베딩에 안 쓰고, 8,273행 × 1,300자면 읽기만 16MB다.
     cur.execute("SELECT kmooc_id, title, classfy_name, middle_classfy_name FROM course")
@@ -167,11 +201,31 @@ for i in range(0, len(todo), BATCH):
           flush=True)
     time.sleep(SLEEP)   # ★ 분당 토큰 한도(TPM) 대비 속도 제한. 이게 핵심
 
-# ── 로그 ────────────────────────────────────────────────────────────
+# ── content_hash 기록 ───────────────────────────────────────────────
+#  이번에 임베딩한 것뿐 아니라 '이미 Pinecone 에 있던 것'에도 해시를 남긴다.
+#  그래야 다음 실행부터 해시 비교가 전 행에 대해 성립한다(반쪽이면 의미가 없다).
+#  트레이드오프: 예전에 임베딩된 뒤 제목이 바뀐 강좌가 있다면, 지금 해시를 쓰는 순간
+#  '최신'으로 굳어져 그 어긋남을 못 잡는다. 다만 그 강좌는 지금도 이미 어긋나 있고,
+#  전체를 다시 맞추고 싶으면 `--all` 이 그대로 escape hatch 로 남아 있다.
+hashed = 0
 with conn.cursor() as cur:
-    cur.execute("""INSERT INTO course_embedding_result
-                   (api_sync_at, embedding_at, new_count, updated_count)
-                   VALUES (NOW(), NOW(), %s, %s)""", (saved, 0))
+    for i in range(0, len(rows), 500):
+        cur.executemany(
+            "UPDATE course SET content_hash=%s WHERE kmooc_id=%s",
+            [(content_hash(r), r[0]) for r in rows[i:i + 500]])
+        hashed += min(500, len(rows) - i)
+conn.commit()
+print(f'content_hash 기록 {hashed}행')
+
+
+# ── 실행 로그 (관리자 임베딩 화면이 읽는다) ─────────────────────────
+with conn.cursor() as cur:
+    cur.execute(
+        """INSERT INTO itda_sync_log
+             (target, started_at, finished_at, fetched, inserted, updated, embedded, status, message)
+           VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s)""",
+        ('embed_course', STARTED_AT, len(rows), 0, hashed, saved, 'ok',
+         f'Pinecone "{NAMESPACE}" 누적 {len(already) + saved}개'))
 conn.commit()
 print(f'✅ 임베딩 완료: 이번에 {saved}개 Pinecone에 저장 (총 {len(already)+saved}개)')
 conn.close()

@@ -28,9 +28,16 @@ from pathlib import Path
 from collections import Counter
 
 sys.stdout.reconfigure(encoding='utf-8')
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
+
+#  ★ 2026-07-31 — 경로가 깨져 있었다.
+#    이 파일은 원래 etc/itda/ 에 있었고 그때는 parents[2]/'backend' 가 레포의 backend 였다.
+#    Backend/app/itda/scripts/ 로 옮기면서 그 계산이 Backend/app/backend 를 가리키게 됐고,
+#    `app.itda` import 가 안 돼 하네스가 아예 실행되지 않았다.
+#    지금 위치 기준으로 `app` 패키지의 부모(Backend)를 넣는다.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.itda.db import async_session                       # noqa: E402
+from app.itda import itda_core                              # noqa: E402
 from app.itda.itda_core import ItdaEngine, is_injection, pre_check   # noqa: E402
 
 
@@ -222,16 +229,34 @@ def judge(case, out):
             return False, f'금지어 «{f}» 출현', f'{where} 에서 발견', []
 
     # 2) 내용 — 어느 필드에 있든 통과로 본다(필드가 옮겨가도 오채점 안 되게)
+    #
+    #  ★ 2026-07-31 예외 — '카드가 나왔으면 카드로 판정한다'.
+    #    A/B 중에 이런 통과가 나왔다:
+    #        «간호조무사가 되고 싶어요» → 카드 직업 «의료기기관리»
+    #        그런데 reply 에 "간호조무사를 목표로…" 가 있어서 «간호» 로 통과.
+    #    사용자가 보고 행동하는 건 카드다. reply 는 그 앞에 붙는 인사말이라
+    #    거기서 사용자 발화를 그대로 되읽기만 해도 무조건 맞는 것처럼 보인다.
+    #    → 카드가 있으면 card.* 안에서만 찾는다. (카드 안에서 필드가 옮겨가는 건 여전히 허용)
+    search_ev = ev
+    if (out.get('card') or {}) and any(k.startswith('card.') for k in ev):
+        search_ev = {k: v for k, v in ev.items() if k.startswith('card.')}
+
     content_ok, hit_where, hit_word = (True, '', '')
     if content:
         content_ok = False
         for w in content:
-            for k, v in ev.items():
+            for k, v in search_ev.items():
                 if w in v:
                     content_ok, hit_where, hit_word = True, k, w
                     break
             if content_ok:
                 break
+        #  카드에서 못 찾았는데 다른 필드엔 있다 → 조용히 실패시키지 말고 근거를 남긴다
+        if not content_ok and search_ev is not ev:
+            elsewhere = [k for w in content for k, v in ev.items() if w in v]
+            if elsewhere:
+                suspect.append(f'카드에는 {content} 가 없는데 {sorted(set(elsewhere))} 에는 있다 '
+                               f'— 카드가 엉뚱한 것을 골랐거나, 기대 단어가 낡았을 수 있다')
 
     # 3) 형태
     shape_ok = (want_shape == 'any') or (actual == want_shape) or \
@@ -253,10 +278,11 @@ def judge(case, out):
     return False, f'형태·내용 모두 불일치 (실제 {actual})', f'수집한 필드: {list(ev)}', []
 
 
-async def run_case(db, case, repeat):
+async def run_case(db, case, repeat, model=None):
     outs, judged = [], []
     for _ in range(repeat):
-        eng = ItdaEngine(think_level='minimal')
+        eng = ItdaEngine(think_level='minimal',
+                         **({'model': model} if model else {}))
         try:
             out = await eng.step(db, dict(case.get('profile') or {}), case['msg'])
         except Exception as e:
@@ -272,11 +298,23 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--tag', default=None, help='이 묶음만 실행 (지목/환각/오탐/이탈/안전/메타/돌봄/모름/입력)')
     ap.add_argument('--repeat', type=int, default=1, help='각 케이스 반복 횟수(편차 측정)')
+    #  ★ 측정 전용 옵션 — 프로덕션의 MODEL 상수는 건드리지 않는다.
+    #    itda_core 의 주석대로 "env 로 갈아끼우지 않는다(비용 사고 방지)" 원칙은 유지하고,
+    #    A/B 는 이 하네스에서 생성자 인자로만 주입한다. 실수로 비싼 모델이 서비스에 붙을 일이 없다.
+    ap.add_argument('--model', default=None,
+                    help='이 실행에만 쓸 모델 (예: gemini-3.6-flash). 생략하면 MODEL 상수')
+    #  ★ 캐시 키에 모델이 안 들어간다 → 한 프로세스에서 두 모델을 돌리면 뒤 모델이 앞 결과를 받는다.
+    #    프로세스를 나누면 _TURN_CACHE 가 프로세스마다 새것이라 안전하지만,
+    #    --repeat 로 편차를 잴 때는 캐시가 편차를 0으로 만들어버리므로 끌 수 있어야 한다.
+    ap.add_argument('--no-cache', action='store_true', help='턴 캐시 끄기(편차 측정용)')
     a = ap.parse_args()
 
-    print(f"{'='*78}\n■ 잇다 골든셋  ·  모델 {ItdaEngine.model.__doc__ if False else ''}"
-          f"{__import__('app.itda.itda_core', fromlist=['MODEL']).MODEL}"
-          f"  ·  캐시 {ItdaEngine.QUERY_CACHE}\n{'='*78}")
+    if a.no_cache:
+        ItdaEngine.QUERY_CACHE = False
+
+    print(f"{'='*78}\n■ 잇다 골든셋  ·  모델 {a.model or itda_core.MODEL}"
+          f"{'  (기본)' if not a.model else '  ★측정용 주입'}"
+          f"  ·  캐시 {ItdaEngine.QUERY_CACHE}  ·  반복 {a.repeat}\n{'='*78}")
 
     # ── 코드 단위 검사 (LLM 없음) ──
     print('\n[코드 단위 검사 — 비용 0]')
@@ -300,7 +338,7 @@ async def main():
             if case['tag'] != cur:
                 cur = case['tag']
                 print(f'\n[{cur}]')
-            outs, judged = await run_case(db, case, a.repeat)
+            outs, judged = await run_case(db, case, a.repeat, a.model)
             for o in outs:
                 unknown_keys |= (set(o.keys()) - KNOWN_KEYS)
             ok = all(j[0] for j in judged)

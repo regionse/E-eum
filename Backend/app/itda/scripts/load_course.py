@@ -27,11 +27,32 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
 
 
+#  ── DB 접속 정보도 .env 에서 읽는다 (2026-07-31) ──────────────────
+#  전에는 host='localhost', user='user2604', database='eum' 이 박혀 있었다.
+#  서버에서는 DB 가 RDS 에 있으므로 localhost 를 보면 죽는다.
+#  관리자 화면의 「최신화」 버튼이 이 스크립트를 부르므로 헤드리스로도 돌아야 한다.
+def _dbenv(key, default=None):
+    v = os.environ.get(key)
+    if v:
+        return v
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
+        try:
+            for line in open(p, encoding='utf-8'):
+                s = line.strip()
+                if s.startswith(key + '='):
+                    return s.split('=', 1)[1].strip().strip('"').strip("'")
+        except FileNotFoundError:
+            continue
+    return default
+
+
 def get_api_key():
     k = os.environ.get('DATA_GO_KR_KEY')
     if k:
         return k.strip()
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env', r'C:\e-um-1\e-um\etc\.env']:
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
+              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
         try:
             for line in open(p, encoding='utf-8'):
                 if line.strip().startswith('DATA_GO_KR_KEY') and '=' in line:
@@ -71,9 +92,13 @@ def strip_html(s):
 
 
 # ── DB 접속 ─────────────────────────────────────────────────────────
-pw = getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+pw = _dbenv('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
+conn = pymysql.connect(host=_dbenv('DB_HOST', 'localhost'),
+                       port=int(_dbenv('DB_PORT', 3306)),
+                       user=_dbenv('DB_USER', 'user2604'),
+                       password=pw,
+                       database=_dbenv('DB_NAME', 'eum'),
+                       charset='utf8mb4')
 
 # ── ① 목록에서 '공개' 강좌 id 수집 ──────────────────────────────────
 public_ids, page, total = [], 1, None
