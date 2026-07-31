@@ -11,3 +11,14 @@ pinecone
 langchain
 langchain-google-genai
 langgraph
+
+# ── 누락분 보충 (2026-07-31) ─────────────────────────────────────────
+#  AWS 배포 중 발견: 아래 4개가 코드에서 import 되는데 이 파일엔 없었다.
+#  각자 로컬에는 예전에 손으로 깔아둔 게 남아 있어 지금까지 드러나지 않았고,
+#  깡통 서버에 처음 설치하니 바로 터졌다.
+#  특히 bcrypt·PyJWT 는 main.py → user.router → security.py 경로로
+#  **서버 기동 시점에** import 되므로, 없으면 앱이 아예 뜨지 않는다.
+bcrypt      # app/user/security.py — 비밀번호 해싱
+PyJWT       # app/user/security.py — 로그인 토큰 (import jwt)
+pymysql     # 잇다 scripts/*.py — 동기 DB 연결
+requests    # 외부 API 호출

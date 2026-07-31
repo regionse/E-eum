@@ -6,8 +6,11 @@
 import { request } from './client.js'
 
 // 요청: {session_id, message}  응답: {type, reply, understanding, mode, goal, alternatives}
-export function chatItda(sessionId, message) {
-  return request('/itda/message', { method: 'POST', body: { session_id: sessionId, message } })
+//  signal — 화면에서 [멈추기] 를 눌렀을 때 요청을 취소하기 위한 것(2026-07-31).
+export function chatItda(sessionId, message, signal) {
+  return request('/itda/message', {
+    method: 'POST', body: { session_id: sessionId, message }, signal,
+  })
 }
 
 // ── 미래설계지도 (로그인 필요 · DB 저장) ─────────────────────────────
