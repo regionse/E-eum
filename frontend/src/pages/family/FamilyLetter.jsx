@@ -23,6 +23,7 @@ function EmptyState() {
 }
 
 export default function FamilyLetter() {
+  const [saving, setSaving] = useState(false)
   const { familyLinked } = useAuth()
   const { records, addRecord } = useFamily()
   const toast = useToast()
@@ -31,12 +32,36 @@ export default function FamilyLetter() {
 
   const canSubmit = body.trim().length > 0
 
-  const submit = () => {
-    if (!body.trim()) { setError('돌봄 기록을 한 줄 이상 입력해주세요.'); return }
-    addRecord(body)
-    setBody('')
+  const submit = async () => {
+    const content = body.trim()
+
+    if (!content) {
+      setError(
+        '돌봄 기록을 한 줄 이상 입력해주세요.',
+      )
+      return
+    }
+
+    if (saving) {
+      return
+    }
+
+    setSaving(true)
     setError('')
-    toast.show('돌봄 기록을 남겼어요')
+
+    try {
+      await addRecord(content)
+
+      setBody('')
+      toast.show('돌봄 기록을 남겼어요')
+    } catch (requestError) {
+      setError(
+        requestError.message ??
+        '돌봄 기록 저장에 실패했습니다.',
+      )
+    } finally {
+      setSaving(false)
+    }
   }
 
   const onChange = (e) => {
@@ -46,8 +71,16 @@ export default function FamilyLetter() {
 
   // [기록 남기기] — 입력 카드 우하단. 공백 제외 1자 이상일 때 활성
   const submitBtn = (
-    <button className="btn btn-primary btn-sm" onClick={submit} disabled={!familyLinked || !canSubmit}>
-      기록 남기기
+    <button
+      className="btn btn-primary btn-sm"
+      onClick={submit}
+      disabled={
+        !familyLinked ||
+        !canSubmit ||
+        saving
+      }
+    >
+      {saving ? '저장 중...' : '기록 남기기'}
     </button>
   )
 
@@ -55,7 +88,14 @@ export default function FamilyLetter() {
     <div className="container page">
       {/* 설명(PageHead)도 아래 컨텐츠와 같은 760 컬럼에 맞춰 가운데 정렬 — 왼쪽 치우침 교정 */}
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
-        <PageHead title="💌 가족편지" sub="가족이 함께 남기는 돌봄 기록 — 이 기록이 곧 ‘돌봄일지’예요." />
+        <PageHead title="💌 가족편지" sub="가족이 함께 남기는 돌봄 기록 — 이 기록이 곧 ‘돌봄일지’예요." right={
+          <Link
+            to="/family/connect"
+            className="btn btn-ghost btn-sm"
+          >
+            가족 연결
+          </Link>
+        }/>
       </div>
       <RequireLogin axis="가족편지">
         {!familyLinked ? <EmptyState /> : (
@@ -69,7 +109,15 @@ export default function FamilyLetter() {
                   placeholder="오늘의 돌봄을 한 줄로 남겨주세요 (예: 점심 약 드렸어요)"
                   value={body}
                   onChange={onChange}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit() } }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault()
+                      submit()
+                    }
+                  }}
                   maxLength={MAX}
                 />
                 <div className="row" style={{ justifyContent: 'space-between', marginTop: 10, gap: 12 }}>
@@ -95,7 +143,7 @@ export default function FamilyLetter() {
                       <span className={`badge ${r.author === '나' ? 'badge-teal' : 'badge-gray'}`}>{r.author}</span>
                       <span className="muted" style={{ fontSize: 13 }}>{fmtTimelineTime(r)}</span>
                     </div>
-                    <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{r.body}</p>
+                    <p style={{ maxHeight:65, overflowY:'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{r.body}</p>
                   </div>
                 ))}
               </div>

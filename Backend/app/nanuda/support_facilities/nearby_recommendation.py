@@ -119,7 +119,7 @@ def search_facility_on_kakao(
     latitude: float,
     longitude: float,
 ) -> dict | None:
-    query = f"{facility_name} {address}"
+    query = facility_name
 
     response = requests.get(
         KAKAO_KEYWORD_URL,

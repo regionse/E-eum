@@ -5,7 +5,6 @@ import RequireLogin from '../../components/RequireLogin.jsx'
 import { useAuth } from '../../store/auth.jsx'
 import { useFamily, fmtDateWithWeekday } from '../../store/family.jsx'
 
-const MED_LABEL = { m: '아침', l: '점심', d: '저녁' }
 
 export default function CareDiaryDetail() {
   const { id } = useParams()
@@ -66,35 +65,6 @@ export default function CareDiaryDetail() {
               <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.75, fontSize: 15.5, minHeight: 80 }}>{item.body}</p>
             )}
 
-            {/* 그날의 약 */}
-            <div style={{ marginTop: 18, background: 'var(--teal-50)', border: '1px solid var(--teal-100)', borderRadius: 'var(--radius)', padding: '12px 16px' }}>
-              <span style={{ fontWeight: 700, color: 'var(--teal-800)' }}>그날의 약</span>
-              <span style={{ color: 'var(--teal-800)', marginLeft: 8 }}>
-                {['m', 'l', 'd'].map((k, i) => (
-                  <span key={k}>
-                    {i > 0 && <span className="muted"> · </span>}
-                    {MED_LABEL[k]} {item.meds?.[k] ? '✓' : '✗'}
-                  </span>
-                ))}
-              </span>
-            </div>
-
-            {/* 수정·삭제: 본인 글만 (타 가족 읽기 전용) */}
-            <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
-              {editing ? (
-                <>
-                  <button className="btn btn-ghost btn-sm" onClick={() => { setEditing(false); setDraft(item.body) }}>취소</button>
-                  <button className="btn btn-primary btn-sm" onClick={saveEdit} disabled={!draft.trim()}>저장</button>
-                </>
-              ) : mine ? (
-                <>
-                  <button className="btn btn-ghost btn-sm" onClick={() => { setDraft(item.body); setEditing(true) }}>수정</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => setConfirm(true)}>삭제</button>
-                </>
-              ) : (
-                <span className="muted" style={{ fontSize: 13 }}>다른 가족의 기록은 읽기 전용이에요</span>
-              )}
-            </div>
           </article>
         )}
       </RequireLogin>
