@@ -20,7 +20,6 @@
     python etc/itda/golden_잇다골든셋.py --repeat 3   # 각 케이스 3회(편차 측정)
 """
 import sys
-import json
 import time
 import asyncio
 import argparse

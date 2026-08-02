@@ -22,20 +22,29 @@ course 강좌 → Gemini 임베딩 → Pinecone 저장 배치
    상세는 DB에 그대로 있고 카드에서 보여주면 된다 — '검색에 쓸 값'과 '보여줄 값'은 다르다.
    토큰 약 1/10 (2.07M → 0.21M) → 무료 한도 안에서 8,273개를 하루에 끝낼 수 있다.
 """
-import os, sys, time, getpass, json, hashlib, datetime
+import os
+import sys
+import time
+import json
+import hashlib
 import urllib.request, urllib.error
-import pymysql
-from pinecone import Pinecone, ServerlessSpec
 
-#  Windows 콘솔 기본 인코딩(cp949)은 '✅' 같은 문자를 못 찍어 UnicodeEncodeError 로 죽는다.
-#  임베딩·커밋이 다 끝난 뒤 마지막 print 에서 터져서 "실패한 줄 알았는데 데이터는 들어가 있는"
-#  헷갈리는 상황이 났다(2026-07-31). load_exam_schedule.py 와 같은 처리를 넣는다.
+
+#  ★ 2026-07-31 — env 로더·DB 접속·Pinecone 준비를 공용 모듈(_common.py)로 옮겼다.
+#    전에는 배치 10개가 각자 갖고 있어서, 한 곳만 고치면 될 일을 매번 7~8곳에서 고쳤다.
 try:
-    sys.stdout.reconfigure(encoding='utf-8')
-except Exception:
-    pass
+    from ._common import (setup_console, ENV, db_conn,     # noqa: F401
+                          pinecone_index, already_ids, diff_by_hash, SyncLog)
+except ImportError:                                       # 파일 직접 실행
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import (setup_console, ENV, db_conn,      # noqa: F401
+                         pinecone_index, already_ids, diff_by_hash, SyncLog)
 
-STARTED_AT = datetime.datetime.now()   # itda_sync_log.started_at 용
+setup_console()
+
+#  ★ 시작 시각을 여기서 잡는다 — 로그의 소요시간이 의미를 가지려면
+#    write() 호출 시점이 아니라 스크립트가 뜬 시점이어야 한다.
+SYNC = SyncLog('embed_course')
 
 MODEL = 'gemini-embedding-2'   # 2026-07 실측: 차원 3072(001과 동일) · inputTokenLimit 8192(001은 2048)
 DIM   = 3072                   # ※ match.py의 MODEL과 반드시 같아야 함. 다르면 검색이 전부 엉킴
@@ -77,25 +86,17 @@ def content_hash(row):
 
 
 # ── .env + 환경변수에서 키 읽기 ────────────────────────────────────
-def read_env():
-    d = {}
-    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
-              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                s = line.strip()
-                if '=' in s and not s.startswith('#'):
-                    k, v = s.split('=', 1)
-                    d.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-        except FileNotFoundError:
-            continue
-    return d
-
-ENV = {**read_env(), **os.environ}
 GEMINI_KEYS = list(dict.fromkeys(v for k, v in ENV.items()
                                  if k.startswith('GEMINI_API_KEY') and v))
 PINECONE_KEY = ENV.get('PINECONE_API_KEY')
-INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-itda')
+INDEX_NAME   = (ENV.get('PINECONE_COURSE_INDEX_NAME')
+                or ENV.get('PINECONE_INDEX')      # 구 키 하위호환
+                or 'eum-itda')
+#  ★ 팀 통합 .env 스키마(2026-07-31) — 코드 상수를 env 로 덮어쓴다.
+#    ⚠️ 임베딩 모델을 바꾸면 차원이 달라져 **인덱스를 통째로 다시 만들어야 한다.**
+#       덜다의 gemini-embedding-002(768) 와 한 글자 차이인 다른 모델이다.
+MODEL = ENV.get('COURSE_EMBEDDING_MODEL') or MODEL
+DIM   = int(ENV.get('COURSE_EMBEDDING_DIMENSION') or DIM)
 if not GEMINI_KEYS:
     raise SystemExit('GEMINI_API_KEY 없음 (.env 확인)')
 if not PINECONE_KEY:
@@ -135,50 +136,34 @@ def embed(texts):
                      '내일 다시 실행하세요 (이미 넣은 건 건너뛰고 이어서 진행됩니다).')
 
 
-# ── Pinecone 인덱스 준비 (없으면 생성) ─────────────────────────────
-pc = Pinecone(api_key=PINECONE_KEY)
-try:
-    names = pc.list_indexes().names()
-except Exception:
-    names = [getattr(x, 'name', None) for x in pc.list_indexes()]
-if INDEX_NAME not in names:
-    print(f'인덱스 "{INDEX_NAME}" 생성 중 (차원 {DIM}, cosine)...')
-    pc.create_index(name=INDEX_NAME, dimension=DIM, metric='cosine',
-                    spec=ServerlessSpec(cloud='aws', region='us-east-1'))
-index = pc.Index(INDEX_NAME)
-
-# 이미 저장된 id 수집 (이어받기 — 실패해도 무시하고 전체 재임베딩)
-#  ※ index.list()는 문자열이 아니라 ListItem 객체를 준다.
-#    str(ListItem) 은 "ListItem(id='17585')" 이라서 그대로 쓰면 id 비교가 전부 어긋난다.
-#    → 반드시 .id 를 꺼내야 이어받기가 동작한다. (2026-07-23 수정)
-already = set()
-try:
-    for batch in index.list(namespace=NAMESPACE):
-        for it in batch:
-            already.add(it.id if hasattr(it, 'id') else str(it))
-except Exception as e:
-    print(f'  (기존 id 조회 실패 — 전체 재임베딩으로 진행: {e})')
+# ── Pinecone 인덱스 준비 + 이어받기 ────────────────────────────────
+#  인덱스 생성·id 수집 로직은 _common 에 있다(embed_cert·embed_jobs 와 공유).
+index = pinecone_index()
+already = already_ids(index, NAMESPACE)
 print(f'Pinecone에 이미 {len(already)}개 있음')
 
 
 # ── DB에서 강좌 읽기 ────────────────────────────────────────────────
-pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host=ENV.get('DB_HOST', 'localhost'),
-                       port=int(ENV.get('DB_PORT', 3306)),
-                       user=ENV.get('DB_USER', 'user2604'),
-                       password=pw,
-                       database=ENV.get('DB_NAME', 'eum'),
-                       charset='utf8mb4')
+conn = db_conn()
 with conn.cursor() as cur:
     # summary(강좌상세)는 안 읽는다 — 임베딩에 안 쓰고, 8,273행 × 1,300자면 읽기만 16MB다.
     cur.execute("SELECT kmooc_id, title, classfy_name, middle_classfy_name FROM course")
     rows = cur.fetchall()
 
+#  ★ 저장된 해시와 비교해 '신규 / 변경'을 가른다(2026-08-02).
+#    관리자 화면의 「신규 N건 · 변경된 N건」이 이 값이다.
+n_new_set, n_chg_set = diff_by_hash(conn, 'course', 'kmooc_id', rows, content_hash)
+print(f'해시 비교 — 신규 {len(n_new_set)} · 변경 {len(n_chg_set)} · '
+      f'그대로 {len(rows) - len(n_new_set) - len(n_chg_set)}')
+
 if FORCE:
     todo = list(rows)
     print(f'★ --all 지정 → 이미 있는 것도 전부 다시 임베딩 (텍스트 방식 변경 시 사용)')
 else:
-    todo = [r for r in rows if str(r[0]) not in already]
+    #  ★ 건너뛰기 기준이 두 개다(2026-08-02) — Pinecone 에 없거나, 내용이 바뀌었거나.
+    #    예전엔 앞의 것만 봐서 제목이 바뀌어도 옛 벡터가 그대로 남았다.
+    todo = [r for r in rows
+            if str(r[0]) not in already or str(r[0]) in n_chg_set]
 print(f'강좌 {len(rows)}개 중 임베딩할 것 {len(todo)}개')
 
 
@@ -219,13 +204,11 @@ print(f'content_hash 기록 {hashed}행')
 
 
 # ── 실행 로그 (관리자 임베딩 화면이 읽는다) ─────────────────────────
-with conn.cursor() as cur:
-    cur.execute(
-        """INSERT INTO itda_sync_log
-             (target, started_at, finished_at, fetched, inserted, updated, embedded, status, message)
-           VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s)""",
-        ('embed_course', STARTED_AT, len(rows), 0, hashed, saved, 'ok',
-         f'Pinecone "{NAMESPACE}" 누적 {len(already) + saved}개'))
-conn.commit()
-print(f'✅ 임베딩 완료: 이번에 {saved}개 Pinecone에 저장 (총 {len(already)+saved}개)')
+#  ★ 2026-08-02 — inserted/updated 에 '해시를 쓴 행 수'(=전체)를 넣던 것을 바로잡았다.
+#    화면에 "변경 8,273건" 처럼 거짓이 뜨고 있었다. 이제 해시 비교 결과를 그대로 넣는다.
+total = max(len(already), saved) if FORCE else len(already) + saved
+SYNC.write(conn, fetched=len(rows), inserted=len(n_new_set), updated=len(n_chg_set),
+           embedded=saved, status='ok',
+           message=f'Pinecone "{NAMESPACE}" 누적 {total}개 · 해시 {hashed}행')
+print(f'임베딩 완료: 이번에 {saved}개 저장 · 신규 {len(n_new_set)} · 변경 {len(n_chg_set)}')
 conn.close()

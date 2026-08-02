@@ -17,32 +17,29 @@ Q-Net 시험일정 API(#1) → MySQL `exam_schedule` 적재 배치
       국가기술자격 513종 → 'T'
       국가전문자격 100종 → 'S'     ※ 'T' 로 부르면 0건이 온다. 오래 못 찾던 이유
 """
-import os, sys, time, getpass, json
+import os
+import sys
+import time
+import json
 import urllib.request, urllib.parse
-import pymysql
 
+
+#  ★ 2026-07-31 — env 로더·DB 접속·Pinecone 준비를 공용 모듈(_common.py)로 옮겼다.
+#    전에는 배치 10개가 각자 갖고 있어서, 한 곳만 고치면 될 일을 매번 7~8곳에서 고쳤다.
+try:
+    from ._common import setup_console, ENV, db_conn      # noqa: F401
+except ImportError:                                       # 파일 직접 실행
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import setup_console, ENV, db_conn       # noqa: F401
+
+setup_console()
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 
 # ── ① API 키 (certification 배치와 동일) ───────────────────────────
-def get_api_key():
-    k = os.environ.get('DATA_GO_KR_KEY')
-    if k:
-        return k.strip()
-    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
-              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                if line.strip().startswith('DATA_GO_KR_KEY') and '=' in line:
-                    return line.split('=', 1)[1].strip().strip('"').strip("'")
-        except FileNotFoundError:
-            continue
-    return input('DATA_GO_KR_KEY 붙여넣기: ').strip()
-
-
-API_KEY = get_api_key()
+API_KEY = ENV.get('DATA_GO_KR_KEY')
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
 ENDPOINT = 'http://apis.data.go.kr/B490007/qualExamSchd/getQualExamSchdList'
@@ -77,27 +74,7 @@ def to_date(s):
 
 
 # ── ③ DB 접속 ──────────────────────────────────────────────────────
-def _env(key):
-    v = os.environ.get(key)
-    if v:
-        return v
-    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'),
-              '.env', 'etc/.env', '../etc/.env', '../../etc/.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                if line.strip().startswith(key) and '=' in line:
-                    return line.split('=', 1)[1].strip().strip('"').strip("'")
-        except FileNotFoundError:
-            continue
-    return None
-
-pw = _env('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host=_env('DB_HOST', 'localhost'),
-                       port=int(_env('DB_PORT', 3306)),
-                       user=_env('DB_USER', 'user2604'),
-                       password=pw,
-                       database=_env('DB_NAME', 'eum'),
-                       charset='utf8mb4')
+conn = db_conn()
 
 # ── ④ 대상 목록 (루프의 '재료') ─────────────────────────────────────
 #  등급 인자를 주면 그 등급만, 없으면 613종 전부.

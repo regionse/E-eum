@@ -81,3 +81,36 @@ class SaveMapRequest(BaseModel):
 
 class ResumeMapRequest(BaseModel):
     session_id: str = Field(..., min_length=1, description="이어갈 새 세션 id (여기에 슬롯을 복원)")
+
+
+# ── 관리자 · 임베딩 관리 화면 (2026-08-02) ──────────────────────────
+#  덜다(ADDUL-001)·나누다(ADSHA-001) 화면과 같은 항목을 채운다.
+#  값의 출처: itda_sync_log(배치 실행 기록) + content_hash(무엇이 바뀌었나)
+class SyncRun(BaseModel):
+    """대상별 '가장 최근 실행' 한 줄."""
+    target: str                     # load_certification / load_cert_detail / embed_cert / embed_course …
+    finished_at: str = ""           # "2026-08-02 20:53"
+    fetched: int = 0                # 읽은 건수
+    inserted: int = 0               # 신규 — content_hash 가 없던 것
+    updated: int = 0                # 변경 — content_hash 가 달랐던 것
+    embedded: int = 0               # 실제로 임베딩한 건수
+    status: str = "ok"              # ok | partial | error
+    message: str = ""
+
+
+class ItdaSyncStatus(BaseModel):
+    """관리자 임베딩 관리 화면이 한 번에 받아가는 현황."""
+    last_api_sync: str = ""         # 마지막 API 동기화 (load_* 중 최신)
+    last_embedding: str = ""        # 마지막 임베딩 (embed_* 중 최신)
+
+    cert_total: int = 0             # 총 자격증
+    job_total: int = 0              # 총 직업
+    course_total: int = 0           # 총 강좌
+
+    #  '임베딩 완료' = content_hash 가 채워진 행 수.
+    #  ⚠️ job_catalog 에는 content_hash 컬럼이 없어 직업은 세지 않는다(NCS 원본이라 거의 안 바뀜).
+    cert_embedded: int = 0
+    course_embedded: int = 0
+
+    failed_recent: int = 0          # 최근 7일 안에 ok 가 아니었던 실행 수
+    runs: list[SyncRun] = []        # 대상별 최근 실행 (최신순)

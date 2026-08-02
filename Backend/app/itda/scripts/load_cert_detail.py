@@ -45,19 +45,14 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-import pymysql
-
-try:
-    sys.stdout.reconfigure(encoding='utf-8')      # cp949 콘솔에서 비ASCII 출력 시 죽는 것 방지
-except Exception:
-    pass
-
+#  ★ 2026-07-31 — env 로더·DB 접속·콘솔 설정을 공용 모듈(_common.py)로 옮겼다.
 try:                                              # 패키지 실행·파일 직접 실행 모두 지원
-    from ..env import ENV
+    from ._common import setup_console, ENV, db_conn      # noqa: F401
 except ImportError:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from env import ENV
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import setup_console, ENV, db_conn       # noqa: F401
 
+setup_console()
 DRY = '--dry' in sys.argv
 
 ENDPOINT = 'http://openapi.q-net.or.kr/api/service/rest/InquiryQualInfo/getList'
@@ -65,7 +60,12 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')   # 커스텀 UA 는 403 → 브라우저 UA 필수
 SERIES = {'01': '기술사', '02': '기능장', '03': '기사', '04': '기능사'}
 TRIES = 8            # 서버가 흔들리므로 넉넉히
-TIMEOUT = 180
+#  ★ 2026-08-02 — 180 → 300 으로 올렸다.
+#    기사·기능사가 8회 전부 실패해서 "서버가 죽었다"고 봤는데, 실측해보니 그냥 느린 것이었다.
+#      기사   220초 · 633KB · 231건      기능사 206초 · 444KB · 152건
+#    180초 제한을 각각 40초·26초 넘겨서 매번 타임아웃으로 잘리고 있었다.
+#    응답이 클수록 오래 걸린다(기술사 86KB 는 몇 초). 큰 계열에 맞춰 여유를 둔다.
+TIMEOUT = 300
 BACKOFF = 6          # 재시도 간격(초)
 
 STARTED_AT = datetime.datetime.now()
@@ -154,15 +154,7 @@ if not collected:
 
 
 # ── DB 반영 ─────────────────────────────────────────────────────────
-pw = ENV.get('DB_PASSWORD')
-if not pw:
-    raise SystemExit('DB_PASSWORD 없음 — etc/.env 확인')
-conn = pymysql.connect(host=ENV.get('DB_HOST', 'localhost'),
-                       port=int(ENV.get('DB_PORT', 3306)),
-                       user=ENV.get('DB_USER', 'user2604'),
-                       password=pw,
-                       database=ENV.get('DB_NAME', 'eum'),
-                       charset='utf8mb4')
+conn = db_conn()
 
 with conn.cursor() as cur:
     cur.execute("SELECT jm_cd, jm_name, job_desc, career_outlook FROM certification")

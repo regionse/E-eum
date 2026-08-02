@@ -35,6 +35,7 @@ from app.inquiry.router import (
     user_router as user_inquiry_router,
 )
 from app.itda.router import router as itda_router
+from app.itda.router import admin_router as itda_admin_router
 from app.nanuda.router import router as nanuda_router
 from app.notice.router import (
     admin_router as admin_notice_router,
@@ -135,6 +136,7 @@ app.include_router(delda_user_router)
 app.include_router(delda_admin_router)
 
 app.include_router(itda_router)
+app.include_router(itda_admin_router)   # 관리자 잇다 임베딩 (/admin/itda-sync/*)
 app.include_router(nanuda_router)
 
 app.include_router(auth_router)
