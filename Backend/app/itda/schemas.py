@@ -30,8 +30,13 @@ class CertStep(BaseModel):
     entry_free: bool = False        # 제한없음(지금 바로 응시 가능) 확인?
     entry: str = ""                 # 「지금 바로 응시 가능」 / 「응시자격 확인 필요」
     entry_note: str = ""            # 미확인일 때 등급별 조건 원문 (hover)
-    exam: str = ""                  # 다음 시험일
+    exam: str = ""                  # 다음 시험일(접수 마감일 포함)
     verified: bool = False          # cert_job 검증된 연결인지
+    #  (2026-07-30) DB 에 있으나 화면에 안 쓰던 실데이터를 노출 — 자격증 상세에서 보여준다.
+    exam_method: str = ""           # 시험 방법(무엇을 공부하나) — certification.exam_method
+    outlook: str = ""               # 이 자격의 전망 — certification.career_outlook
+    qual_gb: str = ""               # 국가기술자격 / 국가전문자격
+    evidence: str = ""              # 이 자격증을 이 직업에 이은 근거(cert_job.evidence) — '데이터가 골랐다'의 증거
 
 
 class Hire(BaseModel):
@@ -62,9 +67,11 @@ class MessageResponse(BaseModel):
     turn: int = 0
     max_turn: int = 3
     understanding: str = ""         # LLM이 이해한 요약 (디버깅·투명성용)
-    mode: str = "gemini"            # "gemini" | "stub"  ← 폴백 발동 여부
+    mode: str = "gemini"            # "gemini" | "error"  ← 턴 실패 여부(stub 폴백은 없다)
     goal: Goal | None = None        # type=result일 때만
     alternatives: list[str] = []    # 다른 후보 직업
+    options: list[str] = []         # 좁히기 선택지 — 프론트가 클릭 chip 으로 그린다(2026-07-30)
+    option_notes: list[str] = []    # 각 선택지의 한 줄 설명(같은 순서) — NCS 원문만 보여주면 못 고른다
 
 
 # ── 미래설계지도 (저장·이어서하기) 요청 (2026-07-29) ──
@@ -74,3 +81,36 @@ class SaveMapRequest(BaseModel):
 
 class ResumeMapRequest(BaseModel):
     session_id: str = Field(..., min_length=1, description="이어갈 새 세션 id (여기에 슬롯을 복원)")
+
+
+# ── 관리자 · 임베딩 관리 화면 (2026-08-02) ──────────────────────────
+#  덜다(ADDUL-001)·나누다(ADSHA-001) 화면과 같은 항목을 채운다.
+#  값의 출처: itda_sync_log(배치 실행 기록) + content_hash(무엇이 바뀌었나)
+class SyncRun(BaseModel):
+    """대상별 '가장 최근 실행' 한 줄."""
+    target: str                     # load_certification / load_cert_detail / embed_cert / embed_course …
+    finished_at: str = ""           # "2026-08-02 20:53"
+    fetched: int = 0                # 읽은 건수
+    inserted: int = 0               # 신규 — content_hash 가 없던 것
+    updated: int = 0                # 변경 — content_hash 가 달랐던 것
+    embedded: int = 0               # 실제로 임베딩한 건수
+    status: str = "ok"              # ok | partial | error
+    message: str = ""
+
+
+class ItdaSyncStatus(BaseModel):
+    """관리자 임베딩 관리 화면이 한 번에 받아가는 현황."""
+    last_api_sync: str = ""         # 마지막 API 동기화 (load_* 중 최신)
+    last_embedding: str = ""        # 마지막 임베딩 (embed_* 중 최신)
+
+    cert_total: int = 0             # 총 자격증
+    job_total: int = 0              # 총 직업
+    course_total: int = 0           # 총 강좌
+
+    #  '임베딩 완료' = content_hash 가 채워진 행 수.
+    #  ⚠️ job_catalog 에는 content_hash 컬럼이 없어 직업은 세지 않는다(NCS 원본이라 거의 안 바뀜).
+    cert_embedded: int = 0
+    course_embedded: int = 0
+
+    failed_recent: int = 0          # 최근 7일 안에 ok 가 아니었던 실행 수
+    runs: list[SyncRun] = []        # 대상별 최근 실행 (최신순)

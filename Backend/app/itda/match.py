@@ -9,7 +9,7 @@
         ③ 그 상세를 MySQL에서 꺼내 반환
 
 네임스페이스
-  하나의 인덱스를 둘로 나눠 쓴다.  course = 강좌 8,273 / cert = 자격증 613
+  하나의 인덱스를 둘로 나눠 쓴다.  job = 직업 1,094 / course = 강좌 8,371 / cert = 자격증 613 (2026-07-30 실측)
   안 나누면 '강좌 추천'에 자격증이 섞여 나온다. 질의할 때 반드시 지정할 것.
 
 ※ 임베딩(embed_course_·embed_cert_) 끝난 뒤에 동작함.
@@ -31,7 +31,6 @@ try:
 except ImportError:
     import gemini_util as _gutil
 
-MODEL = 'gemini-embedding-2'   # ※ embed_course_·embed_cert_ 의 MODEL과 반드시 동일할 것
 NS_COURSE = 'course'
 NS_CERT   = 'cert'
 NS_JOB    = 'job'              # 직업 먼저(2026-07-27) — understanding → 직업 벡터
@@ -45,7 +44,20 @@ except ImportError:
     from env import ENV
 # Gemini 키는 gemini_util 이 ENV 에서 찾는다(키 1개 · 분당 한도는 기다렸다 재시도).
 PINECONE_KEY = ENV.get('PINECONE_API_KEY')
-INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-itda')   # 임베딩 스크립트와 동일해야 함(안 그러면 빈 인덱스 조회)
+
+#  ★ 팀 통합 .env 스키마(2026-07-31) — 인덱스·임베딩 모델을 env 로 뺐다.
+#    기본값은 코드에 남긴다: .env 에 키가 없어도 그대로 돌아가야 한다.
+#    구 키(PINECONE_INDEX)도 계속 읽는다 — 팀원이 아직 .env 를 안 바꿨어도 안 깨지게.
+#
+#    ⚠️ 잇다는 **인덱스 1개(eum-itda)에 네임스페이스 3개**(cert / course / job)다.
+#       키 이름이 COURSE 지만 강좌 전용 인덱스가 아니다.
+#    ⚠️ 임베딩 모델을 바꾸면 **차원이 달라져 인덱스를 통째로 다시 만들어야 한다.**
+#       덜다의 gemini-embedding-002(768) 와 한 글자 차이인 다른 모델이다. 임의로 바꾸지 말 것.
+INDEX_NAME = (ENV.get('PINECONE_COURSE_INDEX_NAME')
+              or ENV.get('PINECONE_INDEX')          # 구 키 하위호환
+              or 'eum-itda')
+MODEL = ENV.get('COURSE_EMBEDDING_MODEL') or 'gemini-embedding-2'
+DIM   = int(ENV.get('COURSE_EMBEDDING_DIMENSION') or 3072)
 
 
 # ── ① 질의 임베딩 (강좌와 같은 모델·plain) ─────────────────────────
@@ -313,13 +325,38 @@ async def _keyword_jobs(db, query_text, over_fetch):
 
 
 async def match_jobs(db, query_text, top_k=6, min_score=0.0):
-    vec = await _search(query_text, NS_JOB, max(top_k * 3, 12), min_score)   # [(job_code, cosine)]
-    kw = await _keyword_jobs(db, query_text, max(top_k * 3, 12))             # [(job_code, kw_score)]
-    if not vec and not kw:
+    """질의(문자열 또는 문자열 목록) → 직업 후보. 하이브리드(벡터+키워드) RRF.
+
+    ★ 다질의 융합(RAG-Fusion, 2026-07-30)
+      query_text 에 **여러 질의**를 주면 각각 검색해 모든 순위를 RRF 로 함께 합친다.
+      왜: 남은 품질 편차의 원인이 'LLM 이 만든 질의 한 개'였다. 표현이 조금 달라지면
+      벡터 순위가 흔들려 카드/되묻기가 뒤집혔다(실측). 여러 표현으로 검색해 합치면
+      한 표현의 운에 덜 좌우된다 — 여러 순위에 공통으로 오르는 후보가 위로 올라온다.
+      이게 업계에서 말하는 Multi-Query Retrieval / RAG-Fusion 이고, 융합기(_rrf)는 이미 있었다.
+      비용: 질의 변형은 **기존 턴 호출 한 번에서 함께 받으므로 LLM 추가 비용 0**.
+      늘어나는 건 임베딩(실측 9회 34토큰 ≈ 0원)과 Pinecone 쿼리뿐이다.
+    """
+    queries = [q for q in ([query_text] if isinstance(query_text, str) else list(query_text or []))
+               if q and q.strip()]
+    if not queries:
         return []
-    vec_score = {c: s for c, s in vec}
-    kw_score = {c: s for c, s in kw}
-    order = _rrf([c for c, _ in vec], [c for c, _ in kw])                    # 두 순위를 RRF 로 합침
+    #  중복 제거 · 최대 4개(비용 상한). **앞자리가 우선**이므로 호출부는 결정론적 앵커
+    #  (사용자 원문 · 슬롯 질의)를 앞에 두고 LLM 변형을 뒤에 둔다 — 잘려도 앵커는 남는다.
+    queries = list(dict.fromkeys(queries))[:4]
+
+    ranked, vec_score, kw_score = [], {}, {}
+    for q in queries:
+        vec = await _search(q, NS_JOB, max(top_k * 3, 12), min_score)        # [(job_code, cosine)]
+        kw = await _keyword_jobs(db, q, max(top_k * 3, 12))                  # [(job_code, kw_score)]
+        ranked.append([c for c, _ in vec])
+        ranked.append([c for c, _ in kw])
+        for c, s in vec:                              # 점수는 '가장 높게 나온 값'을 남긴다
+            vec_score[c] = max(vec_score.get(c, 0.0), s)   # (임계 판정은 최선의 표현을 기준으로)
+        for c, s in kw:
+            kw_score[c] = max(kw_score.get(c, 0.0), s)
+    if not vec_score and not kw_score:
+        return []
+    order = _rrf(*ranked)                             # 모든 순위(질의×2)를 한 번에 RRF
     codes = list(vec_score.keys() | kw_score.keys())
     stmt = text("SELECT jc.job_code, jc.job_name, jc.job_mcls_name, jc.job_description, "
                 "       COUNT(cj.cert_id) "

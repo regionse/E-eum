@@ -21,13 +21,15 @@ from app.inquiry.schemas import (
 
 # =========================================================
 # 사용자: 문의 등록
+# - 로그인한 사용자의 user_id를 Router에서 전달받아 저장
 # =========================================================
 async def create_inquiry(
     db: AsyncSession,
+    user_id: int,
     inquiry_data: InquiryCreateRequest,
 ) -> Inquiry:
     inquiry = Inquiry(
-        user_id=inquiry_data.user_id,
+        user_id=user_id,
         inquiry_type=inquiry_data.inquiry_type,
         inquiry_title=inquiry_data.inquiry_title.strip(),
         inquiry_content=inquiry_data.inquiry_content.strip(),
@@ -64,11 +66,15 @@ async def get_user_inquiry_list(
     ]
 
     count_query = (
-        select(func.count(Inquiry.inquiry_id))
+        select(
+            func.count(Inquiry.inquiry_id)
+        )
         .where(*conditions)
     )
 
-    count_result = await db.execute(count_query)
+    count_result = await db.execute(
+        count_query
+    )
     total = count_result.scalar_one()
 
     offset = (page - 1) * size
@@ -84,7 +90,9 @@ async def get_user_inquiry_list(
         .limit(size)
     )
 
-    result = await db.execute(list_query)
+    result = await db.execute(
+        list_query
+    )
     inquiries = result.scalars().all()
 
     return InquiryListResponse(
@@ -110,7 +118,7 @@ async def get_user_inquiry_by_id(
     inquiry_id: int,
     user_id: int,
 ) -> Inquiry | None:
-    query = (
+    stmt = (
         select(Inquiry)
         .where(
             Inquiry.inquiry_id == inquiry_id,
@@ -118,7 +126,7 @@ async def get_user_inquiry_by_id(
         )
     )
 
-    result = await db.execute(query)
+    result = await db.execute(stmt)
 
     return result.scalar_one_or_none()
 
@@ -144,10 +152,16 @@ async def delete_user_inquiry(
             detail="문의를 찾을 수 없습니다.",
         )
 
-    if inquiry.inquiry_status == InquiryStatus.ANSWERED:
+    if (
+        inquiry.inquiry_status
+        == InquiryStatus.ANSWERED
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="답변이 완료된 문의는 삭제할 수 없습니다.",
+            detail=(
+                "답변이 완료된 문의는 "
+                "삭제할 수 없습니다."
+            ),
         )
 
     await db.delete(inquiry)
@@ -180,29 +194,38 @@ async def get_admin_inquiry_list(
 
     if inquiry_type is not None:
         conditions.append(
-            Inquiry.inquiry_type == inquiry_type
+            Inquiry.inquiry_type
+            == inquiry_type
         )
 
     if inquiry_status is not None:
         conditions.append(
-            Inquiry.inquiry_status == inquiry_status
+            Inquiry.inquiry_status
+            == inquiry_status
         )
 
     if keyword is not None:
         cleaned_keyword = keyword.strip()
 
         if cleaned_keyword:
-            search_keyword = f"%{cleaned_keyword}%"
+            search_keyword = (
+                f"%{cleaned_keyword}%"
+            )
 
             keyword_conditions = [
-                Inquiry.inquiry_title.like(search_keyword),
-                Inquiry.inquiry_content.like(search_keyword),
+                Inquiry.inquiry_title.like(
+                    search_keyword
+                ),
+                Inquiry.inquiry_content.like(
+                    search_keyword
+                ),
             ]
 
-            # 검색어가 숫자면 사용자 번호로도 검색
+            # 검색어가 숫자이면 사용자 번호로도 검색
             if cleaned_keyword.isdigit():
                 keyword_conditions.append(
-                    Inquiry.user_id == int(cleaned_keyword)
+                    Inquiry.user_id
+                    == int(cleaned_keyword)
                 )
 
             conditions.append(
@@ -214,9 +237,13 @@ async def get_admin_inquiry_list(
     )
 
     if conditions:
-        count_query = count_query.where(*conditions)
+        count_query = count_query.where(
+            *conditions
+        )
 
-    count_result = await db.execute(count_query)
+    count_result = await db.execute(
+        count_query
+    )
     total = count_result.scalar_one()
 
     offset = (page - 1) * size
@@ -224,7 +251,9 @@ async def get_admin_inquiry_list(
     list_query = select(Inquiry)
 
     if conditions:
-        list_query = list_query.where(*conditions)
+        list_query = list_query.where(
+            *conditions
+        )
 
     list_query = (
         list_query
@@ -236,7 +265,9 @@ async def get_admin_inquiry_list(
         .limit(size)
     )
 
-    result = await db.execute(list_query)
+    result = await db.execute(
+        list_query
+    )
     inquiries = result.scalars().all()
 
     return AdminInquiryListResponse(
@@ -262,11 +293,14 @@ async def get_admin_inquiry_by_id(
     query = (
         select(Inquiry)
         .where(
-            Inquiry.inquiry_id == inquiry_id
+            Inquiry.inquiry_id
+            == inquiry_id
         )
     )
 
-    result = await db.execute(query)
+    result = await db.execute(
+        query
+    )
 
     return result.scalar_one_or_none()
 
@@ -293,18 +327,33 @@ async def create_inquiry_answer(
             detail="문의를 찾을 수 없습니다.",
         )
 
-    if inquiry.inquiry_answer_content is not None:
+    if (
+        inquiry.inquiry_answer_content
+        is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="이미 답변이 등록된 문의입니다.",
+            detail=(
+                "이미 답변이 등록된 "
+                "문의입니다."
+            ),
         )
 
     inquiry.admin_id = admin_id
+
     inquiry.inquiry_answer_content = (
-        answer_data.inquiry_answer_content.strip()
+        answer_data
+        .inquiry_answer_content
+        .strip()
     )
-    inquiry.inquiry_status = InquiryStatus.ANSWERED
-    inquiry.inquiry_answered_at = datetime.now()
+
+    inquiry.inquiry_status = (
+        InquiryStatus.ANSWERED
+    )
+
+    inquiry.inquiry_answered_at = (
+        datetime.now()
+    )
 
     try:
         await db.commit()
@@ -338,18 +387,30 @@ async def update_inquiry_answer(
             detail="문의를 찾을 수 없습니다.",
         )
 
-    if inquiry.inquiry_answer_content is None:
+    if (
+        inquiry.inquiry_answer_content
+        is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="등록된 답변이 없습니다.",
         )
 
     inquiry.admin_id = admin_id
+
     inquiry.inquiry_answer_content = (
-        answer_data.inquiry_answer_content.strip()
+        answer_data
+        .inquiry_answer_content
+        .strip()
     )
-    inquiry.inquiry_status = InquiryStatus.ANSWERED
-    inquiry.inquiry_answered_at = datetime.now()
+
+    inquiry.inquiry_status = (
+        InquiryStatus.ANSWERED
+    )
+
+    inquiry.inquiry_answered_at = (
+        datetime.now()
+    )
 
     try:
         await db.commit()
@@ -385,19 +446,29 @@ async def update_inquiry_status(
         )
 
     if (
-        inquiry_status == InquiryStatus.ANSWERED
+        inquiry_status
+        == InquiryStatus.ANSWERED
         and not inquiry.inquiry_answer_content
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="답변 내용 없이 답변완료 상태로 변경할 수 없습니다.",
+            detail=(
+                "답변 내용 없이 답변완료 상태로 "
+                "변경할 수 없습니다."
+            ),
         )
 
     inquiry.admin_id = admin_id
     inquiry.inquiry_status = inquiry_status
 
-    if inquiry_status == InquiryStatus.ANSWERED:
-        inquiry.inquiry_answered_at = datetime.now()
+    if (
+        inquiry_status
+        == InquiryStatus.ANSWERED
+    ):
+        inquiry.inquiry_answered_at = (
+            datetime.now()
+        )
+
     else:
         inquiry.inquiry_answered_at = None
 
