@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PageHead, Empty } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
@@ -13,7 +13,6 @@ import { analyzeWeeklyCare, recommendFacility, getCurrentPosition,} from '../../
 
 
 const PER = 10
-const AUTHORS = ['전체', '나', '어머니']
 const PERIODS = ['전체', '이번 달', '최근 7일']
 
 const summarize = (body) => {
@@ -46,10 +45,10 @@ function ConnectPrompt() {
 
 export default function CareDiary() {
   const [recommendation, setRecommendation] = useState(null)
-  const { familyLinked } = useAuth()
-  const { records, careGroupId } = useFamily()
+  const { familyLinked, userId } = useAuth()
+  const { records, careGroupId, members } = useFamily()
   const nav = useNavigate()
-  const [author, setAuthor] = useState('전체')
+  const [author, setAuthor] = useState('all')
   const [period, setPeriod] = useState('전체')
   const [q, setQ] = useState('')
   const [query, setQuery] = useState('')
@@ -60,10 +59,44 @@ export default function CareDiary() {
   const [analysisResult, setAnalysisResult] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
+  const [memberAliases, setMemberAliases] = useState({})
 
+  const safeMembers = Array.isArray(members) ? members : []
+  const aliasStorageKey =
+    userId != null && careGroupId != null
+      ? `family-member-aliases:${userId}:${careGroupId}`
+      : null
+
+  useEffect(() => {
+    if (!aliasStorageKey) {
+      setMemberAliases({})
+      return
+    }
+
+    try {
+      const saved = localStorage.getItem(aliasStorageKey)
+      setMemberAliases(saved ? JSON.parse(saved) : {})
+    } catch {
+      setMemberAliases({})
+    }
+  }, [aliasStorageKey])
+
+  const getAuthorLabel = (memberUserId) => {
+    const alias = memberAliases[String(memberUserId)]?.trim()
+
+    if (alias) {
+      return alias
+    }
+
+    if (Number(memberUserId) === Number(userId)) {
+      return '나'
+    }
+
+    return `가족 ${memberUserId}`
+  }
 
   const filtered = useMemo(() => records.filter((r) =>
-    (author === '전체' || r.author === author) &&
+    (author === 'all' || String(r.authorId) === author) &&
     inPeriod(r.date, period) &&
     (!query || r.body.toLowerCase().includes(query.toLowerCase()))
   ), [records, author, period, query])
@@ -136,7 +169,15 @@ export default function CareDiary() {
             <div className="row" style={{ gap: 8, marginBottom: 'var(--sp-4)', flexWrap: 'wrap' }}>
               <select className="select" style={{ width: 'auto' }} value={author}
                 onChange={(e) => apply(() => setAuthor(e.target.value))}>
-                {AUTHORS.map((a) => <option key={a} value={a}>작성자 · {a}</option>)}
+                <option value="all">작성자 · 전체</option>
+                {safeMembers.map((member) => (
+                  <option
+                    key={member.user_id}
+                    value={String(member.user_id)}
+                  >
+                    작성자 · {getAuthorLabel(member.user_id)}
+                  </option>
+                ))}
               </select>
               <select className="select" style={{ width: 'auto' }} value={period}
                 onChange={(e) => apply(() => setPeriod(e.target.value))}>
@@ -166,7 +207,17 @@ export default function CareDiary() {
                   ) : rows.map((r) => (
                     <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/family/diary/${r.id}`)}>
                       <td className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtBoardTime(r)}</td>
-                      <td><span className={`badge ${r.author === '나' ? 'badge-teal' : 'badge-gray'}`}>{r.author}</span></td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            Number(r.authorId) === Number(userId)
+                              ? 'badge-teal'
+                              : 'badge-gray'
+                          }`}
+                        >
+                          {getAuthorLabel(r.authorId)}
+                        </span>
+                      </td>
                       <td style={{ fontWeight: 500 }}>{summarize(r.body)}</td>
                       <td className="muted" style={{ textAlign: 'right' }}>›</td>
                     </tr>
