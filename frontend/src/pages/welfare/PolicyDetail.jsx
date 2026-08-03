@@ -228,7 +228,7 @@ export default function PolicyDetail() {
     >
       <PageHead
         title="정책 상세"
-        sub="지원 대상과 선정 기준, 신청 방법을 확인해 보세요."
+        sub="지원 대상과 선정 기준, 지원 내용을 확인해 보세요."
         right={(
           <button
             type="button"
@@ -245,7 +245,7 @@ export default function PolicyDetail() {
       {loading && (
         <Loading
           title="정책 정보를 불러오고 있어요"
-          sub="지원 대상과 신청 방법을 확인하고 있어요."
+          sub="지원 대상과 지원 내용을 확인하고 있어요."
         />
       )}
 
@@ -640,29 +640,6 @@ function PolicyDetailContent({
               policy.support_content
             }
             emptyText="등록된 지원 내용이 없어요. 공식 사이트에서 상세 내용을 확인해 주세요."
-          />
-        </div>
-      </section>
-
-
-      {/* 신청 방법 */}
-      <section className="card card-pad">
-        <SectionTitle
-          title="신청 방법"
-          description="신청 기관과 진행 절차를 확인할 수 있어요."
-        />
-
-        <div
-          style={{
-            marginTop: 18,
-          }}
-        >
-          <DetailBlock
-            title="신청 절차"
-            value={
-              policy.application_method
-            }
-            emptyText="등록된 신청 방법이 없어요. 담당 기관이나 공식 사이트에서 확인해 주세요."
           />
         </div>
       </section>
