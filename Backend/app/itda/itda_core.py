@@ -898,6 +898,32 @@ class ItdaEngine:
         return {'seq': row[0], 'doc': row[1], 'prac': row[2], 'pass': row[3],
                 'reg_start': row[4], 'reg_end': row[5]}
 
+    async def _course_covered(self, db, job_code) -> bool:
+        """K-MOOC 이 이 직무를 실제로 덮는가 — scripts/build_course_coverage.py 가 채운 표를 본다.
+
+        왜 표를 보나 (2026-08-03)
+          벡터 검색에는 '관련 없음'이라는 출력이 없다. 항상 **가장 가까운 k개**를 준다.
+          그래서 K-MOOC(대학 MOOC)에 없는 직종을 물으면 엉뚱한 강의가 확신에 차서 나왔다 —
+              제빵 → 실용아트 메이크업 · 가구제작 → 스마트팩토리 · 특수주조 → 드론 특수촬영
+          (K-MOOC 8,273개 중 제빵·제과·베이킹·조리·용접·가구·목공·배관 강의는 **0건**이다.)
+
+        왜 점수 문턱이 아니라 표인가
+          리랭커 점수에 문턱을 걸어 봤으나 무작위 표본에서 **경계가 없었다**(연속 기울기).
+          0.02 를 걸면 60% 가 강좌 0개가 되고 그 안에 쓸모있는 것이 섞인다 —
+              리튬이온전지셀개발 → 이차전지이야기(0.032) · SW공급망보안 → 사이버보안(0.0057)
+          보정할 라벨이 없으면 생점수 문턱은 표본만 바뀌어도 뒤집힌다. 그래서 판단을
+          **오프라인으로 옮겨** 직업마다 한 번 LLM 다수결로 정하고 여기서는 조회만 한다.
+
+        ★ 미판정(NULL)·컬럼 없음은 True 로 본다 — 표가 아직 없다고 기능이 죽으면 안 된다.
+        """
+        try:
+            r = (await db.execute(text(
+                'SELECT course_covered FROM job_catalog WHERE job_code = :c'),
+                {'c': job_code})).fetchone()
+        except Exception:
+            return True                      # 구 스키마(컬럼 없음)에서도 지금까지대로 동작
+        return not (r and r[0] == 0)
+
     #  (2026-07-28) _jobs_for(자격증→직업) 제거 — cert-먼저에서 '자격증 카드에 직업을 얹던' 함수.
     #  직업-먼저에선 직업이 주인공이고, 그 직업의 자격증을 붙이는 _certs_for(역방향)가 대신한다.
     async def _certs_for(self, db, job_code, k=3):
@@ -1097,7 +1123,12 @@ class ItdaEngine:
             #      K-MOOC 은 대학 강좌라 직업훈련 어휘와 달라 점수 분포가 직업마다 다르다 → 절대값 무의미.
             #    어떻게: 넓게(POOL) 받아 크로스인코더로 질의-강좌를 함께 읽혀 재정렬하고 상위 3개만 쓴다.
             #    리랭크가 실패하면 예전 임계 방식으로 안전하게 되돌아간다.
-            pool = await m.match_courses(db, cq, top_k=self.COURSE_POOL, min_score=0.0)
+            #  커버리지 표가 '안 덮음'이라 하면 **검색 자체를 건너뛴다** — Pinecone 호출도 아낀다.
+            #  화면은 이미 이 경우를 옳게 그린다: goal.has_courses 가 false 면 강좌 칸이 사라지고
+            #  「2 · 국비 실전 훈련」만 남는다(LearnChat.jsx). 프론트는 고칠 게 없다.
+            covered = await self._course_covered(db, chosen['job_code'])
+            pool = (await m.match_courses(db, cq, top_k=self.COURSE_POOL, min_score=0.0)
+                    if covered else [])
             ranked = []
             if pool:
                 docs = [f"{c['title']} {c.get('classfy') or ''} {(c.get('summary') or '')[:160]}"
