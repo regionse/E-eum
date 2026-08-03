@@ -13,11 +13,24 @@ K-MOOC 강좌 → MySQL `course` 적재 배치 (목록 + 상세)
    2) MAX_CALLS(9,500) 가드       → 하루 한도 넘기 전에 멈춤
    3) 이미 넣은 강좌는 건너뜀       → 재실행 시 한도 절약 + 이어받기
 """
-import os, re, time, getpass, json
+import os
+import sys
+import re
+import time
+import json
 import urllib.request, urllib.parse
-import pymysql
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
+#  ★ 2026-07-31 — env 로더·DB 접속·Pinecone 준비를 공용 모듈(_common.py)로 옮겼다.
+#    전에는 배치 10개가 각자 갖고 있어서, 한 곳만 고치면 될 일을 매번 7~8곳에서 고쳤다.
+try:
+    from ._common import setup_console, ENV, db_conn      # noqa: F401
+except ImportError:                                       # 파일 직접 실행
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import setup_console, ENV, db_conn       # noqa: F401
+
+setup_console()
 MAX_CALLS = 9500     # 하루 한도(10,000) 버퍼
 SIZE      = 100
 WORKERS   = 10       # ★ 동시 요청 수. 10≈초당 ~20개. 늘리면 빠름(근데 너무 크면 data.go.kr 오류↑). 25쯤이면 ~50/초(위험)
@@ -27,21 +40,11 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
 
 
-def get_api_key():
-    k = os.environ.get('DATA_GO_KR_KEY')
-    if k:
-        return k.strip()
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env', r'C:\e-um-1\e-um\etc\.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                if line.strip().startswith('DATA_GO_KR_KEY') and '=' in line:
-                    return line.split('=', 1)[1].strip().strip('"').strip("'")
-        except FileNotFoundError:
-            continue
-    return input('DATA_GO_KR_KEY 붙여넣기: ').strip()
-
-
-API_KEY = get_api_key()
+#  ── DB 접속 정보도 .env 에서 읽는다 (2026-07-31) ──────────────────
+#  전에는 host='localhost', user='user2604', database='eum' 이 박혀 있었다.
+#  서버에서는 DB 가 RDS 에 있으므로 localhost 를 보면 죽는다.
+#  관리자 화면의 「최신화」 버튼이 이 스크립트를 부르므로 헤드리스로도 돌아야 한다.
+API_KEY = ENV.get('DATA_GO_KR_KEY')
 calls = 0   # ← 오늘 호출한 총 횟수 (제한 가드용)
 
 
@@ -71,9 +74,7 @@ def strip_html(s):
 
 
 # ── DB 접속 ─────────────────────────────────────────────────────────
-pw = getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = db_conn()
 
 # ── ① 목록에서 '공개' 강좌 id 수집 ──────────────────────────────────
 public_ids, page, total = [], 1, None

@@ -7,8 +7,8 @@ from app.itda import controllers, session, gemini_util
 from app.itda.db import get_db
 from app.itda.itda_core import ENV
 from app.itda.schemas import (MessageRequest, MessageResponse, ResetRequest,
-                              SaveMapRequest, ResumeMapRequest)
-from app.user.security import get_current_user
+                              SaveMapRequest, ResumeMapRequest, ItdaSyncStatus)
+from app.user.security import get_current_user, get_current_admin
 from app.user.models import User
 
 # 팀 main.py에서:  from app.itda.router import router as itda_router
@@ -17,6 +17,32 @@ router = APIRouter(
     prefix="/itda",
     tags=["잇다 진로상담"],
 )
+
+# ── 관리자 · 임베딩 관리 (2026-08-02) ───────────────────────────────
+#  덜다의 /admin/policy-sync 와 같은 자리. 화면(ADM-ITD-EMB)이 이 창구로 값을 받아간다.
+#  main.py 에서:  from app.itda.router import admin_router as itda_admin_router
+#                 app.include_router(itda_admin_router)
+admin_router = APIRouter(
+    prefix="/admin/itda-sync",
+    tags=["관리자 잇다 임베딩"],
+)
+
+
+@admin_router.get(
+    "/latest",
+    response_model=ItdaSyncStatus,
+    summary="잇다 임베딩 현황 (마지막 실행·총계·신규/변경)",
+)
+async def get_itda_sync_status(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),   # 관리자만 — 배치 현황은 내부 정보다
+):
+    """관리자 임베딩 관리 화면이 한 번에 받아가는 현황.
+
+    값은 배치가 돌 때 기록한 **사실**이다(itda_sync_log + content_hash).
+    화면이 계산하지 않는다 — 그래야 "언제 무엇이 바뀌었나"가 남는다.
+    """
+    return await controllers.get_sync_status(db)
 
 
 @router.post(

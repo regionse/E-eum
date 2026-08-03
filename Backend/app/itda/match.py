@@ -31,7 +31,6 @@ try:
 except ImportError:
     import gemini_util as _gutil
 
-MODEL = 'gemini-embedding-2'   # ※ embed_course_·embed_cert_ 의 MODEL과 반드시 동일할 것
 NS_COURSE = 'course'
 NS_CERT   = 'cert'
 NS_JOB    = 'job'              # 직업 먼저(2026-07-27) — understanding → 직업 벡터
@@ -45,7 +44,20 @@ except ImportError:
     from env import ENV
 # Gemini 키는 gemini_util 이 ENV 에서 찾는다(키 1개 · 분당 한도는 기다렸다 재시도).
 PINECONE_KEY = ENV.get('PINECONE_API_KEY')
-INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-itda')   # 임베딩 스크립트와 동일해야 함(안 그러면 빈 인덱스 조회)
+
+#  ★ 팀 통합 .env 스키마(2026-07-31) — 인덱스·임베딩 모델을 env 로 뺐다.
+#    기본값은 코드에 남긴다: .env 에 키가 없어도 그대로 돌아가야 한다.
+#    구 키(PINECONE_INDEX)도 계속 읽는다 — 팀원이 아직 .env 를 안 바꿨어도 안 깨지게.
+#
+#    ⚠️ 잇다는 **인덱스 1개(eum-itda)에 네임스페이스 3개**(cert / course / job)다.
+#       키 이름이 COURSE 지만 강좌 전용 인덱스가 아니다.
+#    ⚠️ 임베딩 모델을 바꾸면 **차원이 달라져 인덱스를 통째로 다시 만들어야 한다.**
+#       덜다의 gemini-embedding-002(768) 와 한 글자 차이인 다른 모델이다. 임의로 바꾸지 말 것.
+INDEX_NAME = (ENV.get('PINECONE_COURSE_INDEX_NAME')
+              or ENV.get('PINECONE_INDEX')          # 구 키 하위호환
+              or 'eum-itda')
+MODEL = ENV.get('COURSE_EMBEDDING_MODEL') or 'gemini-embedding-2'
+DIM   = int(ENV.get('COURSE_EMBEDDING_DIMENSION') or 3072)
 
 
 # ── ① 질의 임베딩 (강좌와 같은 모델·plain) ─────────────────────────

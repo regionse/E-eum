@@ -13,7 +13,6 @@
   (pymysql 은 스레드 안전하지 않음 — 동시 요청 시 검색이 고장). 코드리뷰 HIGH 지적.
   async 는 요청마다 세션을 따로 준다(get_db) → 공유 자체가 없어 버그가 구조적으로 사라진다.
 """
-import os
 from urllib.parse import quote_plus
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine

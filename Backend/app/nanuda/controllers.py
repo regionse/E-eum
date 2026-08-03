@@ -10,7 +10,9 @@ from datetime import (
     time,
     timedelta,
 )
+import os
 import secrets
+import requests
 
 
 from .models import (
@@ -44,6 +46,98 @@ from .schemas import (
     CareGroupCreate,
 )
 from app.user.models import User
+
+
+KAKAO_DIRECTIONS_URL = (
+    "https://apis-navi.kakaomobility.com/"
+    "v1/directions"
+)
+
+
+async def get_kakao_driving_route(
+    origin_latitude: float,
+    origin_longitude: float,
+    destination_latitude: float,
+    destination_longitude: float,
+) -> dict:
+    if not (-90 <= origin_latitude <= 90):
+        raise ValueError("출발지 위도가 올바르지 않습니다.")
+    if not (-180 <= origin_longitude <= 180):
+        raise ValueError("출발지 경도가 올바르지 않습니다.")
+    if not (-90 <= destination_latitude <= 90):
+        raise ValueError("도착지 위도가 올바르지 않습니다.")
+    if not (-180 <= destination_longitude <= 180):
+        raise ValueError("도착지 경도가 올바르지 않습니다.")
+
+    api_key = os.getenv("KAKAO_REST_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            ".env에 KAKAO_REST_API_KEY가 없습니다."
+        )
+
+    try:
+        response = await to_thread(
+            requests.get,
+            KAKAO_DIRECTIONS_URL,
+            headers={
+                "Authorization": f"KakaoAK {api_key}",
+            },
+            params={
+                "origin": f"{origin_longitude},{origin_latitude}",
+                "destination": (
+                    f"{destination_longitude},"
+                    f"{destination_latitude}"
+                ),
+                "priority": "RECOMMEND",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "카카오 길찾기 API 요청에 실패했습니다."
+        ) from error
+
+    payload = response.json()
+    routes = payload.get("routes", [])
+
+    if not routes:
+        raise LookupError("이동 가능한 도로 경로를 찾지 못했습니다.")
+
+    route = routes[0]
+
+    if route.get("result_code", 0) != 0:
+        raise LookupError(
+            route.get("result_msg")
+            or "이동 가능한 도로 경로를 찾지 못했습니다."
+        )
+
+    path = []
+
+    for section in route.get("sections", []):
+        for road in section.get("roads", []):
+            vertexes = road.get("vertexes", [])
+
+            for index in range(0, len(vertexes) - 1, 2):
+                point = {
+                    "longitude": float(vertexes[index]),
+                    "latitude": float(vertexes[index + 1]),
+                }
+
+                if not path or path[-1] != point:
+                    path.append(point)
+
+    if len(path) < 2:
+        raise LookupError("도로 경로 좌표를 찾지 못했습니다.")
+
+    summary = route.get("summary", {})
+
+    return {
+        "distance_m": int(summary.get("distance", 0)),
+        "duration_seconds": int(summary.get("duration", 0)),
+        "path": path,
+    }
 
 
 
@@ -523,18 +617,29 @@ def get_week_period(
     target_date: date | None = None,
 ) -> tuple[datetime, datetime]:
     if target_date is None:
-        target_date = date.today()
+        today = date.today()
 
-    monday = target_date - timedelta(
-        days=target_date.weekday()
-    )
+        # 현재 진행 중인 주의 월요일
+        current_monday = today - timedelta(
+            days=today.weekday()
+        )
+
+        # 가장 최근에 완료된 주의 월요일
+        monday = current_monday - timedelta(
+            days=7
+        )
+
+    else:
+        # 테스트 날짜가 들어오면 해당 날짜가 포함된 주의 월요일
+        monday = target_date - timedelta(
+            days=target_date.weekday()
+        )
 
     period_start = datetime.combine(
         monday,
         time.min,
     )
 
-    # 다음 주 월요일 00:00
     period_end = period_start + timedelta(
         days=7
     )
@@ -551,8 +656,8 @@ async def get_weekly_letters(
     datetime,
     datetime,
 ]:
-    period_start, period_end = (
-        get_week_period(target_date)
+    period_start, period_end = get_week_period(
+        target_date
     )
 
     statement = (
@@ -573,7 +678,6 @@ async def get_weekly_letters(
 
     result = await db.execute(statement)
     letters = list(result.scalars().all())
-    
 
     return (
         letters,
@@ -854,17 +958,20 @@ async def recommend_facility_for_latest_analysis(
     longitude: float,
 ) -> dict:
     try:
-        # 1. 최신 주간 분석 조회
+        # 가장 최근 완료된 주의 기간
+        period_start, period_end = get_week_period()
+
+        # 최근 완료된 주의 분석을 정확히 조회
         statement = (
             select(weekly_care_analyses)
             .where(
                 weekly_care_analyses.care_group_id
-                == care_group_id
+                == care_group_id,
+                weekly_care_analyses.period_start
+                == period_start,
+                weekly_care_analyses.period_end
+                == period_end,
             )
-            .order_by(
-                weekly_care_analyses.period_end.desc()
-            )
-            .limit(1)
         )
 
         result = await db.execute(statement)
@@ -945,6 +1052,11 @@ async def recommend_facility_for_latest_analysis(
         facility_type = selected_hit[
             "fields"
         ]["facility_type"]
+
+        print("===== 기관 추천 디버깅 =====")
+        print("판단 상태:", decision.get("status"))
+        print("선택 기관 유형:", facility_type)
+        print("판단 이유:", decision.get("reason"))
 
         # 7. 가장 가까운 실제 기관 검색
         nearest = await recommend_nearest_facility(

@@ -1,4 +1,10 @@
-import { createContext, useContext, useState } from 'react'
+import {
+  useCallback,
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+} from 'react'
 import { clearToken } from '../api/client.js'
 
 // 로그인 상태(user·admin). 새로고침에도 유지되도록 localStorage 사용.
@@ -13,21 +19,95 @@ export function AuthProvider({ children }) {
     try { return JSON.parse(localStorage.getItem('eum_admin')) } catch { return null }
   })
   // 가족 연결 여부 (가족편지 기능) — 초대코드로 연결되면 true
-  const [familyLinked, setFamilyLinked] = useState(() => localStorage.getItem('eum_family') === '1')
-
-  const login = (u) => { setUser(u); localStorage.setItem('eum_user', JSON.stringify(u)) }
-  const logout = () => {
-    setUser(null); localStorage.removeItem('eum_user'); clearToken()
-    // ★ 로그아웃 시 잇다 대화 draft 전부 삭제(공용 PC에서 다음 사용자에게 안 남게)
-    try { Object.keys(localStorage).filter((k) => k.startsWith('eum_itda_chat')).forEach((k) => localStorage.removeItem(k)) } catch { /* noop */ }
+  const login = (nextUser) => {
+    setUser(nextUser)
+    localStorage.setItem(
+      'eum_user',
+      JSON.stringify(nextUser),
+    )
   }
-  const adminLogin = (a) => { setAdmin(a); localStorage.setItem('eum_admin', JSON.stringify(a)) }
-  const adminLogout = () => { setAdmin(null); localStorage.removeItem('eum_admin'); clearToken() }
-  const linkFamily = () => { setFamilyLinked(true); localStorage.setItem('eum_family', '1') }
-  const unlinkFamily = () => { setFamilyLinked(false); localStorage.removeItem('eum_family') }
+
+  const unlinkFamily = useCallback(() => {
+    setFamilyLinked(false)
+    localStorage.removeItem('eum_family')
+  }, [])
+
+  const [
+    familyLinked,
+    setFamilyLinked,
+  ] = useState(
+    () =>
+      localStorage.getItem('eum_family') === '1',
+  )
+
+  const userId =
+    user?.user_id ??
+    user?.id ??
+    null
+
+  const logout = () => {
+    setUser(null)
+    localStorage.removeItem('eum_user')
+    unlinkFamily()
+    clearToken()
+
+    try {
+      Object.keys(localStorage)
+        .filter((key) =>
+          key.startsWith('eum_itda_chat'),
+        )
+        .forEach((key) =>
+          localStorage.removeItem(key),
+        )
+    } catch {
+      // localStorage 접근이 제한된 환경
+    }
+  }
+
+  const adminLogin = (nextAdmin) => {
+    setAdmin(nextAdmin)
+    localStorage.setItem(
+      'eum_admin',
+      JSON.stringify(nextAdmin),
+    )
+  }
+
+  const adminLogout = () => {
+    setAdmin(null)
+    localStorage.removeItem('eum_admin')
+    clearToken()
+  }
+
+  const linkFamily = useCallback(() => {
+    setFamilyLinked(true)
+    localStorage.setItem('eum_family', '1')
+  }, [])
+
+  const value = useMemo(
+    () => ({
+      user,
+      userId,
+      admin,
+      familyLinked,
+      login,
+      logout,
+      adminLogin,
+      adminLogout,
+      linkFamily,
+      unlinkFamily,
+    }),
+    [
+      user,
+      userId,
+      admin,
+      familyLinked,
+      linkFamily,
+      unlinkFamily,
+    ],
+  )
 
   return (
-    <AuthCtx.Provider value={{ user, admin, familyLinked, login, logout, adminLogin, adminLogout, linkFamily, unlinkFamily }}>
+    <AuthCtx.Provider value={value}>
       {children}
     </AuthCtx.Provider>
   )

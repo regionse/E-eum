@@ -27,29 +27,21 @@ certification.grade_std / entry_note 채우기 — 등급별 응시자격 조건
   (613종 중 등급 규칙에서 벗어난 예외는 3종뿐 — set_entry_free_응시자격.py 참고).
   그래서 entry_note 는 "이 종목의 조건"이 아니라 "이 등급의 조건"으로 표시해야 한다.
 """
-import os, sys, re, getpass
+import os
+import sys
+import re
 import urllib.request, urllib.parse
-import pymysql
 
+#  ★ 2026-07-31 — env 로더·DB 접속을 공용 모듈(_common.py)로 옮겼다.
+try:
+    from ._common import setup_console, ENV, db_conn      # noqa: F401
+except ImportError:                                       # 파일 직접 실행
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import setup_console, ENV, db_conn       # noqa: F401
+
+setup_console()
 DRY = '--dry' in sys.argv
 API = 'http://openapi.q-net.or.kr/api/service/rest/InquiryExamQualItemSVC/getList'
-
-
-def read_env():
-    d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                s = line.strip()
-                if '=' in s and not s.startswith('#'):
-                    k, v = s.split('=', 1)
-                    d.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-        except FileNotFoundError:
-            continue
-    return d
-
-ENV = {**read_env(), **os.environ}
 
 
 # ── ① 등급 판정 ────────────────────────────────────────────────────
@@ -105,9 +97,7 @@ for k, v in sorted(COND.items(), key=lambda x: -len(x[1])):
 
 
 # ── DB ──────────────────────────────────────────────────────────────
-pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = db_conn()
 
 NEW_COLS = [('grade_std', "VARCHAR(20)", '실제 응시 등급 (종목명 접미사 판정 · grade 보정)'),
             ('entry_note', 'TEXT',       '해당 등급의 응시자격 조건 (Q-Net)')]

@@ -15,7 +15,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.itda import session
-from app.itda.schemas import Goal, CertStep, Course, Hire, MessageResponse
+from app.itda.schemas import (Goal, CertStep, Course, Hire, MessageResponse,
+                              ItdaSyncStatus, SyncRun)
 
 try:                                   # 서버(패키지) 경로
     from app.itda.itda_core import ItdaEngine, missing_slots, ASK_ORDER, kst_today, kst_now
@@ -376,3 +377,62 @@ async def delete_map(db, user_id: int, map_id: int) -> dict:
     await db.execute(text("DELETE FROM itda_map WHERE map_id = :mid"), {"mid": map_id})
     await db.commit()
     return {"ok": True}
+
+
+# ── 관리자 · 임베딩 관리 (2026-08-02) ───────────────────────────────
+#  덜다(ADDUL-001)·나누다(ADSHA-001) 화면과 같은 항목을 한 번에 돌려준다.
+#
+#  값이 어디서 오나
+#    시각·신규·변경·임베딩  →  itda_sync_log   (배치가 돌 때마다 한 줄씩 쌓인다)
+#    총계                   →  각 테이블 COUNT
+#    임베딩 완료            →  content_hash 가 채워진 행 수
+#
+#  ※ '신규/변경'은 배치가 content_hash 를 비교해 넣은 값이다(scripts/_common.diff_by_hash).
+#    화면이 계산하는 게 아니라 **실행 당시의 사실**을 그대로 보여준다.
+def _fmt(dt) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M") if dt else ""
+
+
+async def get_sync_status(db) -> ItdaSyncStatus:
+    #  ① 마지막 실행 시각 — 적재(load_*)와 임베딩(embed_*)을 나눠 본다
+    row = (await db.execute(text(
+        "SELECT (SELECT MAX(finished_at) FROM itda_sync_log "
+        "          WHERE target LIKE 'load\\_%' AND status <> 'error') AS api_at, "
+        "       (SELECT MAX(finished_at) FROM itda_sync_log "
+        "          WHERE target LIKE 'embed\\_%' AND status <> 'error') AS emb_at"
+    ))).fetchone()
+    api_at, emb_at = (row[0], row[1]) if row else (None, None)
+
+    #  ② 총계 + 임베딩 완료(해시가 찍힌 행)
+    tot = (await db.execute(text(
+        "SELECT (SELECT COUNT(*) FROM certification), "
+        "       (SELECT COUNT(*) FROM job_catalog), "
+        "       (SELECT COUNT(*) FROM course), "
+        "       (SELECT COUNT(*) FROM certification WHERE content_hash <> ''), "
+        "       (SELECT COUNT(*) FROM course        WHERE content_hash <> '')"
+    ))).fetchone()
+
+    #  ③ 최근 7일 실패 — 화면의 '실패한 N건'
+    failed = (await db.execute(text(
+        "SELECT COUNT(*) FROM itda_sync_log "
+        "WHERE status <> 'ok' AND finished_at > NOW() - INTERVAL 7 DAY"
+    ))).scalar() or 0
+
+    #  ④ 대상별 '가장 최근 실행' 한 줄씩
+    rows = (await db.execute(text(
+        "SELECT target, finished_at, fetched, inserted, updated, embedded, status, message "
+        "FROM itda_sync_log s "
+        "WHERE id = (SELECT MAX(id) FROM itda_sync_log WHERE target = s.target) "
+        "ORDER BY finished_at DESC"
+    ))).fetchall()
+
+    return ItdaSyncStatus(
+        last_api_sync=_fmt(api_at),
+        last_embedding=_fmt(emb_at),
+        cert_total=tot[0] or 0, job_total=tot[1] or 0, course_total=tot[2] or 0,
+        cert_embedded=tot[3] or 0, course_embedded=tot[4] or 0,
+        failed_recent=int(failed),
+        runs=[SyncRun(target=r[0], finished_at=_fmt(r[1]), fetched=r[2] or 0,
+                      inserted=r[3] or 0, updated=r[4] or 0, embedded=r[5] or 0,
+                      status=r[6] or "", message=r[7] or "") for r in rows],
+    )

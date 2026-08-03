@@ -100,7 +100,7 @@ function Alerts() {
 }
 
 // 동의 관리 (MYP-301) — 필수 2 + 선택 2(위치·알림). 위치는 나누다 SHA-100 게이트와 연동.
-const LOC_KEY = 'eum_loc_consent'
+
 function Consent() {
   const [c, setC] = useState(() => {
     let loc = false

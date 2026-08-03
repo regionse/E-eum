@@ -6,7 +6,7 @@ import requests
 from dotenv import load_dotenv
 from sqlalchemy import select
 
-from app.database import SessionLocal
+from app.database import SessionLocal,engine
 from app.nanuda.models import support_facilities
 
 
@@ -319,5 +319,12 @@ async def save_long_term_care_facilities():
         await db.close()
 
 
+async def main():
+    try:
+        await save_long_term_care_facilities()
+    finally:
+        await engine.dispose()
+
+
 if __name__ == "__main__":
-    asyncio.run(save_long_term_care_facilities())
+    asyncio.run(main())

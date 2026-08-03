@@ -3,7 +3,14 @@ import { Link, useNavigate } from 'react-router-dom'
 import { PageHead, Empty } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
 import { useAuth } from '../../store/auth.jsx'
-import { useFamily, fmtBoardTime, TODAY } from '../../store/family.jsx'
+import {
+  useFamily,
+  fmtBoardTime,
+  TODAY,
+} from '../../store/family.jsx'
+import { analyzeWeeklyCare, recommendFacility, getCurrentPosition,} from '../../api/share.js'
+
+
 
 const PER = 10
 const AUTHORS = ['전체', '나', '어머니']
@@ -25,31 +32,6 @@ const inPeriod = (date, period) => {
 
 // AI 분석 mock (SHA-202③): 최근 7일 돌봄일지에서 복약 누락·본문 신호어를 추려 지원서비스를 제안.
 //  실제 서비스에선 '지난 주' 일지와 비교해 LLM이 이상징후를 판단한다.
-const SIGNALS = [
-  { words: ['아파', '아프', '통증', '열', '어지', '넘어', '붓', '숨'],
-    label: '통증·건강 이상 신호', service: '재가 방문진료·장기요양', desc: '집으로 찾아오는 진료·요양으로 건강 상태를 살펴요' },
-  { words: ['불면', '잠', '우울', '힘들', '지쳐', '외로', '눈물'],
-    label: '수면·정서 신호', service: '정신건강복지센터 상담', desc: '무료 심리상담·사례관리로 마음을 돌봐요' },
-  { words: ['식사', '안 먹', '못 먹', '입맛', '굶'],
-    label: '식사·영양 신호', service: '재가노인 영양·식사 지원', desc: '끼니를 챙기기 어려울 때 식사를 지원해요' },
-]
-
-function analyzeDiary(records) {
-  const recent = records.filter((r) => {
-    const diff = (new Date(`${TODAY}T00:00:00`) - new Date(`${r.date}T00:00:00`)) / 86400000
-    return diff >= 0 && diff <= 6
-  })
-  const base = recent.length ? recent : records
-  const missed = base.reduce((n, r) => n + ['m', 'l', 'd'].filter((k) => r.meds && r.meds[k] === false).length, 0)
-  const findings = []
-  if (missed >= 2) findings.push({ label: `복약 누락 ${missed}회`, service: '방문간호·복약지도', desc: '간호사가 방문해 약 복용을 도와요' })
-  SIGNALS
-    .map((s) => ({ ...s, count: base.filter((r) => s.words.some((w) => r.body.includes(w))).length }))
-    .filter((s) => s.count > 0)
-    .sort((a, b) => b.count - a.count)
-    .forEach((s) => findings.push({ label: `${s.label} ${s.count}건`, service: s.service, desc: s.desc }))
-  return { count: base.length, anomaly: findings.length > 0, findings }
-}
 
 function ConnectPrompt() {
   return (
@@ -63,16 +45,22 @@ function ConnectPrompt() {
 }
 
 export default function CareDiary() {
+  const [recommendation, setRecommendation] = useState(null)
   const { familyLinked } = useAuth()
-  const { records } = useFamily()
+  const { records, careGroupId } = useFamily()
   const nav = useNavigate()
   const [author, setAuthor] = useState('전체')
   const [period, setPeriod] = useState('전체')
   const [q, setQ] = useState('')
   const [query, setQuery] = useState('')
+
   const [page, setPage] = useState(1)
   const [aiOpen, setAiOpen] = useState(true)
-  const analysis = useMemo(() => analyzeDiary(records), [records])
+
+  const [analysisResult, setAnalysisResult] = useState(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState('')
+
 
   const filtered = useMemo(() => records.filter((r) =>
     (author === '전체' || r.author === author) &&
@@ -86,6 +74,55 @@ export default function CareDiary() {
 
   const apply = (patch) => { setPage(1); patch() }
   const runSearch = () => apply(() => setQuery(q.trim()))
+  const handleAnalyze = async () => {
+    if (!careGroupId) {
+      setAnalysisError('연결된 가족방이 없습니다.')
+      return
+    }
+
+    try {
+      setAnalyzing(true)
+      setAnalysisError('')
+      setAnalysisResult(null)
+      setRecommendation(null)
+
+      // 1. 주간 분석
+      const analysis = await analyzeWeeklyCare({
+        careGroupId,
+        
+      })
+
+      setAnalysisResult(analysis)
+      setAiOpen(true)
+
+      // 2. 이상징후가 없으면 기관을 추천하지 않음
+      if (!analysis.anomaly_flag) {
+        return
+      }
+
+      // 3. 현재 위치 확인
+      const position = await getCurrentPosition()
+
+      // 4. 가장 가까운 기관 추천
+      const facility = await recommendFacility({
+        careGroupId,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      })
+
+      setRecommendation({
+        ...facility,
+        user_latitude: position.latitude,
+        user_longitude: position.longitude,
+      })
+    } catch (error) {
+      setAnalysisError(
+        error.message || '주간 분석 및 기관 추천에 실패했습니다.',
+      )
+    } finally {
+      setAnalyzing(false)
+    }
+  }
 
   return (
     <div className="container page">
@@ -151,50 +188,157 @@ export default function CareDiary() {
                 </div>
               )}
             </div>
-            {/* AI 분석 (SHA-202③) — 지난 주 일지와 비교해 이상징후 → 지원서비스 추천. 닫기/열기 */}
-            <div className="card card-pad" style={{ marginTop: 'var(--sp-4)', border: '1px solid var(--teal-200)' }}>
-              <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
-                <span style={{ fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  AI 분석
-                  {analysis.count > 0 && (
-                    <span className={`badge ${analysis.anomaly ? 'badge-amber' : 'badge-gray'}`}>
-                      {analysis.anomaly ? '이상징후' : '안정'}
+            {/* 실제 주간 돌봄 분석 */}
+            <div
+              className="card card-pad"
+              style={{
+                marginTop: 'var(--sp-4)',
+                border: '1px solid var(--teal-200)',
+              }}
+            >
+              <div
+                className="row"
+                style={{
+                  justifyContent: 'space-between',
+                  gap: 10,
+                }}
+              >
+                <span
+                  style={{
+                    fontWeight: 800,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  AI 주간 분석
+
+                  {analysisResult && (
+                    <span
+                      className={`badge ${
+                        analysisResult.anomaly_flag
+                          ? 'badge-amber'
+                          : 'badge-gray'
+                      }`}
+                    >
+                      {analysisResult.anomaly_flag
+                        ? '이상징후'
+                        : '안정'}
                     </span>
                   )}
                 </span>
-                <button className="btn btn-ghost btn-sm" onClick={() => setAiOpen((v) => !v)}>{aiOpen ? '닫기' : '열기'}</button>
+
+                <div className="row" style={{ gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleAnalyze}
+                    disabled={analyzing || records.length === 0}
+                  >
+                    {analyzing ? '분석 중...' : '이번 주 분석'}
+                  </button>
+
+                  {analysisResult && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setAiOpen((value) => !value)}
+                    >
+                      {aiOpen ? '닫기' : '열기'}
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {aiOpen && (
+              {records.length === 0 && (
+                <p className="muted" style={{ marginTop: 14 }}>
+                  아직 분석할 돌봄 기록이 없습니다.
+                </p>
+              )}
+
+              {analysisError && (
+                <div
+                  className="callout-warn"
+                  style={{ marginTop: 14 }}
+                >
+                  {analysisError}
+                </div>
+              )}
+
+              {aiOpen && analysisResult && (
                 <div style={{ marginTop: 14 }}>
-                  {analysis.count === 0 ? (
-                    <p className="muted">아직 분석할 돌봄 기록이 없어요. 기록이 쌓이면 지난 주와 비교해 이상징후를 알려드려요.</p>
-                  ) : (
-                    <>
-                      <p className="muted" style={{ marginBottom: 12 }}>
-                        최근 7일 돌봄 기록 <b>{analysis.count}건</b>을 지난 주와 비교했어요.
+                  <p style={{ lineHeight: 1.7 }}>
+                    {analysisResult.summary ||
+                      '주간 요약 내용이 없습니다.'}
+                  </p>
+
+                  <div
+                    className={
+                      analysisResult.anomaly_flag
+                        ? 'callout-warn'
+                        : ''
+                    }
+                    style={{ marginTop: 12 }}
+                  >
+                    <strong>
+                      {analysisResult.anomaly_flag
+                        ? '⚠️ 이상징후가 감지되었습니다.'
+                        : '🌿 특별한 이상징후가 감지되지 않았습니다.'}
+                    </strong>
+
+                    {analysisResult.anomaly_detail && (
+                      <p
+                        className="muted"
+                        style={{ marginTop: 8, lineHeight: 1.7 }}
+                      >
+                        {analysisResult.anomaly_detail}
                       </p>
-                      {analysis.anomaly ? (
-                        <div style={{ display: 'grid', gap: 12 }}>
-                          {/* 여러 건이 잡혀도 가장 우선순위 높은 1건만 노출 (복약 누락 > 신호 count 순) */}
-                          {analysis.findings.slice(0, 1).map((f, i) => (
-                            <div key={i} className="callout-warn">
-                              <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ 이상징후 · {f.label}</div>
-                              <div style={{ fontSize: 14.5 }}>
-                                추천 지원서비스 — <b>{f.service}</b><br />
-                                <span className="muted">{f.desc}</span>
-                              </div>
-                              <Link to="/share/map" className="btn btn-ghost btn-sm" style={{ marginTop: 10 }}>가까운 기관 찾기 →</Link>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p style={{ lineHeight: 1.7 }}>최근 기록에서 특별한 이상징후는 보이지 않아요. 지금처럼 꾸준히 기록해 주세요. 🌿</p>
+                    )}
+                  </div>
+
+                  {recommendation && (
+                    <div
+                      className="card card-pad"
+                      style={{ marginTop: 14 }}
+                    >
+                      <h3 style={{ marginBottom: 10 }}>
+                        추천 지원 기관
+                      </h3>
+
+                      <p style={{ fontWeight: 700 }}>
+                        {recommendation.facility_name}
+                      </p>
+
+                      {recommendation.recommendation_reason && (
+                        <p
+                          className="muted"
+                          style={{ marginTop: 8, lineHeight: 1.7 }}
+                        >
+                          {recommendation.recommendation_reason}
+                        </p>
                       )}
-                      <p className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>
-                        * 데모용 분석이에요. 실제 서비스에선 지난 주 돌봄일지와 비교해 AI가 이상징후를 판단하고 맞춤 지원서비스를 추천해요.
+
+                      <p className="muted" style={{ marginTop: 8 }}>
+                        {recommendation.address ||
+                          recommendation.map_address ||
+                          '주소 정보 없음'}
                       </p>
-                    </>
+
+                      {recommendation.phone && (
+                        <p className="muted">
+                          전화번호: {recommendation.phone}
+                        </p>
+                      )}
+
+                      <Link
+                        to="/share/map"
+                        state={{ recommendation }}
+                        className="btn btn-primary btn-sm"
+                        style={{ marginTop: 12 }}
+                      >
+                        가까운 지원 기관 확인 →
+                      </Link>
+                    </div>
                   )}
                 </div>
               )}

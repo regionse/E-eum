@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """직업(NCS) 임베딩 → Pinecone 네임스페이스 'job'  (2026-07-31 작성)
 
-★ 왜 뒤늦게 만들었나
-  직업 1,094개가 이미 Pinecone 에 들어가 있는데 **그것을 넣은 코드가 어디에도 없었다.**
+★   직업 1,094개가 이미 Pinecone 에 들어가 있는데 **그것을 넣은 코드가 어디에도 없었다.**
   (2026-07-29 NCS 전환 때 임시로 돌리고 남기지 않았다.)
   그래서 "무슨 텍스트를 임베딩했는지"를 알 수 없었고, 2026-07-30 에 **저장된 벡터와
   후보 텍스트의 코사인 유사도를 재서 역추적**해야 했다. 그 결과가 아래다.
@@ -47,10 +46,12 @@ from app.itda.db import async_session             # noqa: E402
 from app.itda import gemini_util as gutil         # noqa: E402
 
 
-MODEL = 'gemini-embedding-2'      # ※ match.py 의 MODEL 과 반드시 동일
+#  ★ 팀 통합 .env 스키마(2026-07-31). 기본값은 코드에 남긴다.
+#     ⚠️ 바꾸면 차원이 달라져 인덱스를 다시 만들어야 한다. match.py 와 반드시 동일할 것.
+MODEL = ENV.get('COURSE_EMBEDDING_MODEL') or 'gemini-embedding-2'
 BATCH = 20                        # 한 번에 임베딩할 개수
 SLEEP = 1.0                       # 배치 사이 대기(초) — 분당 한도 회피
-DIM = 3072                        # gemini-embedding-2 출력 차원(참고용)
+DIM = int(ENV.get('COURSE_EMBEDDING_DIMENSION') or 3072)   # 출력 차원
 
 
 def embed_batch(texts):
@@ -120,7 +121,9 @@ def main():
     key = ENV.get('PINECONE_API_KEY')
     if not key:
         raise SystemExit('PINECONE_API_KEY 없음 — etc/.env 또는 환경변수를 확인하세요.')
-    index_name = ENV.get('PINECONE_INDEX', 'eum-itda')
+    index_name = (ENV.get('PINECONE_COURSE_INDEX_NAME')
+                  or ENV.get('PINECONE_INDEX')      # 구 키 하위호환
+                  or 'eum-itda')
     index = Pinecone(api_key=key).Index(index_name)
 
     todo = asyncio.run(fetch_jobs(not a.all, index, a.namespace))

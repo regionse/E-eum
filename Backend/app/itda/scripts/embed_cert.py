@@ -18,10 +18,30 @@ certification 자격증 → Gemini 임베딩 → Pinecone 저장 배치
 ※ 강좌와 같은 인덱스를 쓰되 네임스페이스로 나눈다(course / cert).
   안 나누면 '강좌 추천'에 자격증이 섞여 나온다.
 """
-import os, re, sys, time, getpass, json
+import os
+import sys
+import re
+import time
+import json
+import hashlib
 import urllib.request, urllib.error
-import pymysql
-from pinecone import Pinecone, ServerlessSpec
+
+
+#  ★ 2026-07-31 — env 로더·DB 접속·Pinecone 준비를 공용 모듈(_common.py)로 옮겼다.
+#    전에는 배치 10개가 각자 갖고 있어서, 한 곳만 고치면 될 일을 매번 7~8곳에서 고쳤다.
+try:
+    from ._common import (setup_console, ENV, db_conn,     # noqa: F401
+                          pinecone_index, already_ids, diff_by_hash, SyncLog)
+except ImportError:                                       # 파일 직접 실행
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import (setup_console, ENV, db_conn,      # noqa: F401
+                         pinecone_index, already_ids, diff_by_hash, SyncLog)
+
+setup_console()
+
+#  ★ 시작 시각을 여기서 잡는다 — 로그의 소요시간(started_at ~ finished_at)이 의미를 가지려면
+#    write() 호출 시점이 아니라 스크립트가 뜬 시점이어야 한다.
+SYNC = SyncLog('embed_cert')
 
 MODEL = 'gemini-embedding-2'   # ※ embed_course·match.py 와 반드시 동일
 DIM   = 3072
@@ -63,6 +83,45 @@ def build_text(row):
     return f'{head}\n{desc}' if desc else head
 
 
+# ── content_hash — '이 자격증이 어떤 텍스트로 임베딩됐는가'의 지문 ───
+#  왜 필요한가
+#    이게 없으면 「최신화」를 누를 때마다 613종을 전부 다시 임베딩해야 한다.
+#    무엇이 바뀌었는지 알 수 없기 때문이다. 관리자 화면의 "변경 N건" 도 이 비교에서 나온다.
+#  ★ 해시 대상은 build_text() 그대로다 — '임베딩에 실제로 들어간 텍스트'여야 한다.
+#    예: 진로전망(career_outlook)은 임베딩에 안 쓰므로 해시에도 안 들어간다.
+#    안 그러면 표시용 필드만 고쳐도 "변경됨"으로 잡혀 쓸데없이 재임베딩한다.
+def content_hash(row):
+    return hashlib.sha256(build_text(row).encode('utf-8')).hexdigest()
+
+
+def write_hash_and_log(conn, rows, saved, already_n, n_new, n_changed,
+                       status='ok', msg=''):
+    """content_hash 기록 + itda_sync_log 남기기.
+
+    ★ '이번에 임베딩한 것'뿐 아니라 '이미 Pinecone 에 있던 것'에도 해시를 남긴다.
+      반쪽만 채우면 다음 실행에서 해시 비교가 성립하지 않는다.
+
+    ★ 2026-08-02 — 관리자 화면이 읽는 값을 바로잡았다.
+      전에는 updated 에 '해시를 쓴 행 수'(=전체 613)를 넣어서, 화면에 "변경 613건" 처럼
+      **거짓이 뜨는 상태**였다. 실제로 바뀐 건 277종이었다.
+      이제 diff_by_hash() 가 가른 값을 그대로 넣는다:
+          inserted = 신규(해시가 없던 것)   updated = 변경(해시가 다른 것)
+    """
+    hashed = 0
+    with conn.cursor() as cur:
+        for i in range(0, len(rows), 500):
+            cur.executemany("UPDATE certification SET content_hash=%s WHERE cert_id=%s",
+                            [(content_hash(r), r[0]) for r in rows[i:i + 500]])
+            hashed += min(500, len(rows) - i)
+    #  ★ --all 이면 already 와 saved 가 같은 대상을 두 번 세므로 더하면 안 된다
+    #    (실측: 613 + 613 = 1226 으로 찍혔는데 실제 Pinecone 은 613)
+    total = max(already_n, saved) if FORCE else already_n + saved
+    SYNC.write(conn, fetched=len(rows), inserted=n_new, updated=n_changed,
+               embedded=saved, status=status,
+               message=msg or f'Pinecone "{NAMESPACE}" 누적 {total}개 · 해시 {hashed}행')
+    print(f'content_hash 기록 {hashed}행 · 신규 {n_new} · 변경 {n_changed}')
+
+
 # ── 검색할 때 거르는 데 쓸 메타데이터 ───────────────────────────────
 #  entry_free 는 1일 때만 넣는다.
 #    · Pinecone 은 None 을 못 받는다
@@ -76,25 +135,17 @@ def build_meta(row):
 
 
 # ── .env ───────────────────────────────────────────────────────────
-def read_env():
-    d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                s = line.strip()
-                if '=' in s and not s.startswith('#'):
-                    k, v = s.split('=', 1)
-                    d.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-        except FileNotFoundError:
-            continue
-    return d
-
-ENV = {**read_env(), **os.environ}
 GEMINI_KEYS = list(dict.fromkeys(v for k, v in ENV.items()
                                  if k.startswith('GEMINI_API_KEY') and v))
 PINECONE_KEY = ENV.get('PINECONE_API_KEY')
-INDEX_NAME   = ENV.get('PINECONE_INDEX', 'eum-itda')
+INDEX_NAME   = (ENV.get('PINECONE_COURSE_INDEX_NAME')
+                or ENV.get('PINECONE_INDEX')      # 구 키 하위호환
+                or 'eum-itda')
+#  ★ 팀 통합 .env 스키마(2026-07-31) — 코드 상수를 env 로 덮어쓴다.
+#    ⚠️ 임베딩 모델을 바꾸면 차원이 달라져 **인덱스를 통째로 다시 만들어야 한다.**
+#       덜다의 gemini-embedding-002(768) 와 한 글자 차이인 다른 모델이다.
+MODEL = ENV.get('COURSE_EMBEDDING_MODEL') or MODEL
+DIM   = int(ENV.get('COURSE_EMBEDDING_DIMENSION') or DIM)
 if not GEMINI_KEYS:
     raise SystemExit('GEMINI_API_KEY 없음 (.env 확인)')
 if not PINECONE_KEY:
@@ -102,9 +153,7 @@ if not PINECONE_KEY:
 
 
 # ── DB 에서 자격증 읽기 ─────────────────────────────────────────────
-pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = db_conn()
 with conn.cursor() as cur:
     # grade 가 아니라 grade_std 를 쓴다 — grade(=Q-Net seriesnm)는 산업기사 114종을
     # '기사'로 뭉뚱그린다. set_entry_note_등급조건.py 가 보정한 값이 grade_std 다.
@@ -174,38 +223,36 @@ def embed(batch_texts):
 
 
 # ── Pinecone ───────────────────────────────────────────────────────
-pc = Pinecone(api_key=PINECONE_KEY)
-try:
-    names = pc.list_indexes().names()
-except Exception:
-    names = [getattr(x, 'name', None) for x in pc.list_indexes()]
-if INDEX_NAME not in names:
-    print(f'인덱스 "{INDEX_NAME}" 생성 중 (차원 {DIM}, cosine)...')
-    pc.create_index(name=INDEX_NAME, dimension=DIM, metric='cosine',
-                    spec=ServerlessSpec(cloud='aws', region='us-east-1'))
-index = pc.Index(INDEX_NAME)
+#  인덱스 생성·id 수집 로직은 _common 에 있다(embed_course·embed_jobs 와 공유).
+index = pinecone_index()
 print(f'Gemini 키 {len(GEMINI_KEYS)}개 · 인덱스 "{INDEX_NAME}" · 네임스페이스 "{NAMESPACE}"')
-
-# 이미 넣은 id (index.list 는 ListItem 객체를 준다 — .id 를 꺼내야 한다)
-already = set()
-try:
-    for batch in index.list(namespace=NAMESPACE):
-        for it in batch:
-            already.add(it.id if hasattr(it, 'id') else str(it))
-except Exception as e:
-    print(f'  (기존 id 조회 실패 — 전체 재임베딩으로 진행: {e})')
+already = already_ids(index, NAMESPACE)
 print(f'네임스페이스 "{NAMESPACE}" 에 이미 {len(already)}개 있음')
+
+#  ★ 저장된 해시와 비교해 '신규 / 변경'을 가른다(2026-08-02).
+#    관리자 화면의 「신규 N건 · 변경된 N건」이 이 값이다.
+n_new_set, n_chg_set = diff_by_hash(conn, 'certification', 'cert_id', rows, content_hash)
+print(f'해시 비교 — 신규 {len(n_new_set)} · 변경 {len(n_chg_set)} · '
+      f'그대로 {len(rows) - len(n_new_set) - len(n_chg_set)}')
 
 pairs = list(zip(rows, texts))
 if FORCE:
     todo = pairs
     print('★ --all 지정 → 전부 다시 임베딩')
 else:
-    todo = [(r, t) for r, t in pairs if str(r[0]) not in already]
+    #  ★ 건너뛰기 기준이 두 개다(2026-08-02).
+    #    예전엔 'Pinecone 에 id 가 있나' 뿐이라, 내용이 바뀌어도 건너뛰었다.
+    #    그래서 재임베딩할 때마다 --all 로 전체를 돌려야 했다. 이제 바뀐 것도 포함한다.
+    todo = [(r, t) for r, t in pairs
+            if str(r[0]) not in already or str(r[0]) in n_chg_set]
 print(f'임베딩할 것 {len(todo)}개\n')
 
 if not todo:
-    print('할 일 없음. 종료.')
+    #  임베딩할 게 없어도 해시는 남긴다 — 해시가 비어 있으면 관리자 화면의
+    #  「변경 N건」이 계산되지 않고, 다음 실행에서도 비교 기준이 없다.
+    print('임베딩할 것 없음 — content_hash 만 갱신한다.')
+    write_hash_and_log(conn, rows, 0, len(already), len(n_new_set), len(n_chg_set),
+                       msg='임베딩 없음(전부 최신)')
     conn.close()
     raise SystemExit
 
@@ -225,5 +272,6 @@ for i in range(0, len(todo), BATCH):
     if i + BATCH < len(todo):
         time.sleep(SLEEP)
 
-print(f'\n✅ 자격증 임베딩 완료: {saved}개 (네임스페이스 "{NAMESPACE}")')
+write_hash_and_log(conn, rows, saved, len(already), len(n_new_set), len(n_chg_set))
+print(f'\n자격증 임베딩 완료: {saved}개 (네임스페이스 "{NAMESPACE}")')
 conn.close()

@@ -4,7 +4,7 @@ import { PageHead, useToast } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
 import { useAuth } from '../../store/auth.jsx'
 import { useFamily } from '../../store/family.jsx'
-import { demoInviteCode } from '../../mock/db.js'
+// import { demoInviteCode } from '../../mock/db.js'
 
 const LEN = 6
 const MAX_TRY = 5
@@ -17,18 +17,14 @@ const REASONS = [
   { key: 'self', code: '· 본인 코드', label: '본인 코드는 안 돼요' },
   { key: 'already', code: '· 이미 연결', label: '이미 연결된 가족' },
 ]
-const DEMO = { '000000': 'notfound', '111111': 'expired', '222222': 'used', '444444': 'already' }
-const MSG = {
-  notfound: '코드를 찾을 수 없어요. 다시 확인해 주세요.',
-  expired: '만료된 코드예요. 새 코드를 받아주세요.',
-  used: '이미 사용된 코드예요.',
-  self: '본인 코드는 안 돼요. 가족에게 받은 코드를 입력해 주세요.',
-  already: '이미 연결된 가족이에요.',
-}
 
 export default function FamilyJoin() {
-  const { familyLinked, linkFamily } = useAuth()
-  const { inviteCode } = useFamily()
+  const { familyLinked } = useAuth();
+  const {
+    joinWithCode,
+    loading,
+  } = useFamily();
+
   const nav = useNavigate()
   const toast = useToast()
   const [digits, setDigits] = useState(Array(LEN).fill(''))
@@ -40,49 +36,106 @@ export default function FamilyJoin() {
   const locked = fails >= MAX_TRY
   const canConnect = code.length === LEN && !locked
 
-  const setAt = (i, v) => {
-    const d = v.replace(/\D/g, '').slice(-1)
-    setDigits((prev) => { const n = [...prev]; n[i] = d; return n })
-    if (error) setError('')
-    if (d && i < LEN - 1) refs.current[i + 1]?.focus()
+  const setAt = (index, value) => {
+    const character = value
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(-1)
+
+    setDigits((previous) => {
+      const next = [...previous]
+      next[index] = character
+      return next
+    })
+
+    if (error) {
+      setError('')
+    }
+
+    if (character && index < LEN - 1) {
+      refs.current[index + 1]?.focus()
+    }
   }
+
   const onKey = (i, e) => {
     if (e.key === 'Backspace' && !digits[i] && i > 0) refs.current[i - 1]?.focus()
     if (e.key === 'Enter') submit()
   }
-  const onPaste = (e) => {
-    const txt = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, LEN)
-    if (!txt) return
-    e.preventDefault()
-    const n = Array(LEN).fill('')
-    txt.split('').forEach((c, k) => { n[k] = c })
-    setDigits(n)
+  const onPaste = (event) => {
+    const text = (
+      event.clipboardData.getData('text') || ''
+    )
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, LEN)
+
+    if (!text) {
+      return
+    }
+
+    event.preventDefault()
+
+    const next = Array(LEN).fill('')
+
+    text.split('').forEach((character, index) => {
+      next[index] = character
+    })
+
+    setDigits(next)
     setError('')
-    refs.current[Math.min(txt.length, LEN - 1)]?.focus()
+
+    refs.current[
+      Math.min(text.length, LEN - 1)
+    ]?.focus()
   }
 
-  const submit = () => {
-    if (locked || code.length !== LEN) {
-      if (code.length !== LEN) setError('숫자 6자리를 모두 입력해 주세요.')
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    if (code.length !== 6) {
+      setError("초대코드 6자리를 입력해주세요.");
+      return;
+    }
+
+    try {
+      await joinWithCode({
+        code,
+        relationships: relationship,
+      });
+
+      navigate("/family");
+    } catch (err) {
+      setError(err.message || "가족방 연결에 실패했습니다.");
+    }
+  
+
+    if (familyLinked) {
+      setError('이미 참여 중인 가족방이 있습니다.')
       return
     }
-    // 검증
-    let reason = null
-    if (familyLinked) reason = 'already'
-    else if (code === inviteCode) reason = 'self'
-    else if (code === demoInviteCode) reason = null // 성공
-    else reason = DEMO[code] || 'notfound'
 
-    if (reason) {
+    try {
+      await joinWithCode({
+        code,
+        relationships: '가족',
+      })
+
+      toast.show('가족과 연결되었어요')
+      nav('/family')
+    } catch (requestError) {
       const nextFails = fails + 1
       setFails(nextFails)
-      setError(nextFails >= MAX_TRY ? '실패가 5회를 넘었어요. 잠시 후 다시 시도해 주세요.' : MSG[reason])
-      return
+
+      if (nextFails >= MAX_TRY) {
+        setError(
+          '실패가 5회를 넘었어요. 잠시 후 다시 시도해 주세요.',
+        )
+        return
+      }
+
+      setError(requestError.message)
     }
-    // 성공
-    linkFamily()
-    toast.show('가족과 연결되었어요')
-    nav('/family')
   }
 
   return (
@@ -95,7 +148,10 @@ export default function FamilyJoin() {
           {/* 코드 입력 */}
           <div className="card card-pad">
             <label className="muted" style={{ display: 'block', marginBottom: 12, fontWeight: 700, color: 'var(--ink)' }}>
-              초대 코드 <span className="muted" style={{ fontWeight: 500 }}>(숫자 6자리)</span>
+              초대 코드
+              <span className="muted">
+                (영문·숫자 6자리)
+              </span>
             </label>
 
             <div className="row" style={{ gap: 8, justifyContent: 'space-between' }} onPaste={onPaste}>
@@ -108,7 +164,8 @@ export default function FamilyJoin() {
                   onKeyDown={(e) => onKey(i, e)}
                   onFocus={(e) => e.target.select()}
                   disabled={locked}
-                  inputMode="numeric"
+                  inputMode="text"
+                  autoCapitalize="characters"
                   maxLength={1}
                   aria-label={`코드 ${i + 1}번째 자리`}
                   style={{
@@ -124,8 +181,13 @@ export default function FamilyJoin() {
 
             {error && <p style={{ color: 'var(--danger)', fontSize: 14, fontWeight: 600, marginTop: 12 }}>⚠ {error}</p>}
 
-            <button className="btn btn-primary btn-block" style={{ marginTop: 18 }} onClick={submit} disabled={!canConnect}>
-              연결하기
+            <button
+              className="btn btn-primary btn-block"
+              style={{ marginTop: 18 }}
+              onClick={submit}
+              disabled={!canConnect || loading}
+            >
+              {loading ? '연결 중...' : '연결하기'}
             </button>
 
             {fails > 0 && (
@@ -153,7 +215,6 @@ export default function FamilyJoin() {
                   </div>
                 ))}
               </div>
-              <p className="hint" style={{ marginTop: 12 }}>데모: <b>{demoInviteCode}</b> 입력 시 연결돼요.</p>
             </div>
           </aside>
         </div>

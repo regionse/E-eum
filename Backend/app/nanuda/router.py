@@ -1,3 +1,4 @@
+from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import (
     APIRouter,
@@ -23,6 +24,7 @@ from .schemas import (
     FacilityRecommendationResponse,
     SupportFacilityResponse,
     SupportFacilityMapResponse,
+    WeeklyAnalysisResponse,
 )
 
 
@@ -156,6 +158,35 @@ async def join_care_group(
 
 # =========================================================
 
+
+# =========================================================
+@router.post(
+    "/weekly-care-analyses/{care_group_id}",
+    response_model=WeeklyAnalysisResponse,
+    status_code=201,
+)
+async def analyze_weekly_care(
+    care_group_id: int = Path(..., gt=0),
+    target_date: date | None = Query(
+        default=None,
+        description="분석 기준 날짜",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await controllers.analyze_and_save_week(
+            db=db,
+            care_group_id=care_group_id,
+            target_date=target_date,
+        )
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+# =========================================================
+
 # =========================================================
 
 # router = APIRouter(
@@ -201,6 +232,28 @@ async def get_support_facilities(
             detail=str(error),
         ) from error
     
+
+@router.get("/support-facilities/route")
+async def get_support_facility_route(
+    origin_latitude: float = Query(..., ge=-90, le=90),
+    origin_longitude: float = Query(..., ge=-180, le=180),
+    destination_latitude: float = Query(..., ge=-90, le=90),
+    destination_longitude: float = Query(..., ge=-180, le=180),
+):
+    try:
+        return await controllers.get_kakao_driving_route(
+            origin_latitude=origin_latitude,
+            origin_longitude=origin_longitude,
+            destination_latitude=destination_latitude,
+            destination_longitude=destination_longitude,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
 
 @router.get(
     "/support-facilities/{facility_id}/map",

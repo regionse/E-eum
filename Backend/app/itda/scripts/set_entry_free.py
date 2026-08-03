@@ -27,30 +27,22 @@ certification.entry_free 채우기 — '지금 바로 응시 가능한가'
 나머지 450종은 NULL 로 둔다. 카드에서는 exam_method(취득방법) 원문을 그대로 보여주고
 사용자가 직접 판단하게 한다 — 우리가 해석해서 틀리는 것보다 낫다.
 """
-import os, sys, re, getpass
-import pymysql
+import os
+import sys
+import re
 
+#  ★ 2026-07-31 — env 로더·DB 접속을 공용 모듈로 옮겼다(_common.py).
+#    전에는 배치 10개가 각자 read_env() 와 pymysql.connect() 를 갖고 있어서,
+#    한 곳만 고치면 될 일을 매번 7~8곳에서 고쳤다.
+try:
+    from ._common import setup_console, db_conn
+except ImportError:                                       # 파일 직접 실행
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _common import setup_console, db_conn
+
+setup_console()
 DRY = '--dry' in sys.argv
-
-
-def read_env():
-    d = {}
-    for p in ['.env', 'etc/.env', '../etc/.env', '../../etc/.env',
-              r'C:\e-um-1\e-um\etc\.env']:
-        try:
-            for line in open(p, encoding='utf-8'):
-                s = line.strip()
-                if '=' in s and not s.startswith('#'):
-                    k, v = s.split('=', 1)
-                    d.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-        except FileNotFoundError:
-            continue
-    return d
-
-ENV = {**read_env(), **os.environ}
-pw = ENV.get('DB_PASSWORD') or getpass.getpass('user2604 DB 비밀번호: ')
-conn = pymysql.connect(host='localhost', port=3306, user='user2604',
-                       password=pw, database='eum', charset='utf8mb4')
+conn = db_conn()
 
 # 컬럼 준비
 with conn.cursor() as cur:

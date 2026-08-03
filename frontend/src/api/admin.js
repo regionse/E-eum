@@ -69,6 +69,27 @@ export function getPolicySyncResult(executionId) {
 
 
 // =========================================================
+// 관리자 · 잇다 임베딩 현황 (2026-08-02)
+// =========================================================
+
+/**
+ * 잇다 임베딩 현황을 조회한다.
+ *  { last_api_sync, last_embedding,
+ *    cert_total, job_total, course_total,
+ *    cert_embedded, course_embedded, failed_recent,
+ *    runs: [{ target, finished_at, fetched, inserted, updated, embedded, status, message }] }
+ *
+ * 값은 배치가 돌 때 기록한 사실이다(itda_sync_log + content_hash).
+ * 화면이 계산하지 않는다 — '언제 무엇이 바뀌었나'가 남아야 하기 때문.
+ */
+export function getItdaSyncStatus() {
+  return request(
+    '/admin/itda-sync/latest',
+  )
+}
+
+
+// =========================================================
 // 관리자 대시보드 API
 // =========================================================
 export function getDashboard(
