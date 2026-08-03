@@ -39,7 +39,18 @@ DATABASE_URL = (
 )
 
 # echo=False — 팀 database.py 는 echo=True 지만 잇다 쿼리는 조용히 돈다.
-engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+#
+# ★ 세션 시간대를 KST 로 고정 (2026-08-03) — 팀 database.py 와 같은 설정.
+#   왜: RDS 의 기본 시계는 **UTC** 다. 잇다는 시각을 파이썬에서 KST 로 만들어 저장하는데
+#       (kst_now·kst_today), SQL 안에서 NOW() 를 쓰는 곳이 한 군데 있었다 —
+#         controllers.py  "finished_at > NOW() - INTERVAL 7 DAY"  (관리자 「최근 7일 실패」)
+#       KST 로 저장된 값을 UTC 기준 NOW() 와 비교해 **9시간이 어긋났다**(7일이 6일 15시간).
+#   이제 저장(kst_now)과 비교(NOW())가 같은 시계를 본다.
+#   ※ kst_today()·kst_now() 는 파이썬 계산이라 이 설정과 무관하다 — 이중 보정은 없다.
+engine = create_async_engine(
+    DATABASE_URL, pool_pre_ping=True, pool_recycle=3600,
+    connect_args={"init_command": "SET time_zone = '+09:00'"},
+)
 
 async_session = sessionmaker(
     bind=engine, class_=AsyncSession,
