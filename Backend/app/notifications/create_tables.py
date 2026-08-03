@@ -1,22 +1,17 @@
 import asyncio
 
-from nanuda.database import Base, engine
-from nanuda.shared.existing_tables import( user_table )
-
-from Backend.app.notifications import models  ###
+from app.database import Base, engine
+from app.notifications import models as notification_models  # noqa: F401
+from app.user import models as user_models  # noqa: F401
 
 
 async def create_tables():
     try:
         print("등록된 테이블:", list(Base.metadata.tables.keys()))
-
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-
-        print("테이블 생성 완료")
-
+        print("알림 테이블 생성 완료")
     finally:
-        # 이벤트 루프가 닫히기 전에 DB 연결 정리
         await engine.dispose()
 
 
