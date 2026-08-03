@@ -41,8 +41,28 @@ from ..db import async_session
 setup_console()
 
 MODEL = ENV.get('COURSE_LLM_MODEL') or 'gemini-3.1-flash-lite'
-CAND = 5        # 직업당 보여줄 강좌 후보 수 — 분야가 덮이는지만 보면 되므로 적게
-CHUNK = 15      # LLM 한 번에 판정할 직업 수
+CAND = 5             # 직업당 강좌 후보 수
+CHUNK = 8            # LLM 한 번에 판정할 직업 수 (근거가 늘어 15 → 8)
+JOB_DESC_LEN = 130   # NCS 직무 정의에서 쓸 길이 (평균 104자라 대부분 통째로 들어간다)
+SUMM_LEN = 140       # 강의 요약에서 쓸 길이
+
+
+#  ── 강의 요약 다듬기 ────────────────────────────────────────────────
+#  summary 는 평균 1,479자인데 앞부분이 학사일정·수강신청 안내인 경우가 많다.
+#  실측: "학사일정 ￭ 수강신청 : 2026. 2. 16.(월) ~ … 강 좌 명 객체지향형 도면해독 … 학습목표 …"
+#  그대로 앞을 자르면 날짜만 들어가 판정에 쓸모가 없다 → '내용이 시작되는 표지'부터 자른다.
+_MARKERS = ('학습목표', '수업내용', '강좌 소개', '강좌소개', '학습 목표', '강의에서')
+
+
+def _summary_bit(s):
+    s = ' '.join((s or '').split())
+    if not s:
+        return ''
+    for mk in _MARKERS:
+        i = s.find(mk)
+        if i >= 0:
+            return s[i:i + SUMM_LEN]
+    return s[:SUMM_LEN]
 
 #  ── 다수결 판정 (self-consistency, 2026-08-03) ──────────────────────
 #  왜: 같은 프롬프트로도 경계에 있는 직업은 판정이 뒤집힌다.
@@ -77,7 +97,16 @@ _SCHEMA = {
     'required': ['results'],
 }
 
-PROMPT = """너는 직업훈련 상담사다. 아래 각 직업마다 K-MOOC 강의 후보가 붙어 있다.
+PROMPT = """너는 직업훈련 상담사다. 아래 각 직업마다
+  · 그 직업의 **직무 정의**(NCS)
+  · K-MOOC 강의 후보 — 제목 [분류] 그리고 **강의 요약**
+이 붙어 있다.
+
+★ 제목만 보고 판단하지 마라. **직무 정의와 강의 요약을 대조해라.**
+  제목은 사람도 속인다. 실제 사례 —
+    「객체지향형 도면해독」은 소프트웨어가 아니라 제조 도면 해독이고,
+     용접 직무 정의에 "주어진 도면에 따른 WPS 검토"가 있으므로 **관련이 있다**.
+    「K-FOOD코디네이션」도 요약에 "한식조리법을 활용한 메뉴 실습"이 있어 **관련이 있다**.
 
 물음은 딱 하나다 —
   **후보 중에 「하나라도」 이 직업의 지식·기술을 실제로 배울 수 있는 강의가 있는가?**
@@ -120,11 +149,31 @@ def _post_factory(body):
 
 
 async def judge(batch):
-    """batch: [(code, job_name, [강의제목...])] → {code: (covered, why)}"""
+    """batch: [(code, job_name, job_desc, [(제목, 분류, 요약), ...])] → {code: (covered, note)}
+
+    ★ 2026-08-03 — 판정 재료를 '제목만'에서 '직무 정의 + 강의 요약'까지 넓혔다.
+      왜: 제목만 보면 사람도 못 가른다. 실제로 그래서 오판을 의심했다가 내용을 읽고 번복했다 —
+          「객체지향형 도면해독」은 소프트웨어가 아니라 **제조 도면 해독**(공학)이고,
+          피복아크용접 직무 정의에 "**주어진 도면에 따른** WPS 검토"가 들어 있다. 관련이 있었다.
+          「K-FOOD코디네이션」도 요약에 "**한식조리법을 활용한 메뉴 실습**"이 적혀 있었다.
+      즉 필요한 것은 더 엄격한 프롬프트가 아니라 **더 많은 근거**였다.
+    """
     lines = []
-    for code, name, titles in batch:
-        courses = ' / '.join(titles) if titles else '(후보 없음)'
-        lines.append(f'- code={code} | 직업: {name} | 강의후보: {courses}')
+    for code, name, desc, courses in batch:
+        lines.append(f'- code={code}')
+        lines.append(f'  직업: {name}')
+        if desc:
+            lines.append(f'  직무 정의: {desc}')
+        if courses:
+            for t, cls, summ in courses:
+                bit = f'    · {t}'
+                if cls:
+                    bit += f' [{cls}]'
+                if summ:
+                    bit += f' — {summ}'
+                lines.append(bit)
+        else:
+            lines.append('    · (후보 없음)')
     prompt = PROMPT.format(items='\n'.join(lines))
 
     body = json.dumps({
@@ -188,7 +237,8 @@ async def main():
         #  대표성이 없으므로 무작위로 뽑는다. 전체 실행은 순서대로 간다(재개 편의).
         #  --all --limit 은 '방금 판정한 것을 다시 판정해 비교'하는 용도다 → 판정된 것부터.
         order = ('course_cov_at DESC' if force else 'RAND()') if limit else 'job_code'
-        cur.execute(f'SELECT job_code, job_name, job_mcls_name FROM job_catalog{where} '
+        cur.execute(f'SELECT job_code, job_name, job_mcls_name, job_description '
+                    f'FROM job_catalog{where} '
                     f'ORDER BY {order}' + (f' LIMIT {int(limit)}' if limit else ''))
         todo = cur.fetchall()
 
@@ -202,15 +252,16 @@ async def main():
     # ① 직업마다 강좌 후보 뽑기
     prepared = []
     async with async_session() as db:
-        for i, (code, name, mcls) in enumerate(todo, 1):
+        for i, (code, name, mcls, desc) in enumerate(todo, 1):
             q = ' '.join(x for x in [name, mcls] if x)
             try:
                 pool = await m.match_courses(db, q, top_k=CAND, min_score=0.0)
-                titles = [c['title'] for c in pool]
+                cs = [(c['title'], c.get('classfy') or '', _summary_bit(c.get('summary')))
+                      for c in pool]
             except Exception as e:
-                titles = []
+                cs = []
                 print(f'  ({name}: 검색 실패 {type(e).__name__})')
-            prepared.append((str(code), name, titles))
+            prepared.append((str(code), name, (desc or '').strip()[:JOB_DESC_LEN], cs))
             if i % 50 == 0:
                 print(f'  후보 수집 {i}/{len(todo)}', flush=True)
 
@@ -239,7 +290,7 @@ async def main():
     now = datetime.datetime.now()
     saved = covered = split = 0
     with conn.cursor() as cur:
-        for code, name, _ in prepared:
+        for code, name, _desc, _cs in prepared:
             t = tally.get(code)
             if not t or t[1] == 0:
                 continue
