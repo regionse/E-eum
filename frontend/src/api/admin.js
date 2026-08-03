@@ -1,41 +1,69 @@
-// 관리자 · 대시보드/회원/정책 최신화
+// 관리자 · 대시보드/회원/관리자 계정/정책 최신화
 import {
-  mockResolve,
   request,
 } from './client.js'
 
-import {
-  // dashboardKpis,
-  // aiTrend,
-  // featureUsage,
-  adminUsers,
-  adminAccounts,
-} from '../mock/db.js'
-
 
 // =========================================================
-// 기존 관리자 mock API
+// 관리자 · 회원 관리
 // =========================================================
 
 
 export function listAdminUsers() {
-  return mockResolve(
-    adminUsers,
-    500,
+  return request(
+    '/admin/users',
   )
 }
+
+
+export function updateAdminUserStatus(
+  userId,
+  status,
+) {
+  return request(
+    `/admin/users/${userId}/status`,
+    {
+      method: 'PATCH',
+      body: {
+        status,
+      },
+    },
+  )
+}
+
+
+// =========================================================
+// 관리자 · 관리자 계정 관리
+// =========================================================
+
 
 export function listAdminAccounts() {
-  return mockResolve(
-    adminAccounts,
-    500,
+  return request(
+    '/admin/accounts',
+  )
+}
+
+
+export function updateAdminAccountStatus(
+  userId,
+  status,
+) {
+  return request(
+    `/admin/accounts/${userId}/status`,
+    {
+      method: 'PATCH',
+      body: {
+        status,
+      },
+    },
   )
 }
 
 
 // =========================================================
-// 덜다 · 정책 데이터 최신화 API
+// 덜다 · 정책 데이터 최신화
 // =========================================================
+
 
 /**
  * 정책 데이터 최신화를 시작한다.
@@ -49,6 +77,7 @@ export function startPolicySync() {
   )
 }
 
+
 /**
  * 가장 최근 정책 최신화 실행 결과를 조회한다.
  */
@@ -58,10 +87,13 @@ export function getLatestPolicySyncResult() {
   )
 }
 
+
 /**
  * 실행 ID에 해당하는 정책 최신화 상태를 조회한다.
  */
-export function getPolicySyncResult(executionId) {
+export function getPolicySyncResult(
+  executionId,
+) {
   return request(
     `/admin/policy-sync/${executionId}`,
   )
@@ -69,19 +101,10 @@ export function getPolicySyncResult(executionId) {
 
 
 // =========================================================
-// 관리자 · 잇다 임베딩 현황 (2026-08-02)
+// 잇다 · 임베딩 현황
 // =========================================================
 
-/**
- * 잇다 임베딩 현황을 조회한다.
- *  { last_api_sync, last_embedding,
- *    cert_total, job_total, course_total,
- *    cert_embedded, course_embedded, failed_recent,
- *    runs: [{ target, finished_at, fetched, inserted, updated, embedded, status, message }] }
- *
- * 값은 배치가 돌 때 기록한 사실이다(itda_sync_log + content_hash).
- * 화면이 계산하지 않는다 — '언제 무엇이 바뀌었나'가 남아야 하기 때문.
- */
+
 export function getItdaSyncStatus() {
   return request(
     '/admin/itda-sync/latest',
@@ -90,8 +113,10 @@ export function getItdaSyncStatus() {
 
 
 // =========================================================
-// 관리자 대시보드 API
+// 관리자 · 대시보드
 // =========================================================
+
+
 export function getDashboard(
   period = '7d',
 ) {
