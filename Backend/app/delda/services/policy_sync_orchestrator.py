@@ -19,6 +19,7 @@ from app.delda.services.welfare_policies_sync_service import (
     run_welfare_policy_sync,
 )
 from app.delda.services.policy_embedding_service import (
+    PINECONE_NAMESPACE,
     create_embedding_clients,
     embed_and_upsert_policy,
 )
@@ -26,6 +27,7 @@ from app.delda.services.policy_embedding_service import (
 
 EMBEDDING_INTERVAL_SECONDS = 0.5
 EMBEDDING_RETRY_WAIT_SECONDS = 3.0
+PINECONE_FETCH_BATCH_SIZE = 100
 
 SyncSummary = dict[
     str,

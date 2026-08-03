@@ -10,6 +10,11 @@ from pinecone import (
 load_dotenv()
 
 
+PINECONE_CLOUD="aws"
+PINECONE_REGION="us-east-1"
+DEFAULT_POLICY_EMBEDDING_DIMENSION = 768
+
+
 def get_required_env(name: str) -> str:
     """
     필수 환경변수를 가져온다.
@@ -33,20 +38,18 @@ def create_pinecone_index() -> None:
 
     api_key = get_required_env("PINECONE_API_KEY")
 
-    index_name = get_required_env("PINECONE_INDEX_NAME")
+    index_name = get_required_env("PINECONE_POLICY_INDEX_NAME")
 
-    cloud = get_required_env("PINECONE_CLOUD")
+    cloud = POLICY_PINECONE_CLOUD
+    region = POLICY_PINECONE_REGION
 
-    region = get_required_env("PINECONE_REGION")
-
-    dimension_text = get_required_env("EMBEDDING_DIMENSION")
+    dimension_text = os.getenv("POLICY_EMBEDDING_DIMENSION", str(DEFAULT_POLICY_EMBEDDING_DIMENSION))
 
     try:
         dimension = int(dimension_text)
     except ValueError as error:
         raise RuntimeError(
-            "EMBEDDING_DIMENSION은 "
-            "정수여야 합니다."
+            "POLICY_EMBEDDING_DIMENSION은 정수여야 합니다."
         ) from error
 
     pinecone = Pinecone(        # 파인콘 연결

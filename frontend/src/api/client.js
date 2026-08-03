@@ -163,6 +163,11 @@ export async function request(
                 j.detail[0]?.msg
                 || msg
               )
+              : typeof j.detail === 'object'
+                ? (
+                  j.detail.message
+                  || msg
+                )
               : msg
       }
     } catch {

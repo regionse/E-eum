@@ -71,7 +71,7 @@ export function Async({ state, children, loading, empty }) {
 }
 
 // ---------- 모달 ----------
-export function Modal({ title, children, onClose, actions }) {
+export function Modal({ title, children, onClose, actions, modalStyle }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose?.()
     window.addEventListener('keydown', onKey)
@@ -79,7 +79,7 @@ export function Modal({ title, children, onClose, actions }) {
   }, [onClose])
   return (
     <div className="dim" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="modal" style={modalStyle} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {title && <h3>{title}</h3>}
         {children}
         {actions && <div className="modal-actions">{actions}</div>}

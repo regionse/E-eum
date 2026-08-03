@@ -236,16 +236,19 @@ def _get_search_regions(
     현재 수집 대상인 서울·경기 기준으로 단순 처리한다.
     """
 
-    region = region.strip()
+    normalized_region = region.strip()
 
-    if region.startswith("서울"):
-        user_region = "서울"
+    if normalized_region.startswith("서울"):
+        user_region = "서울특별시"
 
-    elif region.startswith("경기"):
-        user_region = "경기"
+    elif normalized_region.startswith("경기"):
+        user_region = "경기도"
 
     else:
-        user_region = region
+        user_region = normalized_region
+
+    if user_region == "전국":
+        return ["전국"]
 
     return ["전국", user_region]
 

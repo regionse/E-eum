@@ -9,6 +9,9 @@ from app.delda.models import Policy
 
 PINECONE_NAMESPACE = "policies"
 
+POLICY_EMBEDDING_MODEL = "gemini-embedding-2"
+DEFAULT_POLICY_EMBEDDING_DIMENSION = 768
+
 
 def get_required_env(
     name: str,
@@ -96,7 +99,7 @@ def create_embedding_clients():
 
     index = pinecone.Index(
         name=get_required_env(
-            "PINECONE_INDEX_NAME"
+            "PINECONE_POLICY_INDEX_NAME"
         )
     )
 
@@ -111,21 +114,19 @@ def create_embedding_vector(
     정책 문자열을 Gemini 임베딩 벡터로 변환한다.
     """
 
-    model_name = get_required_env(
-        "GEMINI_EMBEDDING_MODEL"
-    )
+    model_name = POLICY_EMBEDDING_MODEL
 
     try:
         dimension = int(
-            get_required_env(
-                "EMBEDDING_DIMENSION"
+            os.getenv(
+                "POLICY_EMBEDDING_DIMENSION",
+                str(DEFAULT_POLICY_EMBEDDING_DIMENSION),
             )
         )
 
     except ValueError as error:
         raise RuntimeError(
-            "EMBEDDING_DIMENSION은 "
-            "정수여야 합니다."
+            "POLICY_EMBEDDING_DIMENSION은 정수여야 합니다."
         ) from error
 
     response = (

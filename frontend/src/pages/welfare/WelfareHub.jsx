@@ -552,6 +552,10 @@ export default function WelfareHub() {
       {favoriteModalOpen && (
         <Modal
           title="나의 정책 즐겨찾기"
+          modalStyle={{
+            width: 'calc(100vw - 48px)',
+            maxWidth: 700,
+          }}
           onClose={() => {
             setFavoriteModalOpen(false)
             setFavoriteModalError(null)
