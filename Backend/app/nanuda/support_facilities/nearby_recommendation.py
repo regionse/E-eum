@@ -119,40 +119,26 @@ def search_facility_on_kakao(
     latitude: float,
     longitude: float,
 ) -> dict | None:
-    query = facility_name
+    # 기관명만 검색하면 같은 이름의 다른 기관이 선택될 수 있으므로
+    # 주소를 붙인 검색을 먼저 하고, 결과가 없을 때 기관명만 검색한다.
+    queries = []
 
-    response = requests.get(
-        KAKAO_KEYWORD_URL,
-        headers=get_kakao_headers(),
-        params={
-            "query": query,
-            "x": longitude,
-            "y": latitude,
-            "sort": "distance",
-            "size": 5,
-        },
-        timeout=10,
-    )
+    if address:
+        queries.append(f"{facility_name} {address}")
 
-    response.raise_for_status()
+    queries.append(facility_name)
+    documents = []
 
-    documents = response.json().get(
-        "documents",
-        [],
-    )
-
-    if not documents:
-        # 주소를 붙였을 때 검색이 안 되면
-        # 기관명만으로 한 번 더 검색
+    for query in dict.fromkeys(queries):
         response = requests.get(
             KAKAO_KEYWORD_URL,
             headers=get_kakao_headers(),
             params={
-                "query": facility_name,
+                "query": query,
                 "x": longitude,
                 "y": latitude,
                 "sort": "distance",
-                "size": 5,
+                "size": 10,
             },
             timeout=10,
         )
@@ -164,10 +150,18 @@ def search_facility_on_kakao(
             [],
         )
 
+        if documents:
+            break
+
     if not documents:
         return None
 
     matched_places = []
+    address_parts = [
+        part
+        for part in address.split()
+        if part
+    ]
 
     for place in documents:
         similarity = calculate_name_similarity(
@@ -175,8 +169,19 @@ def search_facility_on_kakao(
             kakao_name=place["place_name"],
         )
 
-        # 이름이 지나치게 다른 장소 제외
-        if similarity < 0.5:
+        place_address = (
+            f"{place.get('address_name', '')} "
+            f"{place.get('road_address_name', '')}"
+        )
+        same_district = (
+            len(address_parts) >= 2
+            and address_parts[1] in place_address
+        )
+
+        # 기관명이 약간 다르더라도 같은 시·군·구 주소라면 허용한다.
+        if similarity < 0.45 and not (
+            same_district and similarity >= 0.25
+        ):
             continue
 
         matched_places.append(
@@ -243,6 +248,15 @@ async def recommend_nearest_facility(
     )
     facilities = list(result.scalars().all())
 
+    print(
+        "기관 후보 검색:",
+        facility_type,
+        region_1depth,
+        region_2depth,
+        "같은 지역 후보",
+        len(facilities),
+    )
+
     # 같은 구에 기관이 없으면 시·도 범위로 확대
     if not facilities:
         statement = (
@@ -262,6 +276,11 @@ async def recommend_nearest_facility(
         result = await db.execute(statement)
         facilities = list(result.scalars().all())
 
+        print(
+            "시·도 범위로 확대:",
+            len(facilities),
+        )
+
     recommendations = []
 
     for facility in facilities:
@@ -278,7 +297,7 @@ async def recommend_nearest_facility(
 
         distance_value = place.get("distance")
 
-        if not distance_value:
+        if distance_value is None or distance_value == "":
             continue
 
         try:
@@ -325,6 +344,11 @@ async def recommend_nearest_facility(
         )
 
     if not recommendations:
+        print(
+            "카카오 지도에서 일치한 기관이 없습니다.",
+            "DB 후보 수:",
+            len(facilities),
+        )
         return None
 
     recommendations.sort(

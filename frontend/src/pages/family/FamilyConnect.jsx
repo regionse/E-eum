@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { PageHead, useToast } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
 import { useAuth } from '../../store/auth.jsx'
@@ -17,23 +17,36 @@ export default function FamilyConnect() {
     user?.id ??
     null
   const {
+    careGroupId,
     careGroupOwnerId,
     members,
     inviteCode,
     inviteExpiresAt,
     regenerateCode,
+    refreshFamily,
     loading,
     error,
   } = useFamily()
+  const navigate = useNavigate()
   const toast = useToast()
 
   const [left, setLeft] = useState(TTL)
   const [requestError, setRequestError] = useState('')
+  const [memberAliases, setMemberAliases] = useState({})
+  const [editingMemberId, setEditingMemberId] = useState(null)
+  const [aliasDraft, setAliasDraft] = useState('')
   const safeMembers = Array.isArray(members) ? members : []
+  const hasCareGroup = careGroupId != null
   const isOwner =
+    hasCareGroup &&
     userId != null &&
     careGroupOwnerId != null &&
     Number(userId) === Number(careGroupOwnerId)
+  const canManageInvite = !hasCareGroup || isOwner
+  const aliasStorageKey =
+    userId != null && careGroupId != null
+      ? `family-member-aliases:${userId}:${careGroupId}`
+      : null
 
   const expired =
     !inviteCode ||
@@ -65,6 +78,74 @@ export default function FamilyConnect() {
     return () => clearInterval(timer)
   }, [inviteExpiresAt])
 
+  useEffect(() => {
+    if (!aliasStorageKey) {
+      setMemberAliases({})
+      return
+    }
+
+    try {
+      const saved = localStorage.getItem(aliasStorageKey)
+      setMemberAliases(saved ? JSON.parse(saved) : {})
+    } catch {
+      setMemberAliases({})
+    }
+  }, [aliasStorageKey])
+
+  const getMemberName = (memberId) => {
+    const alias = memberAliases[String(memberId)]?.trim()
+
+    if (alias) return alias
+
+    return Number(memberId) === Number(userId)
+      ? '나'
+      : `가족 ${memberId}`
+  }
+
+  const startEditingName = (memberId) => {
+    setEditingMemberId(String(memberId))
+    setAliasDraft(getMemberName(memberId))
+  }
+
+  const cancelEditingName = () => {
+    setEditingMemberId(null)
+    setAliasDraft('')
+  }
+
+  const saveMemberName = (memberId) => {
+    const nextName = aliasDraft.trim().slice(0, 20)
+
+    if (!nextName) {
+      setRequestError('이름을 입력해 주세요.')
+      return
+    }
+
+    if (!aliasStorageKey) {
+      setRequestError('가족방 정보를 확인할 수 없습니다.')
+      return
+    }
+
+    const nextAliases = {
+      ...memberAliases,
+      [String(memberId)]: nextName,
+    }
+
+    try {
+      localStorage.setItem(
+        aliasStorageKey,
+        JSON.stringify(nextAliases),
+      )
+    } catch {
+      setRequestError('변경한 이름을 저장하지 못했습니다.')
+      return
+    }
+
+    setMemberAliases(nextAliases)
+    setRequestError('')
+    cancelEditingName()
+    toast.show('내 화면에서 사용할 이름을 변경했어요')
+  }
+
   const copy = async () => {
     if (expired) return
     try { await navigator.clipboard.writeText(inviteCode) } catch { /* noop */ }
@@ -85,23 +166,52 @@ export default function FamilyConnect() {
     }
   }
 
+  const goToFamilyLetters = async () => {
+    try {
+      setRequestError('')
+      await refreshFamily()
+      navigate('/family')
+    } catch (requestFailure) {
+      const message =
+        requestFailure.message ||
+        '가족 정보를 새로 불러오지 못했습니다.'
+
+      setRequestError(message)
+      toast.show(message)
+    }
+  }
+
   return (
     <div className="container page">
       <PageHead title="가족 연결" sub="함께 돌보는 가족을 초대해요 · 서로 이음 회원이면 코드로 이어져요."
-        right={!familyLinked ? <Link to="/family/join" className="btn btn-ghost btn-sm">초대 코드 입력 ›</Link> : null} />
+        right={!hasCareGroup ? <Link to="/family/join" className="btn btn-ghost btn-sm">초대 코드 입력 ›</Link> : null} />
       <RequireLogin axis="가족편지">
         <div className="grid" style={{
-          gridTemplateColumns: isOwner ? '1fr 1fr' : 'minmax(0, 720px)',
-          justifyContent: isOwner ? 'stretch' : 'center',
+          gridTemplateColumns:
+            hasCareGroup && isOwner
+              ? '1fr 1fr'
+              : 'minmax(0, 720px)',
+          justifyContent:
+            hasCareGroup && isOwner
+              ? 'stretch'
+              : 'center',
           gap: 'var(--sp-5)',
           alignItems: 'start',
         }}>
 
           {/* 내 초대 코드 */}
-          {isOwner && (
+          {canManageInvite && (
           <div className="card card-pad">
-            <h3 style={{ marginBottom: 4 }}>내 초대 코드</h3>
-            <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>가족에게 전달하면 상대가 입력해 연결돼요.</p>
+            <h3 style={{ marginBottom: 4 }}>
+              {hasCareGroup
+                ? '내 초대 코드'
+                : '가족 초대 시작하기'}
+            </h3>
+            <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>
+              {hasCareGroup
+                ? '가족에게 전달하면 상대가 입력해 연결돼요.'
+                : '초대 코드를 만들면 내 가족방이 함께 생성돼요.'}
+            </p>
 
             <div className="center" style={{
               background: expired ? '#f6f7f9' : 'var(--teal-50)',
@@ -121,7 +231,7 @@ export default function FamilyConnect() {
 
             <div className="row" style={{ gap: 10 }}>
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={copy} disabled={!inviteCode || expired || loading}>코드 복사</button>
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={regen} disabled={loading}> {inviteCode ? '새 코드 만들기' : '초대 코드 만들기'}</button>
+              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={regen} disabled={loading}> {loading ? '생성 중...' : inviteCode ? '새 코드 만들기' : '초대 코드 만들기'}</button>
             </div>
             {(requestError || error) && (
               <div className="callout-warn" style={{ marginTop: 12 }}>
@@ -133,6 +243,7 @@ export default function FamilyConnect() {
           )}
 
           {/* 연결된 가족 */}
+          {hasCareGroup && (
           <div className="card card-pad">
             <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
               <h3>연결된 가족</h3>
@@ -140,10 +251,10 @@ export default function FamilyConnect() {
             </div>
             <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>함께 돌봄일지를 남기는 가족이에요.</p>
 
-            {!familyLinked ? (
+            {safeMembers.length === 0 ? (
               <div className="center" style={{ padding: 'var(--sp-6) var(--sp-3)' }}>
                 <div style={{ fontSize: 40 }}>👪</div>
-                <p className="muted" style={{ marginTop: 10 }}>아직 연결된 가족이 없어요.<br />코드를 공유해 초대하세요.</p>
+                <p className="muted" style={{ marginTop: 10 }}>구성원 정보를 불러오지 못했어요.</p>
               </div>
             ) : (
               <>
@@ -151,6 +262,8 @@ export default function FamilyConnect() {
                   {safeMembers.map((member) => {
                     const mine =
                       Number(member.user_id) === Number(userId)
+                    const memberId = String(member.user_id)
+                    const isEditing = editingMemberId === memberId
 
                     return (
                       <div
@@ -161,37 +274,86 @@ export default function FamilyConnect() {
                           borderBottom: '1px solid var(--line)',
                         }}
                       >
-                        <span className="row" style={{ gap: 10 }}>
+                        <span className="row" style={{ gap: 10, flex: 1 }}>
                           <span style={{ fontSize: 24 }}>
                             {mine ? '🧑' : '👪'}
                           </span>
 
-                          <span>
-                            <b>
-                              {mine
-                                ? '나'
-                                : `가족 ${member.user_id}`}
-                            </b>
+                          {isEditing ? (
+                            <input
+                              className="input"
+                              value={aliasDraft}
+                              onChange={(event) =>
+                                setAliasDraft(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  saveMemberName(member.user_id)
+                                }
+                                if (event.key === 'Escape') {
+                                  cancelEditingName()
+                                }
+                              }}
+                              maxLength={20}
+                              aria-label="가족 표시 이름"
+                              autoFocus
+                              style={{ maxWidth: 220 }}
+                            />
+                          ) : (
+                            <b>{getMemberName(member.user_id)}</b>
+                          )}
+                        </span>
 
-                            <span
-                              className="muted"
-                              style={{ fontSize: 13 }}
+                        <span className="row" style={{ gap: 6 }}>
+                          {isEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                onClick={() => saveMemberName(member.user_id)}
+                              >
+                                저장
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={cancelEditingName}
+                              >
+                                취소
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => startEditingName(member.user_id)}
                             >
-                              {' '}· {member.relationships || '가족'}
-                            </span>
-                          </span>
+                              이름 변경
+                            </button>
+                          )}
                         </span>
                       </div>
                     )
                   })}
                 </div>
                 <div className="row" style={{ gap: 10, marginTop: 16 }}>
-                  <Link to="/family" className="btn btn-primary" style={{ flex: 1 }}>가족편지로 가기</Link>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                    onClick={goToFamilyLetters}
+                    disabled={loading}
+                  >
+                    {loading
+                      ? '새로고침 중...'
+                      : '가족편지로 가기'}
+                  </button>
                   
                 </div>
               </>
             )}
           </div>
+          )}
         </div>
       </RequireLogin>
       {toast.node}
