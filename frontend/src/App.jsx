@@ -7,6 +7,7 @@ import AdminLayout from './components/layout/AdminLayout.jsx'
 import Home from './pages/Home.jsx'
 import About from './pages/About.jsx'
 import Alerts from './pages/Alerts.jsx'
+import Notifications from './pages/Notifications.jsx'
 import NoticeList from './pages/notice/NoticeList.jsx'
 import NoticeDetail from './pages/notice/NoticeDetail.jsx'
 import Inquiry from './pages/inquiry/Inquiry.jsx'
@@ -64,6 +65,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/notice" element={<NoticeList />} />
           <Route path="/notice/:id" element={<NoticeDetail />} />
           <Route path="/inquiry" element={<Inquiry />} />

@@ -37,7 +37,7 @@ from .facility_knowledge.vector_decision import decide_final_result
 from .support_facilities.nearby_recommendation import recommend_nearest_facility
 from .support_facilities.kakao_local import search_facility_on_kakao
 
-
+from app.notifications.service import create_family_letter_notifications
 
 from .schemas import (
     InviteCodeCreate,
@@ -332,15 +332,24 @@ async def create_family_letter(
     )
     try:
         db.add(letter)
+        await db.flush()
+
+        await create_family_letter_notifications(
+            db=db,
+            letter_id=letter.letter_id,
+            care_group_id=data.care_group_id,
+            author_user_id=data.user_id,
+        )
+        
         await db.commit()
         await db.refresh(letter)
         return letter
 
-    except SQLAlchemyError as error:
+    except Exception as error:
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail="가족편지 저장 중 오류가 발생했습니다.",
+            detail="가족편지 또는 알림 저장 중 오류가 발생했습니다.",
         ) from error
 
 
