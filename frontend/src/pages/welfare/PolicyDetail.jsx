@@ -43,6 +43,26 @@ const FITNESS_LABEL = {
   low: '참고',
 }
 
+function getPolicySourceButtonLabel(
+  sourceName,
+) {
+  const labels = {
+    중앙부처복지서비스:
+      '복지로에서 보기 ↗',
+
+    서울복지포털:
+      '서울복지포털에서 보기 ↗',
+
+    경기청년포털:
+      '경기청년포털에서 보기 ↗',
+  }
+
+  return (
+    labels[sourceName]
+    || '정책 제공 사이트에서 보기 ↗'
+  )
+}
+
 
 // =========================================================
 // 정책 상세 페이지
@@ -608,7 +628,7 @@ function PolicyDetailContent({
             value={
               policy.target_detail
             }
-            emptyText="등록된 지원 대상 정보가 없어요. 공식 사이트에서 확인해 주세요."
+            emptyText="등록된 지원 대상 정보가 없어요. 정책 제공 사이트에서 확인해 주세요."
           />
 
           <DetailBlock
@@ -639,7 +659,7 @@ function PolicyDetailContent({
             value={
               policy.support_content
             }
-            emptyText="등록된 지원 내용이 없어요. 공식 사이트에서 상세 내용을 확인해 주세요."
+            emptyText="등록된 지원 내용이 없어요. 정책 제공 사이트에서 확인해 주세요."
           />
         </div>
       </section>
@@ -671,6 +691,7 @@ function PolicyDetailContent({
           flexWrap: 'wrap',
         }}
       >
+
         {policy.detail_url && (
           <a
             href={
@@ -680,7 +701,11 @@ function PolicyDetailContent({
             rel="noreferrer"
             className="btn btn-primary"
           >
-            공식 사이트 보기 ↗
+            {
+              getPolicySourceButtonLabel(
+                policy.source_name,
+              )
+            }
           </a>
         )}
 
@@ -707,7 +732,7 @@ function PolicyDetailContent({
                 fontSize: 14,
               }}
             >
-              연결된 공식 사이트나 안내문이 없어요.
+              연결된 정책 제공 사이트나 안내문이 없어요.
             </div>
           )}
       </div>
