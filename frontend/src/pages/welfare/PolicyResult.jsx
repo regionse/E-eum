@@ -98,6 +98,27 @@ function formatCreatedAt(value) {
 }
 
 
+function getPolicySourceButtonLabel(
+  sourceName,
+) {
+  const labels = {
+    중앙부처복지서비스:
+      '복지로에서 보기 ↗',
+
+    서울복지포털:
+      '서울복지포털에서 보기 ↗',
+
+    경기청년포털:
+      '경기청년포털에서 보기 ↗',
+  }
+
+  return (
+    labels[sourceName]
+    || '정책 제공 사이트에서 보기 ↗'
+  )
+}
+
+
 // =========================================================
 // 정책 추천 결과 페이지
 // =========================================================
@@ -1118,7 +1139,11 @@ function PolicyCard({
               rel="noreferrer"
               className="btn btn-primary btn-sm"
             >
-              공식 사이트 ↗
+              {
+                getPolicySourceButtonLabel(
+                  policy.source_name,
+                )
+              }
             </a>
           )}
 
