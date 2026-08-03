@@ -14,10 +14,10 @@
   3. **응답 구조 변화를 감지한다.** 채점기가 모르는 새 키가 응답에 생기면 경고한다
      (필드가 옮겨간 걸 못 보고 오채점하는 사고를 막는다).
 
-실행
-    python etc/itda/golden_잇다골든셋.py              # 전체
-    python etc/itda/golden_잇다골든셋.py --tag 안전    # 특정 묶음만
-    python etc/itda/golden_잇다골든셋.py --repeat 3   # 각 케이스 3회(편차 측정)
+실행 (Backend/ 에서)
+    python -m app.itda.scripts.golden_check              # 전체
+    python -m app.itda.scripts.golden_check --tag 안전    # 특정 묶음만
+    python -m app.itda.scripts.golden_check --repeat 3   # 각 케이스 3회(편차 측정)
 """
 import sys
 import time

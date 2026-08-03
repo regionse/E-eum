@@ -206,6 +206,34 @@ async def match_courses(db, query_text, top_k=5, min_score=0.0):
 
 KW_FLOOR = 3.0   # 이 점수 미만은 ngram 잡음으로 보고 버린다 (요리사→'리사'→관리사 2.11)
 
+
+#  ★ 조사 제거 (2026-08-03) — ngram 이 '명사 끝 + 조사'를 한 낱말로 오인하는 것을 막는다.
+#    증상: "간호조무사가 되고 싶어" → 「사가공」(섬유제조) 9.12 점으로 1위.
+#          '간호조무사가' 의 「사가」(명사끝 사 + 조사 가)가 「사가공」과 겹친 것뿐이다.
+#          "요리사가"·"작가가" 도 같은 방식으로 각각 사가공·감정평가가격정보제공을 불렀다.
+#    왜 점수 문턱으로 못 막나 — 실측상 **잡음이 정상보다 높다**:
+#          사가공(잡음) 9.12  >  전기기기설계 8.08 > 헤어미용 5.85 > 용접공통직무 4.48
+#          제빵(정상)은 9.12 로 잡음과 동점이다. 어떤 문턱을 잡아도 정상을 먼저 죽인다.
+#    그래서 점수가 아니라 **질의 쪽**을 고친다. 조사를 떼면 문제의 2글자 조각이 아예 사라진다.
+#    어간 2글자 보장 — '요가'·'작가'·'결과' 처럼 조사처럼 끝나는 짧은 낱말을 지킨다.
+#    '와/과/도/만/로' 는 뺐다: 학과·정형외과·상수도처럼 명사 일부인 경우가 너무 많다.
+_JOSA = ('으로써', '으로서', '에서는', '에게서', '이라도',
+         '으로', '에서', '에게', '부터', '까지', '이나', '라도', '한테', '보다', '처럼',
+         '가', '이', '은', '는', '을', '를')
+
+
+def _strip_josa(q):
+    """키워드 검색용으로만 조사를 뗀다. 벡터 검색은 원문을 그대로 쓴다(뜻은 조사째로 봐야 한다)."""
+    out = []
+    for t in (q or '').split():
+        for j in _JOSA:                                  # 긴 조사부터
+            if t.endswith(j) and len(t) - len(j) >= 2:
+                t = t[:-len(j)]
+                break
+        out.append(t)
+    return ' '.join(out)
+
+
 async def _keyword_certs(db, query_text, over_fetch):
     """FULLTEXT 키워드 검색 → [(cert_id, kw_score)]. 점수 높은 순.
 
@@ -217,7 +245,7 @@ async def _keyword_certs(db, query_text, over_fetch):
       KW_FLOOR 미만은 버려 이 잡음을 막는다.
     NATURAL LANGUAGE MODE 는 결과에 '글자가 실제로 겹친' 것만 올린다 → 없는 자격증엔 0건.
     """
-    q = re.sub(r'\s+', ' ', (query_text or '')).strip()
+    q = _strip_josa(re.sub(r'\s+', ' ', (query_text or '')).strip())
     if not q:
         return []
     # 종목명 전용 색인(ft_cert_name)을 쓴다. 두 컬럼 합친 ft_cert 로는 jm_name 만 못 짚는다.
@@ -311,7 +339,7 @@ _JOB_ALIAS = {
 async def _keyword_jobs(db, query_text, over_fetch):
     """FULLTEXT 키워드 검색 → [(job_code, kw_score)]. job_name 전용 색인 ft_job_name.
     벡터가 얇어 놓치는 '정확한 이름'(게임·용접 등)을 키워드가 끌어올린다."""
-    q = re.sub(r'\s+', ' ', (query_text or '')).strip()
+    q = _strip_josa(re.sub(r'\s+', ' ', (query_text or '')).strip())
     if not q:
         return []
     for k, v in _JOB_ALIAS.items():            # 구어 → NCS 어휘 보강

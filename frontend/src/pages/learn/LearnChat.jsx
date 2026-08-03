@@ -452,7 +452,15 @@ function GoalCard({ goal, alternatives, onSave }) {
                     style={{ textAlign: 'left', cursor: 'pointer', padding: '13px 16px', display: 'block', width: '100%' }}>
                     <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
                       <div style={{ fontSize: 15, fontWeight: 600 }}>{c.title}</div>
-                      <span className="badge badge-gray" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>관련 {Math.round((c.score || 0) * 100)}%</span>
+                      {/*  ★ 2026-08-03 — 「관련 64%」를 K-MOOC 분류로 바꿨다.
+                          그 숫자는 코사인 유사도 생값이었는데, 같은 언어로 쓰인 글끼리는
+                          내용이 무관해도 0.5~0.6 이 깔린다. 즉 64% 는 "64% 관련"이 아니라
+                          "한국어 문서 기본값보다 조금 위"라는 뜻이라 근거 없는 확신을 팔았다.
+                          (실측: 제빵 ↔ 실용아트 메이크업 0.640 vs 요양보호 ↔ 요양보호강의 0.702)
+                          분류는 DB 에 실제로 있는 값이다.  */}
+                      {c.classfy && (
+                        <span className="badge badge-gray" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{c.classfy}</span>
+                      )}
                     </div>
                     <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>{c.professor || 'K-MOOC'} · 무료 강의 수강 신청 →</div>
                   </button>
