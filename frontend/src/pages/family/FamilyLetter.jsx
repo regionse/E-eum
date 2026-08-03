@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageHead, useToast } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
@@ -25,10 +25,17 @@ function EmptyState() {
 export default function FamilyLetter() {
   const [saving, setSaving] = useState(false)
   const { familyLinked } = useAuth()
-  const { records, addRecord } = useFamily()
+  const { records, addRecord, refreshFamily } = useFamily()
   const toast = useToast()
   const [body, setBody] = useState('')
   const [error, setError] = useState('')
+
+  // 다른 가족이 작성한 최신 편지를 화면에 들어올 때 다시 불러온다.
+  useEffect(() => {
+    refreshFamily().catch(() => {
+      // 조회 오류는 FamilyProvider의 error 상태에서 관리한다.
+    })
+  }, [refreshFamily])
 
   const canSubmit = body.trim().length > 0
 
