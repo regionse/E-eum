@@ -9,7 +9,6 @@ const MENU = [
   { to: '/admin/inquiries', label: '문의관리' },
   { to: '/admin/welfare', label: '덜다 · 정책 임베딩' },
   { to: '/admin/learn', label: '잇다 · 임베딩 관리' },
-  { to: '/admin/share', label: '나누다 · 임베딩 관리' },
   { to: '/admin/accounts', label: '관리자 계정' },
 ]
 

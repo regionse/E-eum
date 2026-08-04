@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../store/auth.jsx'
+import HeroArt from '../components/HeroArt.jsx'
 
 // 덜다 · 잇다 · 나누다 (전체 기능 소개)
 const AXES = [
@@ -29,7 +30,7 @@ export default function Home() {
               <Link to="/about" className="btn btn-ghost btn-lg">이음 살펴보기</Link>
             </div>
           </div>
-          <div className="hero-visual">🤝</div>
+          <div className="hero-visual"><HeroArt /></div>
         </div>
       </section>
 

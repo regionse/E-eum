@@ -207,7 +207,9 @@ ul { margin: 0; padding: 0; list-style: none; }
 .hero h1 { font-size: 40px; letter-spacing: -.03em; margin: 10px 0 14px; }
 .hero p.lead { font-size: 18px; color: var(--ink-soft); }
 .hero-cta { display: flex; gap: 12px; margin-top: var(--sp-5); }
-.hero-visual { aspect-ratio: 4/3; border-radius: var(--radius-lg); background: radial-gradient(120% 120% at 30% 20%, #fff, var(--teal-100)); display: flex; align-items: center; justify-content: center; font-size: 120px; box-shadow: var(--shadow); }
+/* 히어로 그림 — 안에 들어가는 것이 이모지에서 SVG 일러스트로 바뀜(2026-08-04).
+   font-size 는 이모지 크기를 잡던 것이라 뺐고, 대신 그림이 모서리에 닿지 않게 여백을 준다. */
+.hero-visual { aspect-ratio: 4/3; border-radius: var(--radius-lg); background: radial-gradient(120% 120% at 30% 20%, #fff, var(--teal-100)); display: flex; align-items: center; justify-content: center; padding: var(--sp-4); overflow: hidden; box-shadow: var(--shadow); }
 .section-title { font-size: 26px; letter-spacing: -.02em; margin-bottom: 6px; }
 .section-sub { color: var(--muted); margin-bottom: var(--sp-5); }
 
