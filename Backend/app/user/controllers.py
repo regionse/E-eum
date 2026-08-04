@@ -6,6 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import User, UserStatus
+from .schemas import SignupRequest, FindIdRequest, ResetPasswordRequest, UpdateMeRequest
+from .security import (
+    ensure_active_user,
+    hash_password,
+    verify_password,
+)
+from .models import User, UserStatus
 from .schemas import (
     FindIdRequest,
     ResetPasswordRequest,
@@ -77,6 +84,8 @@ async def authenticate(db: AsyncSession, username: str, password: str) -> User:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="아이디 또는 비밀번호가 올바르지 않습니다.",
         )
+
+    ensure_active_user(user)
 
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(
@@ -165,3 +174,185 @@ async def withdraw_me(
     user.withdrawal_reason = data.reason.strip()
 
     await db.commit()
+
+# =========================================================
+# 관리자 회원 관리
+# =========================================================
+
+
+async def get_admin_user_list(
+    db: AsyncSession,
+) -> list[User]:
+    """
+    일반 회원 목록을 최근 가입 순으로 조회한다.
+
+    관리자 계정은 별도 관리 대상이므로
+    회원 관리 목록에서 제외한다.
+    """
+
+    stmt = (
+        select(User)
+        .where(
+            User.is_admin.is_(False)
+        )
+        .order_by(
+            User.created_at.desc(),
+            User.user_id.desc(),
+        )
+    )
+
+    result = await db.execute(stmt)
+
+    return list(
+        result.scalars().all()
+    )
+
+
+async def update_admin_user_status(
+    *,
+    db: AsyncSession,
+    user_id: int,
+    new_status: UserStatus,
+) -> User:
+    """
+    관리자가 일반 회원의 상태를 변경한다.
+
+    탈퇴 상태는 회원이 직접 처리하는 상태이므로
+    관리자 화면에서는 설정할 수 없다.
+    """
+
+    stmt = (
+        select(User)
+        .where(
+            User.user_id == user_id,
+            User.is_admin.is_(False),
+        )
+    )
+
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "상태를 변경할 일반 회원을 "
+                "찾을 수 없습니다."
+            ),
+        )
+
+    if user.status == UserStatus.WITHDRAWN:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
+            detail=(
+                "탈퇴한 회원의 상태는 "
+                "변경할 수 없습니다."
+            ),
+        )
+
+    user.status = new_status
+
+    await db.commit()
+    await db.refresh(user)
+
+    return user
+
+
+# =========================================================
+# 관리자 계정 관리
+# =========================================================
+
+
+async def get_admin_account_list(
+    db: AsyncSession,
+) -> list[User]:
+    """
+    관리자 계정 목록을 최근 가입 순으로 조회한다.
+    """
+
+    stmt = (
+        select(User)
+        .where(
+            User.is_admin.is_(True)
+        )
+        .order_by(
+            User.created_at.desc(),
+            User.user_id.desc(),
+        )
+    )
+
+    result = await db.execute(stmt)
+
+    return list(
+        result.scalars().all()
+    )
+
+
+async def update_admin_account_status(
+    *,
+    db: AsyncSession,
+    user_id: int,
+    current_admin_id: int,
+    new_status: UserStatus,
+) -> User:
+    """
+    관리자가 다른 관리자 계정의 상태를 변경한다.
+
+    현재 로그인한 관리자 자신의 상태는
+    실수로 변경할 수 없도록 차단한다.
+    """
+
+    if user_id == current_admin_id:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
+            detail=(
+                "현재 로그인한 자신의 관리자 "
+                "상태는 변경할 수 없습니다."
+            ),
+        )
+
+    stmt = (
+        select(User)
+        .where(
+            User.user_id == user_id,
+            User.is_admin.is_(True),
+        )
+    )
+
+    result = await db.execute(stmt)
+    account = result.scalar_one_or_none()
+
+    if account is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "상태를 변경할 관리자 계정을 "
+                "찾을 수 없습니다."
+            ),
+        )
+
+    if account.status == UserStatus.WITHDRAWN:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
+            detail=(
+                "탈퇴한 관리자 계정의 상태는 "
+                "변경할 수 없습니다."
+            ),
+        )
+
+    account.status = new_status
+
+    await db.commit()
+    await db.refresh(account)
+
+    return account

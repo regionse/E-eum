@@ -46,7 +46,6 @@ import AdminInquiries from './pages/admin/AdminInquiries.jsx'
 import AdminInquiryDetail from './pages/admin/AdminInquiryDetail.jsx'
 import AdminWelfare from './pages/admin/AdminWelfare.jsx'
 import AdminLearn from './pages/admin/AdminLearn.jsx'
-import AdminShare from './pages/admin/AdminShare.jsx'
 import AdminAccounts from './pages/admin/AdminAccounts.jsx'
 
 function ScrollTop() {
@@ -108,7 +107,6 @@ export default function App() {
           <Route path="/admin/inquiries/:id" element={<AdminInquiryDetail />} />
           <Route path="/admin/welfare" element={<AdminWelfare />} />
           <Route path="/admin/learn" element={<AdminLearn />} />
-          <Route path="/admin/share" element={<AdminShare />} />
           <Route path="/admin/accounts" element={<AdminAccounts />} />
         </Route>
 

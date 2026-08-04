@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from .models import User
+from .models import User, UserStatus
 
 
 # =========================================================
@@ -35,6 +35,39 @@ def hash_password(plain: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def ensure_active_user(user: User) -> None:
+    """
+    정지·휴면·탈퇴 상태의 사용자가
+    로그인하거나 기존 토큰으로 API를
+    계속 사용하는 것을 차단한다.
+    """
+
+    status_messages = {
+        UserStatus.SUSPENDED: (
+            "정지된 계정입니다. "
+            "관리자에게 문의해 주세요."
+        ),
+        UserStatus.DORMANT: (
+            "휴면 상태의 계정입니다. "
+            "계정 활성화가 필요합니다."
+        ),
+        UserStatus.WITHDRAWN: (
+            "탈퇴한 계정입니다."
+        ),
+    }
+
+    if user.status != UserStatus.ACTIVE:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_403_FORBIDDEN
+            ),
+            detail=status_messages.get(
+                user.status,
+                "현재 이용할 수 없는 계정입니다.",
+            ),
+        )
 
 
 # =========================================================
@@ -91,6 +124,8 @@ async def get_current_user(
 
     if user is None:
         raise credentials_error
+
+    ensure_active_user(user)
 
     return user
 

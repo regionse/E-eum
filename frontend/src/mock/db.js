@@ -210,22 +210,7 @@ export const policyEmbed = {
   total: 3152, api: 3140, seoul: 12, added: 5, changed: 7, embedded: 3147,
 }
 
-// ---------- 관리자 · 잇다 임베딩 (ADM-ITD-EMB · K-MOOC → FAISS) ----------
-export const learnIndex = {
-  lastRebuild: '2026-07-11 04:00', total: 11600, embedded: 11600, pending: 0, status: '최신',
-  model: 'gemini-embedding-001', dim: '1536차원(MRL)', vector: 'FAISS',
-  categories: [
-    { name: 'IT·디지털', courses: 4060, embedded: 4060, status: '완료' },
-    { name: '보건·의료', courses: 1740, embedded: 1740, status: '완료' },
-    { name: '취업·자격', courses: 1624, embedded: 1624, status: '완료' },
-    { name: '상담·심리', courses: 1160, embedded: 1160, status: '완료' },
-    { name: '돌봄·복지', courses: 812, embedded: 812, status: '완료' },
-    { name: '인문·교양 외', courses: 2204, embedded: 2204, status: '완료' },
-  ],
-}
-
-// ---------- 관리자 · 나누다 임베딩 (ADSHA-001 · 지원서비스/기관 데이터) ----------
-export const shareEmbed = {
-  lastApiSync: '2026-07-13 03:00', lastEmbed: '2026-07-13 03:00',
-  api: 3140, added: 5, changed: 7, embedded: 3147,
-}
+//  (2026-08-04 삭제) learnIndex — 잇다 임베딩 관리가 2026-08-02 에 실제 API 로 바뀌면서
+//    아무도 import 하지 않게 됐다. 내용도 사실과 달랐다(FAISS·1536차원·K-MOOC 전용).
+//    실제는 Pinecone 3072차원 · 네임스페이스 cert/course/job 3개다.
+//  (2026-08-04 삭제) shareEmbed — 나누다 임베딩 관리 화면과 함께 제거.

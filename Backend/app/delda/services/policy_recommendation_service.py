@@ -72,7 +72,7 @@ MAX_POLICY_TEXT_LENGTH = 800
 MAX_CONDITION_TEXT_LENGTH = 1600
 
 # 시스템 프롬프트와 동일한 추가 질문 상한
-MAX_FOLLOW_UP_QUESTION_COUNT = 2
+MAX_FOLLOW_UP_QUESTION_COUNT = 3
 
 
 # =========================================================

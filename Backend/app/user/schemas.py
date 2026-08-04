@@ -111,3 +111,53 @@ class UserResponse(BaseModel):
     status: UserStatus
     is_admin: bool
     created_at: datetime
+
+
+# =========================================================
+# 관리자 회원 관리
+# =========================================================
+
+
+class AdminUserResponse(BaseModel):
+    """
+    관리자 회원 관리 화면에 반환할 일반 회원 정보.
+
+    비밀번호와 전화번호는 관리 화면에서 사용하지
+    않으므로 응답에서 제외한다.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    user_id: int
+    username: str
+    birthdate: date | None
+    region_sido: str | None
+    created_at: datetime
+    last_login_at: datetime | None
+    status: UserStatus
+
+
+class AdminUserStatusUpdateRequest(BaseModel):
+    """
+    관리자가 변경할 수 있는 회원 상태.
+
+    탈퇴는 회원 탈퇴 절차에서만 설정한다.
+    """
+
+    status: UserStatus
+
+    @field_validator("status")
+    @classmethod
+    def validate_admin_status(
+        cls,
+        value: UserStatus,
+    ) -> UserStatus:
+        if value == UserStatus.WITHDRAWN:
+            raise ValueError(
+                "관리자 화면에서는 회원을 "
+                "탈퇴 상태로 변경할 수 없습니다."
+            )
+
+        return value
