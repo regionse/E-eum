@@ -3,11 +3,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.itda import controllers, session, gemini_util
+from app.itda import controllers, session, gemini_util, sync_runner
 from app.itda.db import get_db
 from app.itda.itda_core import ENV
 from app.itda.schemas import (MessageRequest, MessageResponse, ResetRequest,
-                              SaveMapRequest, ResumeMapRequest, ItdaSyncStatus)
+                              SaveMapRequest, ResumeMapRequest, ItdaSyncStatus,
+                              ItdaSyncRun)
 from app.user.security import get_current_user, get_current_admin
 from app.user.models import User
 
@@ -43,6 +44,37 @@ async def get_itda_sync_status(
     화면이 계산하지 않는다 — 그래야 "언제 무엇이 바뀌었나"가 남는다.
     """
     return await controllers.get_sync_status(db)
+
+
+@admin_router.post(
+    "",
+    response_model=ItdaSyncRun,
+    status_code=202,
+    summary="진로 데이터 최신화 시작 (백그라운드)",
+)
+async def start_itda_sync(
+    _admin: User = Depends(get_current_admin),
+):
+    """적재 → 자격증 임베딩 → 강좌 임베딩을 순서대로 백그라운드에서 돌린다.
+
+    바로 202 로 돌려주고, 진행 상황은 아래 /run 을 폴링해서 본다.
+    이미 돌고 있으면 새로 시작하지 않고 그 실행의 상태를 그대로 돌려준다.
+    (BackgroundTasks 대신 asyncio 태스크를 쓴다 — 응답을 기다리지 않고 바로 시작해야
+     화면이 곧장 진행 상황을 물어볼 수 있다.)
+    """
+    return await sync_runner.start()
+
+
+@admin_router.get(
+    "/run",
+    response_model=ItdaSyncRun,
+    summary="최신화 진행 현황 (화면이 폴링한다)",
+)
+async def get_itda_sync_run(
+    _admin: User = Depends(get_current_admin),
+):
+    """진행 중인(또는 마지막) 최신화의 단계별 상태. 한 번도 안 돌렸으면 status='idle'."""
+    return sync_runner.snapshot() or ItdaSyncRun()
 
 
 @router.post(

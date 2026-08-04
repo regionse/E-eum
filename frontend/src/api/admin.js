@@ -112,6 +112,31 @@ export function getItdaSyncStatus() {
 }
 
 
+/**
+ * 진로 데이터 최신화를 백그라운드로 시작한다.
+ * 202 로 바로 돌아오고, 진행 상황은 getItdaSyncRun() 을 폴링해서 본다.
+ * 이미 돌고 있으면 새로 시작하지 않고 그 실행의 상태를 돌려준다.
+ */
+export function startItdaSync() {
+  return request(
+    '/admin/itda-sync',
+    {
+      method: 'POST',
+    },
+  )
+}
+
+
+/**
+ * 최신화 진행 현황 (단계별 상태·퍼센트). 한 번도 안 돌렸으면 status='idle'.
+ */
+export function getItdaSyncRun() {
+  return request(
+    '/admin/itda-sync/run',
+  )
+}
+
+
 // =========================================================
 // 관리자 · 대시보드
 // =========================================================
