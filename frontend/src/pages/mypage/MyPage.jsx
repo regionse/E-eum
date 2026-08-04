@@ -3,11 +3,15 @@ import { NavLink, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../store/auth.jsx'
 import { useToast, PageHead, Modal } from '../../components/ui/index.jsx'
 import { updateMe } from '../../api/auth.js'
+<<<<<<< HEAD
 import {
   getUserConsents,
   updateUserConsents,
   withdrawMe,
 } from '../../api/mypage.js'
+=======
+import { getToken } from '../../api/client.js'
+>>>>>>> 817f8146fc56ec02a6b364f94e2ff1d07c61ac38
 import { formatPhone } from '../../utils/form.js'
 
 const TABS = [
@@ -399,7 +403,11 @@ function Withdraw() {
 
 export default function MyPage() {
   const { user } = useAuth()
-  if (!user) return <Navigate to="/login" replace />
+  //  ★ 2026-08-04 — 토큰도 함께 본다(관리자 화면과 같은 수정).
+  //    세션이 네 군데에 나뉘어 있는데(eum_token · eum_user · eum_admin · eum_family)
+  //    401 이 한 번 나면 client.js 가 **토큰만** 비운다(24시간 만료마다 발생).
+  //    그러면 eum_user 가 남아 이 화면이 열리고, 안의 호출은 전부 인증 없이 나가 실패했다.
+  if (!user || !getToken()) return <Navigate to="/login" replace />
   return (
     <div className="container page">
       <PageHead title="마이페이지" sub={`${user.username || ''} 님, 안녕하세요.`} />

@@ -114,3 +114,28 @@ class ItdaSyncStatus(BaseModel):
 
     failed_recent: int = 0          # 최근 7일 안에 ok 가 아니었던 실행 수
     runs: list[SyncRun] = []        # 대상별 최근 실행 (최신순)
+
+
+# ── 최신화 실행 현황 (2026-08-04) ──────────────────────────────────
+#  위 ItdaSyncStatus 는 '지금 데이터가 어떤 상태인가'(결과)를 말하고,
+#  아래 둘은 '지금 최신화가 어디까지 돌고 있나'(진행)를 말한다. 출처가 다르다 —
+#  결과는 DB(itda_sync_log·content_hash), 진행은 sync_runner 의 메모리 상태다.
+class ItdaSyncStep(BaseModel):
+    """최신화 한 단계."""
+    key: str = ""
+    title: str = ""
+    desc: str = ""
+    status: str = "waiting"         # waiting | running | ok | failed
+    percent: int = 0                # 배치가 찍는 «300/613 (48%)» 에서 뽑은 값
+    log: str = ""                   # 그 단계의 마지막 출력 한 줄
+
+
+class ItdaSyncRun(BaseModel):
+    """최신화 실행 하나의 진행 상황. 한 번도 안 돌렸으면 status='idle'."""
+    run_id: str = ""
+    status: str = "idle"            # idle | running | done | failed
+    started_at: str = ""
+    finished_at: str | None = None
+    current: str = ""               # 지금 돌고 있는 단계의 key
+    message: str = ""
+    steps: list[ItdaSyncStep] = []
