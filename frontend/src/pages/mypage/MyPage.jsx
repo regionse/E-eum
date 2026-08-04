@@ -1,13 +1,17 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../store/auth.jsx'
 import { useToast, PageHead, Modal } from '../../components/ui/index.jsx'
 import { updateMe } from '../../api/auth.js'
+import {
+  getUserConsents,
+  updateUserConsents,
+  withdrawMe,
+} from '../../api/mypage.js'
 import { formatPhone } from '../../utils/form.js'
 
 const TABS = [
   { to: '/mypage', end: true, label: '내 정보' },
-  { to: '/mypage/alerts', label: '알림 설정' },
   { to: '/mypage/consent', label: '동의 관리' },
   { to: '/mypage/withdraw', label: '회원 탈퇴' },
 ]
@@ -80,55 +84,212 @@ function Info() {
   )
 }
 
-function Alerts() {
-  const [on, setOn] = useState({ med: true, welfare: true })
-  const toast = useToast()
-  const items = [['med', '복약·돌봄 알림'], ['welfare', '새 복지·강좌 알림']]
-  return (
-    <div className="card card-pad">
-      <h3 style={{ marginBottom: 12 }}>알림 설정</h3>
-      {items.map(([k, label]) => (
-        <label key={k} className="list-row" style={{ cursor: 'pointer' }}>
-          <span style={{ fontWeight: 600 }}>{label}</span>
-          <input type="checkbox" checked={on[k]} onChange={() => setOn({ ...on, [k]: !on[k] })} />
-        </label>
-      ))}
-      <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => toast.show('설정이 저장되었어요')}>설정 완료</button>
-      {toast.node}
-    </div>
-  )
-}
-
 // 동의 관리 (MYP-301) — 필수 2 + 선택 2(위치·알림). 위치는 나누다 SHA-100 게이트와 연동.
 
-function Consent() {
-  const [c, setC] = useState(() => {
-    let loc = false
-    try { loc = localStorage.getItem(LOC_KEY) === '1' } catch { /* noop */ }
-    return { tos: true, privacy: true, location: loc, alarm: true }
+function requestBrowserLocationPermission() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(
+        new Error(
+          '이 브라우저에서는 위치정보를 사용할 수 없습니다.',
+        ),
+      )
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      () => resolve(),
+      (positionError) => {
+        if (positionError.code === positionError.PERMISSION_DENIED) {
+          reject(
+            new Error(
+              '브라우저에서 위치 권한을 허용해주세요.',
+            ),
+          )
+          return
+        }
+
+        reject(
+          new Error(
+            '현재 위치를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.',
+          ),
+        )
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 300000,
+      },
+    )
   })
+}
+
+function Consent() {
+  const { userId } = useAuth()
+  const [c, setC] = useState({
+    tos: false,
+    privacy: false,
+    location: false,
+    alarm: false,
+  })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [requestingLocation, setRequestingLocation] = useState(false)
+  const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!userId) {
+      setError('로그인 사용자 정보를 확인할 수 없습니다.')
+      setLoading(false)
+      return
+    }
+
+    let active = true
+
+    const loadConsents = async () => {
+      try {
+        setLoading(true)
+        setError('')
+        const result = await getUserConsents(userId)
+
+        if (active) {
+          setC({
+            tos: result.is_terms_agreed,
+            privacy: result.is_privacy_agreed,
+            location: result.is_location_agreed,
+            alarm: result.is_alarm_agreed,
+          })
+        }
+      } catch (requestError) {
+        if (active) {
+          setError(
+            requestError.message ||
+              '동의 정보를 불러오지 못했습니다.',
+          )
+        }
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    loadConsents()
+
+    return () => {
+      active = false
+    }
+  }, [userId])
+
   const items = [
     ['tos', '이용약관 동의', true],
     ['privacy', '개인정보 수집 및 이용 동의', true],
     ['location', '위치정보 서비스 이용약관', false],
     ['alarm', '알림 설정 동의', false],
   ]
-  const save = () => {
-    try { localStorage.setItem(LOC_KEY, c.location ? '1' : '0') } catch { /* noop */ }
-    setSaved(true)
+
+  const changeConsent = async (key) => {
+    if (key !== 'location') {
+      setC((previous) => ({
+        ...previous,
+        [key]: !previous[key],
+      }))
+      return
+    }
+
+    // 체크 해제는 서비스 동의만 변경한다. 브라우저 권한은 보안상
+    // 웹 코드에서 직접 해제할 수 없다.
+    if (c.location) {
+      setC((previous) => ({
+        ...previous,
+        location: false,
+      }))
+      return
+    }
+
+    try {
+      setRequestingLocation(true)
+      setError('')
+      await requestBrowserLocationPermission()
+      setC((previous) => ({
+        ...previous,
+        location: true,
+      }))
+    } catch (requestError) {
+      setC((previous) => ({
+        ...previous,
+        location: false,
+      }))
+      setError(
+        requestError.message ||
+          '위치 권한을 요청하지 못했습니다.',
+      )
+    } finally {
+      setRequestingLocation(false)
+    }
+  }
+
+  const save = async () => {
+    if (!userId || saving) return
+
+    try {
+      setSaving(true)
+      setError('')
+      const result = await updateUserConsents(userId, {
+        is_location_agreed: c.location,
+        is_alarm_agreed: c.alarm,
+      })
+
+      setC({
+        tos: result.is_terms_agreed,
+        privacy: result.is_privacy_agreed,
+        location: result.is_location_agreed,
+        alarm: result.is_alarm_agreed,
+      })
+      setSaved(true)
+    } catch (requestError) {
+      setError(
+        requestError.message ||
+          '동의 설정을 저장하지 못했습니다.',
+      )
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <div className="card card-pad">
       <h3 style={{ marginBottom: 12 }}>동의 관리</h3>
+      {loading && (
+        <p className="muted" style={{ marginBottom: 12 }}>
+          동의 정보를 불러오는 중이에요.
+        </p>
+      )}
+      {error && <p className="err">{error}</p>}
       {items.map(([k, label, req]) => (
         <label key={k} className="list-row" style={{ cursor: req ? 'default' : 'pointer' }}>
           <span>{label} <span className={req ? 'req' : 'muted'} style={{ fontSize: 13 }}>({req ? '필수' : '선택'})</span></span>
-          <input type="checkbox" checked={c[k]} disabled={req} onChange={() => setC({ ...c, [k]: !c[k] })} />
+          <input
+            type="checkbox"
+            checked={c[k]}
+            disabled={
+              req || loading || saving || requestingLocation
+            }
+            onChange={() => changeConsent(k)}
+          />
         </label>
       ))}
       <p className="callout-warn" style={{ marginTop: 16, fontSize: 14 }}>동의를 철회하시면 일부 기능이 제한될 수 있어요. <b>위치정보</b>를 끄면 나누다 기관 연결 시 다시 동의를 받아요.</p>
-      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>설정 완료</button>
+      <button
+        className="btn btn-primary"
+        style={{ marginTop: 14 }}
+        onClick={save}
+        disabled={loading || saving || requestingLocation}
+      >
+        {requestingLocation
+          ? '위치 권한 확인 중…'
+          : saving
+            ? '저장 중…'
+            : '설정 완료'}
+      </button>
       {saved && (
         <Modal title="설정 완료" onClose={() => setSaved(false)}
           actions={<button className="btn btn-primary btn-block" onClick={() => setSaved(false)}>확인</button>}>
@@ -153,10 +314,35 @@ function Withdraw() {
   const [reason, setReason] = useState('')
   const [etc, setEtc] = useState('')
   const [step, setStep] = useState('form') // 'form' → 'confirm' → 'done'
+  const [withdrawing, setWithdrawing] = useState(false)
+  const [error, setError] = useState('')
   const canNext = reason !== '' && (reason !== '기타' || etc.trim() !== '')
 
-  // mock 탈퇴: 세션·가족연결을 정리하고 홈으로. (실제 서비스에선 여기서 탈퇴 API를 호출)
   const finish = () => { logout(); unlinkFamily(); navigate('/') }
+
+  const confirmWithdraw = async () => {
+    if (!canNext || withdrawing) return
+
+    const finalReason =
+      reason === '기타'
+        ? etc.trim()
+        : reason
+
+    try {
+      setWithdrawing(true)
+      setError('')
+      await withdrawMe(finalReason)
+      setStep('done')
+    } catch (requestError) {
+      setError(
+        requestError.message ||
+          '회원 탈퇴 처리에 실패했습니다.',
+      )
+      setStep('form')
+    } finally {
+      setWithdrawing(false)
+    }
+  }
 
   return (
     <div className="card card-pad">
@@ -181,14 +367,22 @@ function Withdraw() {
         <button className="btn btn-primary" disabled={!canNext} onClick={() => setStep('confirm')}>다음</button>
       </div>
 
+      {error && <p className="err">{error}</p>}
+
       {step === 'confirm' && (
         <Modal title="정말 탈퇴하시겠습니까?" onClose={() => setStep('form')}
           actions={<>
             <button className="btn btn-plain" onClick={() => setStep('form')}>취소</button>
-            <button className="btn btn-primary" onClick={() => setStep('done')}>확인</button>
+            <button
+              className="btn btn-primary"
+              onClick={confirmWithdraw}
+              disabled={withdrawing}
+            >
+              {withdrawing ? '처리 중…' : '확인'}
+            </button>
           </>}>
           <p className="muted" style={{ lineHeight: 1.7 }}>
-            탈퇴 시 개인정보가 모두 파기되며, 이후 정책·강좌 지원 안내를 도와드리기 어려워요. 계속 진행하시겠어요?
+            탈퇴하면 해당 계정으로 다시 로그인할 수 없습니다. 계속 진행하시겠어요?
           </p>
         </Modal>
       )}
@@ -205,7 +399,11 @@ function Withdraw() {
 
 export default function MyPage() {
   const { user } = useAuth()
-  if (!user) return <Navigate to="/login" replace />
+  //  ★ 2026-08-04 — 토큰도 함께 본다(관리자 화면과 같은 수정).
+  //    세션이 네 군데에 나뉘어 있는데(eum_token · eum_user · eum_admin · eum_family)
+  //    401 이 한 번 나면 client.js 가 **토큰만** 비운다(24시간 만료마다 발생).
+  //    그러면 eum_user 가 남아 이 화면이 열리고, 안의 호출은 전부 인증 없이 나가 실패했다.
+  if (!user || !getToken()) return <Navigate to="/login" replace />
   return (
     <div className="container page">
       <PageHead title="마이페이지" sub={`${user.username || ''} 님, 안녕하세요.`} />
@@ -216,7 +414,7 @@ export default function MyPage() {
         <section style={{ minWidth: 0 }}>
           <Routes>
             <Route index element={<Info />} />
-            <Route path="alerts" element={<Alerts />} />
+            <Route path="alerts" element={<Navigate to="/mypage" replace />} />
             <Route path="consent" element={<Consent />} />
             <Route path="withdraw" element={<Withdraw />} />
           </Routes>

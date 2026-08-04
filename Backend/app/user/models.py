@@ -78,6 +78,18 @@ class User(Base):
         comment="마지막 로그인 시간",
     )
 
+    withdrawn_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        comment="회원 탈퇴 일시",
+    )
+
+    withdrawal_reason: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="회원 탈퇴 사유",
+    )
+
     status: Mapped[UserStatus] = mapped_column(
         #  values_callable — SqlEnum 기본은 멤버'명'(ACTIVE)을 저장하는데 DB enum 은 '정상' 등 '값'이라,
         #  그대로 두면 INSERT 시 Data truncated 로 가입 자체가 실패한다(실측 2026-07-28). 값으로 저장 강제.

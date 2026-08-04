@@ -45,7 +45,7 @@ from app.user.router import router as auth_router
 from app.dashboard.router import router as dashboard_router
 
 from app.notifications.router import router as notification_router
-
+from app.mypage.router import router as mypage_router
 
 # =========================================================
 # CORS 허용 주소
@@ -151,6 +151,7 @@ app.include_router(auth_router)
 app.include_router(dashboard_router)
 
 app.include_router(notification_router)
+app.include_router(mypage_router)
 
 # =========================================================
 # 기본 경로

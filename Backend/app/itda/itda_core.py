@@ -709,16 +709,35 @@ class ItdaEngine:
                             if str(((c.get('profile') or {}).get(k) or {}).get('값')) == val), None)
                 profile[k] = (src.get('profile') or {}).get(k) if src else {'값': val, '근거': user_msg}
 
+        #  ★ query 도 다수결로 바꿈 (2026-08-03) — 예전엔 `max(queries, key=len)`(가장 긴 것)이었다.
+        #    실측으로 드러난 문제: LLM 이 query 를 **낼지 말지 자체가 흔들린다**
+        #    (같은 프롬프트 6회 중 5회는 빈 문자열, 1회만 query+alts 를 냈다).
+        #    '가장 긴 것'은 그 소수 표본을 **항상** 채택하므로, 표본을 늘릴수록 이상치를
+        #    만날 확률이 올라가 편차가 오히려 **커졌다** — 실측: 자동차 케이스 안정도
+        #    SC=1 70% → SC=3 70% → SC=5 **50%**. 「편차를 표본으로 잡는다」는 설계와 정반대.
+        #    action·슬롯은 다수결인데 query 만 최댓값이었던 것이 원인이다.
+        #  ★ 과반이 없으면 **비운다** — _search_query() 가 슬롯을 이어붙인 **결정론적** 질의로
+        #    대체하므로, 다수결이 실패하면 자동으로 안정 경로로 떨어진다.
+        #    (실측: 두 경로 모두 각각은 결정론적이고 결과가 정반대였다 —
+        #     슬롯질의 → 자동차전기·전자장치정비 카드 / LLM질의+alts → narrow)
         queries = [c.get('query') or '' for c in same]
-        #  표본들의 query·query_alts 를 모두 변형 후보로 모은다(RAG-Fusion 재료).
-        alts, main = [], max(queries, key=len) if queries else ''
+        q_votes = Counter(q.strip() for q in queries if q and q.strip())
+        main = ''
+        if q_votes:
+            top_q, hits = q_votes.most_common(1)[0]
+            if hits * 2 > len(cands):
+                main = top_q
+        #  alts 도 빈도순 — 여러 표본이 공통으로 낸 변형을 우선한다(RAG-Fusion 재료).
+        #  예전엔 dict.fromkeys(...)[:2] 로 '먼저 나온 2개'였고, 표본 순서에 좌우됐다.
+        alt_votes = Counter()
         for c in cands:
             for a in [c.get('query')] + list(c.get('query_alts') or []):
-                if a and a.strip() and a.strip() != main:
-                    alts.append(a.strip())
+                a = (a or '').strip()
+                if a and a != main:
+                    alt_votes[a] += 1
         return {'action': action, 'reply': same[0].get('reply', ''),
                 'profile': profile, 'query': main,
-                'query_alts': list(dict.fromkeys(alts))[:2]}
+                'query_alts': [a for a, _ in alt_votes.most_common(2)]}
 
     # ── 검색 상수 ────────────────────────────────────────────────────
     #  (2026-07-28 cert-먼저 잔재 청소) 예전 자격증 벡터검색 상수
@@ -1386,7 +1405,24 @@ class ItdaEngine:
             #  검색어 앵커(2026-07-29) — 벡터가 '돌봄' 등 종류로 뭉쳐 드리프트하는 걸 사용자 원문 키워드로 고정.
             #  DIRECT(콕 집음)는 LLM 재작성이 '아이/청소년' 같은 엉뚱한 키워드를 섞어 오염시키므로 원문만 쓴다.
             #  SEARCH(누적·좁힘)는 슬롯 기반 query 가 필요하니 query + 원문.
-            q = user_msg if act == 'DIRECT' else f"{t.get('query', '')} {user_msg}".strip()
+            #  ★ 주 질의를 '사용자 원문'으로 고정 (2026-08-03) — 예전엔 SEARCH 에서
+            #    `LLM query + 원문` 을 이어붙였다. 그런데 **LLM 이 query 를 낼지 말지가 흔들린다**
+            #    (같은 프롬프트 6회 중 5회는 빈 문자열, 1회만 냈다). 그 유무가 주 질의를 통째로
+            #    바꿔 검색 결과가 뒤집혔다 — 실측:
+            #        query 없음 → 슬롯/원문 질의 → [자동차전기·전자장치정비] 카드
+            #        query 있음 → LLM 질의+alts  → narrow (좁히기)
+            #    두 경로 **각각은 결정론적**인데(고정 질의로 6회 반복 시 동일), 어느 경로로 갈지가
+            #    무작위였다. 그래서 같은 사용자가 같은 말을 해도 10번 중 1~3번 다른 화면을 봤다.
+            #
+            #    ⇒ 확률적인 것(LLM 출력)을 **주 질의에서 빼고 보조 신호(alts)로 강등**한다.
+            #      RRF 는 순위를 합치므로, 주 질의가 고정이면 보조가 흔들려도 결과가 크게 안 흔들린다.
+            #      (연구 결론과도 일치 — "원문을 전부 포함하고 LLM 출력은 순위를 보태는 데만 써야 최적")
+            #
+            #    ※ 2026-07-30 의 '결정론적 앵커' 기각과 다른 점: 그때는 앵커를 **추가**해
+            #      질의가 4개로 늘고 후보 풀이 희석됐다(슬롯질의 '사람 돕기 사람'이 너무 일반적).
+            #      여기서는 **개수를 늘리지 않고 역할만 교환**하고, 앵커로 슬롯이 아니라
+            #      **사용자 원문**(훨씬 구체적)을 쓴다.
+            q = user_msg
             #  ★ 검색 실패를 흡수한다(2026-07-30) — 예전엔 여기서 예외가 그대로 올라가
             #    controllers 가 턴 전체를 blocked/error 로 만들었고, **병합된 슬롯도 버려졌다**.
             #    Pinecone 쿼터·네트워크가 한 번 흔들리면 착지 가능한 사용자는 매 턴 같은 오류만 보고
@@ -1402,9 +1438,11 @@ class ItdaEngine:
                 #          고정하는 대신 '돕기' 계열(가사지원·공공복지·일상생활기능지원)을 잔뜩 끌어와
                 #          후보 풀을 희석했다. 앵커가 약하면 안정화가 아니라 잡음이 된다.
                 #    ⇒ 원문은 이미 q 에 이어붙여 들어간다(아래). 별도 앵커를 더하지 않는다.
+                #  LLM 이 만든 query 는 alts 앞자리로 — 버리지 않고 '순위 보조'로만 쓴다.
+                _alts = ([t['query'].strip()] if (t.get('query') or '').strip() else []) \
+                    + [a for a in (t.get('query_alts') or []) if a and a.strip()]
                 card = await self.search(db, profile, q, direct=(act == 'DIRECT'),
-                                         force_code=forced_code,
-                                         alts=t.get('query_alts'))
+                                         force_code=forced_code, alts=_alts)
             except Exception as e:
                 print(f'[itda] 검색 실패(대화는 계속): {type(e).__name__}: {e}')
                 out['kind'] = 'ask'
