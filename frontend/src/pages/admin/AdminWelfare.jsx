@@ -181,6 +181,9 @@ export default function AdminWelfare() {
   const [confirmOpen, setConfirmOpen] =
     useState(false)
 
+  const [progressOpen, setProgressOpen] =
+    useState(false)
+
   const [pageLoading, setPageLoading] =
     useState(true)
 
@@ -259,6 +262,7 @@ export default function AdminWelfare() {
         ) {
           stopPolling()
           setRunning(false)
+          setProgressOpen(false)
 
           if (
             result.status
@@ -295,6 +299,7 @@ export default function AdminWelfare() {
 
         stopPolling()
         setRunning(false)
+        setProgressOpen(false)
 
         setActionError(
           error instanceof Error
@@ -411,6 +416,7 @@ export default function AdminWelfare() {
       setLatestResult(initialResult)
       setActiveResult(initialResult)
       setRunning(true)
+      setProgressOpen(true)
 
       showToast(
         response.message
@@ -422,6 +428,7 @@ export default function AdminWelfare() {
       )
     } catch (error) {
       setRunning(false)
+      setProgressOpen(false)
 
       setActionError(
         error instanceof Error
@@ -447,8 +454,7 @@ export default function AdminWelfare() {
       ? STATUS_INFO[result.status]
       : null
 
-  const syncDisabled =
-    starting || running
+  const syncDisabled = starting
 
 
   return (
@@ -462,13 +468,18 @@ export default function AdminWelfare() {
             className="btn btn-primary btn-sm"
             disabled={syncDisabled}
             onClick={() => {
+              if (running) {
+                setProgressOpen(true)
+                return
+              }
+
               setConfirmOpen(true)
             }}
           >
             {starting
               ? '최신화 시작 중'
               : running
-                ? '최신화 진행 중'
+                ? '최신화 진행 보기'
                 : '정책 데이터 최신화'}
           </button>
         }
@@ -875,10 +886,21 @@ export default function AdminWelfare() {
 
 
       {/* 최신화 진행 팝업 */}
-      {running && activeResult && (
-        <Modal title="정책 데이터를 최신화하고 있습니다">
+      {running
+        && progressOpen
+        && activeResult
+        && (
+        <Modal
+          title="정책 데이터를 최신화하고 있습니다"
+          onClose={() => {
+            setProgressOpen(false)
+          }}
+        >
           <PolicySyncRunning
             result={activeResult}
+            onClose={() => {
+              setProgressOpen(false)
+            }}
           />
         </Modal>
       )}
@@ -1052,6 +1074,7 @@ function PolicySyncProgress({
 
 function PolicySyncRunning({
   result,
+  onClose,
 }) {
   const statusInfo =
     STATUS_INFO[result.status]
@@ -1142,8 +1165,25 @@ function PolicySyncRunning({
         }}
       >
         서버에서 백그라운드로 처리하고 있습니다.
-        완료되면 화면이 자동으로 갱신됩니다.
+        <br />
+        창을 닫아도 최신화 작업은 계속 진행됩니다.
       </p>
+
+      <div
+        className="row"
+        style={{
+          justifyContent: 'center',
+          marginTop: 16,
+        }}
+      >
+        <button
+          type="button"
+          className="btn btn-plain"
+          onClick={onClose}
+        >
+          창 닫기
+        </button>
+      </div>
     </div>
   )
 }

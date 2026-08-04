@@ -5,13 +5,9 @@ import httpx
 
 BASE_URL = "https://wis.seoul.go.kr"
 
-LIST_URL = (
-    f"{BASE_URL}/sec/ctg/categorySearch.do"
-)
+LIST_URL = f"{BASE_URL}/sec/ctg/categorySearch.do"      # 정책 목록 페이지
 
-DETAIL_URL = (
-    f"{BASE_URL}/sec/ctg/categoryDetail.do"
-)
+DETAIL_URL = f"{BASE_URL}/sec/ctg/categoryDetail.do"    # 정책 상세 페이지
 
 
 REQUEST_HEADERS = {
@@ -39,7 +35,7 @@ RETRYABLE_STATUS_CODES = {
 
 class SeoulPolicyCrawlerError(RuntimeError):
     """
-    서울복지포털 요청 과정에서 발생하는 예외.
+    서울복지포털 요청 과정에서 발생하는 사용자 정의 예외.
     """
 
 
@@ -82,11 +78,11 @@ async def fetch_policy_detail_html(
     )
 
 
-async def get_html_with_retry(
+async def get_html_with_retry(      # 재시도 함수
     client: httpx.AsyncClient,
     url: str,
     request_name: str,
-    params: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,       # 목록 조회는 param없고 상세 조회는 id값 전달됨.
     max_retries: int = 4,
 ) -> str:
     """
@@ -106,15 +102,10 @@ async def get_html_with_retry(
         except httpx.RequestError as error:
             if attempt >= max_retries:
                 raise SeoulPolicyCrawlerError(
-                    f"{request_name} 네트워크 요청이 "
-                    f"{max_retries}회 재시도 후에도 "
-                    "실패했습니다."
+                    f"{request_name} 네트워크 요청이 {max_retries}회 재시도 후에도 실패했습니다."
                 ) from error
 
-            wait_seconds = min(
-                2 ** (attempt + 1),
-                60,
-            )
+            wait_seconds = min(2 ** (attempt + 1), 60)
 
             print(
                 f"[{request_name}] 네트워크 오류: "
@@ -135,15 +126,10 @@ async def get_html_with_retry(
         ):
             if attempt >= max_retries:
                 raise SeoulPolicyCrawlerError(
-                    f"{request_name} 요청에서 "
-                    f"HTTP {response.status_code} 오류가 "
-                    "반복되어 중단했습니다."
+                    f"{request_name} 요청에서 HTTP {response.status_code} 오류가 반복되어 중단했습니다."
                 )
 
-            wait_seconds = min(
-                2 ** (attempt + 1),
-                60,
-            )
+            wait_seconds = min(2 ** (attempt + 1), 60)
 
             print(
                 f"[{request_name}] 일시적 오류: "
@@ -168,12 +154,11 @@ async def get_html_with_retry(
                 f"{response.status_code}"
             ) from error
 
-        html_content = response.text
+        html_content = response.text        # HTML이므로 파싱을 위해 .content 대신 .text 사용
 
         if not html_content.strip():
             raise SeoulPolicyCrawlerError(
-                f"{request_name}에서 빈 HTML을 "
-                "반환했습니다."
+                f"{request_name}에서 빈 HTML을 반환했습니다."
             )
 
         return html_content
