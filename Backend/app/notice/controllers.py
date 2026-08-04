@@ -12,6 +12,7 @@ from .schemas import (
     NoticeUpdate,
     UserNoticeListResponse,
 )
+from app.notifications.service import create_notice_notifications
 
 
 # =========================================================
@@ -31,14 +32,24 @@ async def create_notice(
     )
 
     db.add(notice)
-
+    
     try:
+        await db.flush()
+        
+        await create_notice_notifications(
+            db=db,
+            notice_id=notice.notice_id,
+            notice_title=notice.notice_title,
+        )
         await db.commit()
         await db.refresh(notice)
 
-    except Exception:
+    except Exception as error:
         await db.rollback()
-        raise
+        raise HTTPException(
+            status_code=500,
+            detail="공지 또는 알림 저장 중 오류가 발생했습니다.",
+        ) from error
 
     return notice
 

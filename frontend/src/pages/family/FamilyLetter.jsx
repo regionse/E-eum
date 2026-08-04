@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageHead, useToast } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
@@ -25,10 +25,45 @@ function EmptyState() {
 export default function FamilyLetter() {
   const [saving, setSaving] = useState(false)
   const { familyLinked } = useAuth()
-  const { records, addRecord } = useFamily()
+  const { records, addRecord, refreshFamily } = useFamily()
   const toast = useToast()
   const [body, setBody] = useState('')
   const [error, setError] = useState('')
+
+  // 테스트 데이터처럼 미래 날짜가 있어도 가장 최신 기록일을 기준으로
+  // 해당 날짜를 포함한 최근 7일치만 가족편지 메인 화면에 표시한다.
+  const weeklyRecords = useMemo(() => {
+    const datedRecords = records
+      .map((record) => ({
+        record,
+        timestamp: new Date(`${record.date}T00:00:00`).getTime(),
+      }))
+      .filter(({ timestamp }) => Number.isFinite(timestamp))
+
+    if (datedRecords.length === 0) {
+      return []
+    }
+
+    const latestTimestamp = Math.max(
+      ...datedRecords.map(({ timestamp }) => timestamp),
+    )
+    const startTimestamp = latestTimestamp - 6 * 24 * 60 * 60 * 1000
+
+    return datedRecords
+      .filter(
+        ({ timestamp }) =>
+          timestamp >= startTimestamp && timestamp <= latestTimestamp,
+      )
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .map(({ record }) => record)
+  }, [records])
+
+  // 다른 가족이 작성한 최신 편지를 화면에 들어올 때 다시 불러온다.
+  useEffect(() => {
+    refreshFamily().catch(() => {
+      // 조회 오류는 FamilyProvider의 error 상태에서 관리한다.
+    })
+  }, [refreshFamily])
 
   const canSubmit = body.trim().length > 0
 
@@ -137,7 +172,7 @@ export default function FamilyLetter() {
               </div>
 
               <div className="stack" style={{ gap: 12 }}>
-                {records.map((r) => (
+                {weeklyRecords.map((r) => (
                   <div key={r.id} className="card card-pad">
                     <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6, gap: 8 }}>
                       <span className={`badge ${r.author === '나' ? 'badge-teal' : 'badge-gray'}`}>{r.author}</span>

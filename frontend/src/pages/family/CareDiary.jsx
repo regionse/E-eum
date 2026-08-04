@@ -46,7 +46,12 @@ function ConnectPrompt() {
 export default function CareDiary() {
   const [recommendation, setRecommendation] = useState(null)
   const { familyLinked, userId } = useAuth()
-  const { records, careGroupId, members } = useFamily()
+  const {
+    records,
+    careGroupId,
+    members,
+    refreshFamily,
+  } = useFamily()
   const nav = useNavigate()
   const [author, setAuthor] = useState('all')
   const [period, setPeriod] = useState('전체')
@@ -60,6 +65,13 @@ export default function CareDiary() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
   const [memberAliases, setMemberAliases] = useState({})
+
+  // 다른 가족이 작성한 최신 편지를 돌봄일지 진입 시 다시 불러온다.
+  useEffect(() => {
+    refreshFamily().catch(() => {
+      // 조회 오류는 FamilyProvider의 error 상태에서 관리한다.
+    })
+  }, [refreshFamily])
 
   const safeMembers = Array.isArray(members) ? members : []
   const aliasStorageKey =
