@@ -9,6 +9,10 @@ import {
   TODAY,
 } from '../../store/family.jsx'
 import { analyzeWeeklyCare, recommendFacility, getCurrentPosition,} from '../../api/share.js'
+import {
+  getUserConsents,
+  updateUserConsents,
+} from '../../api/mypage.js'
 
 
 
@@ -125,11 +129,45 @@ export default function CareDiary() {
       return
     }
 
+    if (!userId) {
+      setAnalysisError('로그인 사용자 정보를 확인할 수 없습니다.')
+      return
+    }
+
     try {
       setAnalyzing(true)
       setAnalysisError('')
       setAnalysisResult(null)
       setRecommendation(null)
+
+      // 이상징후 분석 전에 서비스의 위치정보 동의 상태를 확인한다.
+      const consents = await getUserConsents(userId)
+      let needsConsentSave = false
+
+      if (!consents.is_location_agreed) {
+        const agreed = window.confirm(
+          '이상징후가 감지되면 현재 위치를 이용해 가까운 지원 기관을 추천합니다. 위치정보 이용에 동의하시겠습니까?',
+        )
+
+        if (!agreed) {
+          setAnalysisError(
+            '위치정보 이용에 동의해야 기관 추천을 포함한 분석을 시작할 수 있습니다.',
+          )
+          return
+        }
+
+        needsConsentSave = true
+      }
+
+      // 분석 시작 시점에 브라우저의 실제 위치 권한도 요청한다.
+      // 여기에서 얻은 위치는 이상징후 발생 후 기관 추천에 재사용한다.
+      const position = await getCurrentPosition()
+
+      if (needsConsentSave) {
+        await updateUserConsents(userId, {
+          is_location_agreed: true,
+        })
+      }
 
       // 1. 주간 분석
       const analysis = await analyzeWeeklyCare({
@@ -145,10 +183,7 @@ export default function CareDiary() {
         return
       }
 
-      // 3. 현재 위치 확인
-      const position = await getCurrentPosition()
-
-      // 4. 가장 가까운 기관 추천
+      // 3. 분석 시작 전에 확인한 위치로 가장 가까운 기관 추천
       const facility = await recommendFacility({
         careGroupId,
         latitude: position.latitude,

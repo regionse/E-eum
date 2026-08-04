@@ -13,6 +13,7 @@ from app.user.schemas import (
     TokenResponse,
     UpdateMeRequest,
     UserResponse,
+    WithdrawRequest,
 )
 from app.user.security import create_access_token, get_current_user
 
@@ -95,6 +96,24 @@ async def update_me(
     current_user: User = Depends(get_current_user),
 ):
     return await controllers.update_me(db, current_user, request)
+
+
+@router.post(
+    "/me/withdraw",
+    status_code=status.HTTP_200_OK,
+    summary="회원 탈퇴",
+)
+async def withdraw_me(
+    request: WithdrawRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await controllers.withdraw_me(
+        db=db,
+        user=current_user,
+        data=request,
+    )
+    return {"ok": True}
 
 
 # =========================================================

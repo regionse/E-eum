@@ -5,8 +5,14 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User
-from .schemas import SignupRequest, FindIdRequest, ResetPasswordRequest, UpdateMeRequest
+from .models import User, UserStatus
+from .schemas import (
+    FindIdRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    UpdateMeRequest,
+    WithdrawRequest,
+)
 from .security import hash_password, verify_password
 
 
@@ -72,6 +78,12 @@ async def authenticate(db: AsyncSession, username: str, password: str) -> User:
             detail="아이디 또는 비밀번호가 올바르지 않습니다.",
         )
 
+    if user.status != UserStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="현재 로그인할 수 없는 계정입니다.",
+        )
+
     user.last_login_at = datetime.now()
 
     await db.commit()
@@ -134,3 +146,22 @@ async def update_me(db: AsyncSession, user: User, data: UpdateMeRequest) -> User
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def withdraw_me(
+    db: AsyncSession,
+    user: User,
+    data: WithdrawRequest,
+) -> None:
+    """회원 행은 보존하고 탈퇴 상태·시각·사유를 기록한다."""
+    if user.status == UserStatus.WITHDRAWN:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 탈퇴한 계정입니다.",
+        )
+
+    user.status = UserStatus.WITHDRAWN
+    user.withdrawn_at = datetime.now()
+    user.withdrawal_reason = data.reason.strip()
+
+    await db.commit()
