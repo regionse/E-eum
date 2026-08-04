@@ -3,15 +3,11 @@ import { NavLink, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../store/auth.jsx'
 import { useToast, PageHead, Modal } from '../../components/ui/index.jsx'
 import { updateMe } from '../../api/auth.js'
-<<<<<<< HEAD
 import {
   getUserConsents,
   updateUserConsents,
   withdrawMe,
 } from '../../api/mypage.js'
-=======
-import { getToken } from '../../api/client.js'
->>>>>>> 817f8146fc56ec02a6b364f94e2ff1d07c61ac38
 import { formatPhone } from '../../utils/form.js'
 
 const TABS = [
