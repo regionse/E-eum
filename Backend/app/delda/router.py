@@ -24,7 +24,7 @@ from app.delda.schemas import (
     PolicySyncStartResponse,
 )
 from app.user.models import User
-from app.user.security import get_current_user
+from app.user.security import get_current_user, get_current_admin
 
 
 # =========================================================
@@ -77,6 +77,12 @@ admin_router = APIRouter(
 async def start_policy_sync(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    #  ★ 2026-08-04 관리자 인증 추가 — 그전까지 이 세 개는 **누구나** 부를 수 있었다.
+    #    실측: 토큰 없이 호출해 200 과 실제 데이터를 받았다.
+    #    POST 는 특히 위험했다 — 로그인도 안 한 사람이 서울·경기 크롤링과 전체 임베딩을
+    #    무한히 트리거할 수 있었고, nginx 속도제한도 /api/auth/ 에만 걸려 있어 횟수 제한이 없었다.
+    #    피해는 ① 서버가 10분씩 묶임 ② 임베딩 API 비용 ③ 외부 사이트에 우리 IP 로 대량 요청.
+    _admin: User = Depends(get_current_admin),
 ):
     """
     중앙부처 정책 API, 서울 정책 크롤링,
@@ -98,6 +104,7 @@ async def start_policy_sync(
 )
 async def get_latest_policy_sync_result(
     db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),   # 배치 현황은 내부 정보다 (2026-08-04)
 ):
     """
     가장 최근에 실행된 정책 최신화의
@@ -122,6 +129,7 @@ async def get_policy_sync_result(
         description="정책 최신화 실행 결과 ID",
     ),
     db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),   # 배치 현황은 내부 정보다 (2026-08-04)
 ):
     """
     실행 ID를 기준으로 정책 최신화의

@@ -2,10 +2,20 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "eum-backend",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd /d C:\\e-um-1\\E-eum-team\\Backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+      ],
+      "port": 8000
+    },
+    {
+      "_주석": "프론트는 사용자가 직접 띄운다(npm run dev). 여기선 붙기만 한다 — 명령을 넣으면 포트 충돌로 백엔드 기동까지 막힌다.",
       "name": "eum-team-frontend",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--root", "frontend", "--port", "5180"],
-      "port": 5180
+      "url": "http://localhost:5173",
+      "port": 5173,
+      "autoPort": false
     }
   ]
 }

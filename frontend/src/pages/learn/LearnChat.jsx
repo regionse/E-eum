@@ -10,7 +10,11 @@ import { BAD_WORDS } from '../../utils/text.js'
 // 그 직업의 자격증(≤3) + 무료강좌 + 국비훈련 안내를 미래설계지도로 그려준다.
 //  · 대화(이해)는 백엔드 LLM이, 결과(직업·자격·강좌)는 코드가 정한다. (자유로운 상담 + 갇힌 출력)
 //  · 선고가 아니라 안내 — "이런 방향이 맞아 보여요" (2026-07-29 NCS 원툴)
-const GREET = { role: 'bot', kind: 'text', text: '어떤 일이 잘 맞을지 같이 찾아봐요. 관심 있는 것이나 좋아하는 걸 편하게 말해주세요 — 막연해도 괜찮아요.' }
+//  ★ 첫인사 교체(2026-08-04) — 예전 문구는 인사 없이 곧장 «관심 있는 것이나 좋아하는 걸
+//    말해주세요» 였다. **첫마디부터 숙제를 내는 셈**이고, 그 숙제는 여유가 있어야 풀린다.
+//    우리 사용자는 하루 2시간 자며 주 7일 일하기도 한다(월드비전 2024 심층면접).
+//    ⇒ 인사만 하고, 질문은 누구나 답할 수 있는 것 하나로 연다(백엔드 _ASK_Q 와 같은 결).
+const GREET = { role: 'bot', kind: 'text', text: '안녕하세요, 교육·상담을 맡은 잇다예요.\n요즘 뭐 하고 지내세요? 일이든 돌봄이든, 하고 계신 걸 그대로 말씀해 주셔도 돼요.' }
 const GOAL_EXAMPLES = ['나무나 식물을 다루는 일', '컴퓨터로 뭔가 만드는 일', '사람에게 도움이 되는 일']
 export default function LearnChat() {
   const toast = useToast()
@@ -90,10 +94,11 @@ export default function LearnChat() {
       //    언마운트돼 setMsgs 가 무효화되고, 그 답이 draft 에도 안 남아 영구히 사라졌다.
       //    (백엔드는 이미 처리해 슬롯을 갱신한 상태라, 사용자만 '무응답'으로 보였다.)
       //    localStorage 저장은 React 상태와 무관하므로 떠나도 살아남는다 → 돌아오면 답이 보인다.
+      //  handoff — 시간·비용 이야기가 나오면 백엔드가 덜다(정책)로 건네줄 딱지를 달아준다(2026-08-04).
       const added = res.type === 'result'
-        ? [...(res.reply ? [{ role: 'bot', kind: 'text', text: res.reply }] : []),
+        ? [...(res.reply ? [{ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff }] : []),
            { role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] }]
-        : [{ role: 'bot', kind: 'text', text: res.reply,
+        : [{ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff,
              options: res.options || [], notes: res.option_notes || [] }]
       saveItdaDraft(uid, { sid, msgs: [...msgsRef.current, ...added], mapped })
 
@@ -102,11 +107,11 @@ export default function LearnChat() {
         //  ★ 지도를 바로 펼치지 않는다(2026-07-30) — 대화 도중 카드가 갑자기 나오면
         //    사용자가 확인할 틈 없이 결론이 던져지는(충동적인) 느낌을 준다.
         //    한 번 더 "이 방향 맞을까요?"로 확인받고, 누를 때 지도를 연다. 데이터는 이미 받아뒀다.
-        if (res.reply) push({ role: 'bot', kind: 'text', text: res.reply })
+        if (res.reply) push({ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff })
         push({ role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] })
       } else {
         //  좁히기 선택지가 오면 클릭 chip 으로 그린다(2026-07-30) — 예전엔 NCS 원문을 손으로 타이핑해야 했다.
-        push({ role: 'bot', kind: 'text', text: res.reply,
+        push({ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff,
                options: res.options || [], notes: res.option_notes || [] })
       }
     } catch (e) {
@@ -183,7 +188,9 @@ export default function LearnChat() {
                      fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
               <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal}
-                onPick={(o) => send(o)} onRetry={send} />
+                onPick={(o) => send(o)} onRetry={send}
+                //  덜다로 갈 때 대화를 버리지 않는다 — draft 는 그대로 남으므로 돌아오면 이어진다.
+                onHandoff={(h) => nav(h.path || '/welfare/policy')} />
             ))}
             {busy && <TypingBubble onCancel={cancel} />}
             <div ref={endRef} />
@@ -308,7 +315,7 @@ function ProposeCard({ goal, alternatives, onOpen }) {
   )
 }
 
-function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry }) {
+function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry, onHandoff }) {
   if (m.kind === 'text') return (
     <div style={{ alignSelf: m.role === 'me' ? 'flex-end' : 'stretch' }}>
       <div className={`bubble ${m.role === 'me' ? 'me' : 'bot'}`}
@@ -317,6 +324,15 @@ function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry }) {
       {m.retry && (
         <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
           onClick={() => onRetry?.(m.retry)}>다시 보내기 ↻</button>
+      )}
+      {/* 덜다(정책)로 건네주기 (2026-08-04) — 시간·비용 제약은 진로 상담만으로 안 풀린다.
+          대화를 끊지 않는다: 버튼일 뿐이고, 안 눌러도 진로 이야기는 그대로 이어진다. */}
+      {m.handoff?.path && (
+        <button className="btn btn-ghost btn-sm"
+          style={{ marginTop: 9, borderColor: 'var(--teal-200)', color: 'var(--teal-700)' }}
+          onClick={() => onHandoff?.(m.handoff)}>
+          {m.handoff.label || '받을 수 있는 지원 찾아보기'} →
+        </button>
       )}
       {/* 좁히기 선택지 — 눌러서 고른다(2026-07-30). 설명 한 줄로 NCS 원문의 뜻을 알려준다. */}
       {m.options?.length > 0 && (

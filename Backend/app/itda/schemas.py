@@ -33,6 +33,10 @@ class CertStep(BaseModel):
     exam: str = ""                  # 다음 시험일(접수 마감일 포함)
     verified: bool = False          # cert_job 검증된 연결인지
     #  (2026-07-30) DB 에 있으나 화면에 안 쓰던 실데이터를 노출 — 자격증 상세에서 보여준다.
+    #  ★ 2026-08-04 — 연 시험 회차. 20 이상이면 상시시험급(제빵기능사 42 · 조리류 41)이고
+    #    일반 기능사는 4~5 다. 시간이 없는 사용자에게 「놓쳐도 곧 다음이 있다」가 제일 크다.
+    exam_n: int = 0                 # 연 회차 수
+    often: bool = False             # 자주 열리는 시험인가 (exam_n >= 20)
     exam_method: str = ""           # 시험 방법(무엇을 공부하나) — certification.exam_method
     outlook: str = ""               # 이 자격의 전망 — certification.career_outlook
     qual_gb: str = ""               # 국가기술자격 / 국가전문자격
@@ -61,6 +65,15 @@ class Goal(BaseModel):
     hire: Hire | None = None        # 국비 실전훈련 딥링크(핸드오프, 2026-07-29)
 
 
+#  ── 덜다(정책) 갈림길 (2026-08-04) ──
+#  진로만으로 안 풀리는 문제(시간·비용)에 **다른 축으로 건네주는** 딱지.
+#  잇다는 덜다 코드를 부르지 않는다 — 화면 경로만 알려준다(팀 경계를 넘지 않는다).
+class Handoff(BaseModel):
+    to: str = "welfare"             # 어느 축으로 (welfare=덜다)
+    path: str = "/welfare/policy"   # 프론트 라우트
+    label: str = ""                 # 버튼에 쓸 말
+
+
 class MessageResponse(BaseModel):
     type: str                       # "ask" | "result" | "blocked"
     reply: str                      # 사용자에게 보여줄 말
@@ -72,6 +85,11 @@ class MessageResponse(BaseModel):
     alternatives: list[str] = []    # 다른 후보 직업
     options: list[str] = []         # 좁히기 선택지 — 프론트가 클릭 chip 으로 그린다(2026-07-30)
     option_notes: list[str] = []    # 각 선택지의 한 줄 설명(같은 순서) — NCS 원문만 보여주면 못 고른다
+    handoff: Handoff | None = None  # 덜다로 건네줄 때만 (2026-08-04)
+    #  ★ 이번 턴에 실제로 쓴 토큰 (2026-08-04) — 비용을 눈으로 보려고 넣었다.
+    #    {in, out, think, cached, calls}. cached 가 0이면 프롬프트 캐싱이 안 걸린 것이다.
+    #    프론트는 안 써도 된다(모르는 필드는 무시된다). 데모·계측용.
+    usage: dict | None = None
 
 
 # ── 미래설계지도 (저장·이어서하기) 요청 (2026-07-29) ──
@@ -127,6 +145,9 @@ class ItdaSyncStep(BaseModel):
     desc: str = ""
     status: str = "waiting"         # waiting | running | ok | failed
     percent: int = 0                # 배치가 찍는 «300/613 (48%)» 에서 뽑은 값
+    done: int = 0                   # 같은 줄의 앞 숫자 — 몇 개까지 처리했나
+    total: int = 0                  # 같은 줄의 뒤 숫자 — 전체 몇 개인가
+    elapsed: int = 0                # 그 단계가 시작된 뒤 흐른 초
     log: str = ""                   # 그 단계의 마지막 출력 한 줄
 
 

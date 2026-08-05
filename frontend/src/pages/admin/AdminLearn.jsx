@@ -50,12 +50,18 @@ function SummaryRow({ label, value, strong = false, danger = false }) {
   )
 }
 
+const fmtSec = (s) => (s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`)
+
 //  진행 모달의 단계 카드 — 지금 도는 단계만 강조하고 나머지는 눌러 둔다.
 function StepCard({ step }) {
   const on = step.status === 'running'
   const done = step.status === 'ok'
   const bad = step.status === 'failed'
   const tag = bad ? '실패' : done ? '완료' : on ? `${step.percent}%` : '대기 중'
+  //  «3,971 / 8,273» — 퍼센트만으로는 얼마나 남았는지 가늠이 안 된다.
+  const count = step.total > 0
+    ? `${step.done.toLocaleString()} / ${step.total.toLocaleString()}`
+    : null
   return (
     <div
       className="card"
@@ -70,9 +76,20 @@ function StepCard({ step }) {
         <span className="muted" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{tag}</span>
       </div>
       <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }}>{step.desc}</p>
+
+      {/* 건수·경과시간 — 퍼센트보다 이쪽이 「얼마나 남았나」를 알려준다 */}
+      {(on || done || bad) && (count || step.elapsed > 0) && (
+        <div className="row" style={{ justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+          <b style={{ fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{count || ''}</b>
+          {step.elapsed > 0 && (
+            <span className="muted" style={{ fontSize: 12.5 }}>경과 {fmtSec(step.elapsed)}</span>
+          )}
+        </div>
+      )}
+
       {/* 진행 막대 — 퍼센트가 잡힐 때만 그린다(적재 배치는 퍼센트를 안 찍는다) */}
       {on && step.percent > 0 && (
-        <div style={{ height: 4, borderRadius: 999, background: 'var(--teal-100)', marginTop: 8 }}>
+        <div style={{ height: 5, borderRadius: 999, background: 'var(--teal-100)', marginTop: 8 }}>
           <div style={{ height: '100%', width: `${step.percent}%`, borderRadius: 999,
             background: 'var(--teal-500)', transition: 'width .3s' }} />
         </div>
@@ -90,11 +107,18 @@ export default function AdminLearn() {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [run, setRun] = useState(null)          // 최신화 진행 현황
+  const [modalOpen, setModalOpen] = useState(false)   // 진행 모달 표시 여부
   const [confirm, setConfirm] = useState(false)
   const [starting, setStarting] = useState(false)
   const [actionError, setActionError] = useState('')
   const toast = useToast()
   const timer = useRef(null)
+  //  ★ useToast() 는 매 렌더마다 새 객체를 돌려준다({ show, node } 리터럴).
+  //    그래서 toast 를 의존성에 넣으면 폴링 useEffect 가 렌더마다 재실행되어
+  //    setInterval 이 계속 새로 걸린다. 안정적인 건 useCallback 으로 감싼 show 뿐이라
+  //    그것만 ref 에 담아 쓴다.
+  const showToast = useRef(toast.show)
+  showToast.current = toast.show
 
   const loadStatus = useCallback(async () => {
     try { setData(await getItdaSyncStatus()) }
@@ -110,7 +134,10 @@ export default function AdminLearn() {
       await loadStatus()
       try {
         const r = await getItdaSyncRun()
-        if (alive && r && r.status !== 'idle') setRun(r)
+        if (alive && r && r.status !== 'idle') {
+          setRun(r)
+          if (r.status === 'running') setModalOpen(true)   // 도는 중이면 다시 붙는다
+        }
       } catch { /* 진행 현황은 못 받아도 화면은 뜬다 */ }
     })()
     return () => { alive = false }
@@ -126,19 +153,21 @@ export default function AdminLearn() {
         if (r.status !== 'running') {
           clearInterval(timer.current)
           await loadStatus()
-          toast.show(r.status === 'done'
+          showToast.current(r.status === 'done'
             ? '최신화가 끝났어요.'
             : '최신화가 끝났지만 일부 단계가 실패했어요.')
         }
       } catch { /* 한 번 실패해도 다음 폴링에서 다시 시도한다 */ }
     }, POLL_MS)
     return () => clearInterval(timer.current)
-  }, [run, loadStatus, toast])
+    //  run.status 만 보면 된다 — run 객체 자체를 넣으면 폴링 결과가 올 때마다 인터벌이 새로 걸린다.
+  }, [run?.status, loadStatus])
 
   const start = async () => {
     setConfirm(false); setStarting(true); setActionError('')
     try {
       setRun(await startItdaSync())
+      setModalOpen(true)
     } catch (e) {
       setActionError(e?.message || '최신화를 시작하지 못했어요.')
     } finally { setStarting(false) }
@@ -146,18 +175,30 @@ export default function AdminLearn() {
 
   const running = run?.status === 'running'
 
+  //  전체 진행률 — 끝난 단계는 1, 도는 단계는 그 단계의 퍼센트만큼만 센다.
+  //  (적재 단계는 퍼센트를 안 찍으므로 도는 동안 0 으로 잡힌다 — 실제보다 낮게 보이지만
+  //   없는 숫자를 지어내는 것보다 낫다.)
+  const steps = run?.steps || []
+  const overall = steps.length
+    ? Math.round(steps.reduce((a, s) => a
+      + (s.status === 'ok' ? 1 : s.status === 'running' ? (s.percent || 0) / 100 : 0), 0)
+      / steps.length * 100)
+    : 0
+
   const head = (
     <PageHead
       title="잇다 · 임베딩 관리"
       sub="자격증·직업·강좌 데이터를 벡터로 만들어 Pinecone 에 저장·관리해요."
+      //  도는 중에는 새로 시작하지 않고 **진행 모달을 다시 연다**.
+      //  모달을 닫아도 최신화는 서버에서 계속 도니까, 다시 볼 길이 있어야 한다.
       right={(
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={starting || running}
-          onClick={() => setConfirm(true)}
+          disabled={starting}
+          onClick={() => (running ? setModalOpen(true) : setConfirm(true))}
         >
-          {starting ? '최신화 시작 중' : running ? '최신화 진행 중' : '진로 데이터 최신화'}
+          {starting ? '최신화 시작 중' : running ? '최신화 진행 중 · 보기' : '진로 데이터 최신화'}
         </button>
       )}
     />
@@ -206,6 +247,37 @@ export default function AdminLearn() {
   return (
     <div>
       {head}
+
+      {/*  ★ 2026-08-04 — 마지막 실행 결과를 화면에 남긴다.
+           예전엔 진행 모달을 닫으면 그 실행이 어떻게 끝났는지 볼 길이 없었다.
+           그래서 「닫고 계속 진행 → 다시 최신화 버튼」을 눌렀을 때, 이미 끝난 건지
+           아직 도는 건지 알 수 없어 확인 창이 뜬금없이 나오는 것처럼 보였다.  */}
+      {run && run.status !== 'idle' && (
+        <div className="card card-pad"
+          style={{ marginBottom: 14, maxWidth: 780, padding: '14px 18px' }}>
+          <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <b style={{ fontSize: 14.5 }}>
+                {running ? '최신화 진행 중' : run.status === 'done' ? '마지막 최신화 · 완료' : '마지막 최신화 · 일부 실패'}
+              </b>
+              <span className="muted" style={{ fontSize: 13, marginLeft: 10 }}>
+                {(run.steps || []).filter((s) => s.status === 'ok').length}
+                {' / '}{(run.steps || []).length} 단계
+                {running && overall > 0 ? ` · ${overall}%` : ''}
+              </span>
+            </div>
+            <button type="button" className="btn btn-plain btn-sm" onClick={() => setModalOpen(true)}>
+              자세히 보기
+            </button>
+          </div>
+          {/* 전체 진행 막대 — 단계 3개를 한 줄로 합쳐 보여준다 */}
+          <div style={{ height: 5, borderRadius: 999, background: 'var(--line)', marginTop: 10 }}>
+            <div style={{ height: '100%', width: `${overall}%`, borderRadius: 999,
+              background: run.status === 'failed' ? 'var(--danger)' : 'var(--teal-500)',
+              transition: 'width .3s' }} />
+          </div>
+        </div>
+      )}
 
       {actionError && (
         <div className="card card-pad"
@@ -284,12 +356,18 @@ export default function AdminLearn() {
       )}
 
       {/* 진행 상황 — 도는 동안, 그리고 끝난 직후 결과를 확인할 때까지 띄운다 */}
-      {run && run.status !== 'idle' && (
+      {run && run.status !== 'idle' && modalOpen && (
         <Modal
           title={running ? '진로 데이터를 최신화하고 있습니다' : '최신화가 끝났습니다'}
-          onClose={running ? undefined : () => setRun(null)}
-          actions={running ? undefined : (
-            <button className="btn btn-primary btn-block" onClick={() => setRun(null)}>확인</button>
+          onClose={() => setModalOpen(false)}
+          actions={running ? (
+            <button className="btn btn-plain btn-block" onClick={() => setModalOpen(false)}>
+              닫고 계속 진행
+            </button>
+          ) : (
+            <button className="btn btn-primary btn-block" onClick={() => setModalOpen(false)}>
+              확인
+            </button>
           )}
         >
           {running && (
