@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PageHead, Empty } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
@@ -69,6 +69,11 @@ export default function CareDiary() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
   const [memberAliases, setMemberAliases] = useState({})
+  const analysisControllerRef = useRef(null)
+
+  useEffect(() => () => {
+    analysisControllerRef.current?.abort()
+  }, [])
 
   // 다른 가족이 작성한 최신 편지를 돌봄일지 진입 시 다시 불러온다.
   useEffect(() => {
@@ -123,6 +128,14 @@ export default function CareDiary() {
 
   const apply = (patch) => { setPage(1); patch() }
   const runSearch = () => apply(() => setQuery(q.trim()))
+
+  const stopAnalysis = () => {
+    analysisControllerRef.current?.abort()
+    analysisControllerRef.current = null
+    setAnalyzing(false)
+    setAnalysisError('분석을 중단했습니다.')
+  }
+
   const handleAnalyze = async () => {
     if (!careGroupId) {
       setAnalysisError('연결된 가족방이 없습니다.')
@@ -134,6 +147,15 @@ export default function CareDiary() {
       return
     }
 
+    const controller = new AbortController()
+    analysisControllerRef.current = controller
+
+    const ensureNotAborted = () => {
+      if (controller.signal.aborted) {
+        throw new DOMException('분석이 중단되었습니다.', 'AbortError')
+      }
+    }
+
     try {
       setAnalyzing(true)
       setAnalysisError('')
@@ -142,6 +164,7 @@ export default function CareDiary() {
 
       // 이상징후 분석 전에 서비스의 위치정보 동의 상태를 확인한다.
       const consents = await getUserConsents(userId)
+      ensureNotAborted()
       let needsConsentSave = false
 
       if (!consents.is_location_agreed) {
@@ -162,18 +185,21 @@ export default function CareDiary() {
       // 분석 시작 시점에 브라우저의 실제 위치 권한도 요청한다.
       // 여기에서 얻은 위치는 이상징후 발생 후 기관 추천에 재사용한다.
       const position = await getCurrentPosition()
+      ensureNotAborted()
 
       if (needsConsentSave) {
         await updateUserConsents(userId, {
           is_location_agreed: true,
         })
+        ensureNotAborted()
       }
 
       // 1. 주간 분석
       const analysis = await analyzeWeeklyCare({
         careGroupId,
-        
+        signal: controller.signal,
       })
+      ensureNotAborted()
 
       setAnalysisResult(analysis)
       setAiOpen(true)
@@ -188,7 +214,9 @@ export default function CareDiary() {
         careGroupId,
         latitude: position.latitude,
         longitude: position.longitude,
+        signal: controller.signal,
       })
+      ensureNotAborted()
 
       setRecommendation({
         ...facility,
@@ -196,11 +224,18 @@ export default function CareDiary() {
         user_longitude: position.longitude,
       })
     } catch (error) {
-      setAnalysisError(
-        error.message || '주간 분석 및 기관 추천에 실패했습니다.',
-      )
+      if (error.name === 'AbortError' || controller.signal.aborted) {
+        setAnalysisError('분석을 중단했습니다.')
+      } else {
+        setAnalysisError(
+          error.message || '주간 분석 및 기관 추천에 실패했습니다.',
+        )
+      }
     } finally {
-      setAnalyzing(false)
+      if (analysisControllerRef.current === controller) {
+        analysisControllerRef.current = null
+        setAnalyzing(false)
+      }
     }
   }
 
@@ -347,6 +382,45 @@ export default function CareDiary() {
                   )}
                 </div>
               </div>
+
+              {analyzing && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="callout-warn"
+                  style={{ marginTop: 14 }}
+                >
+                  <div
+                    className="row"
+                    style={{
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 12,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <strong>⏳ AI가 돌봄 기록을 분석하고 있어요.</strong>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={stopAnalysis}
+                    >
+                      분석 중단
+                    </button>
+                  </div>
+                  <p
+                    className="muted"
+                    style={{ marginTop: 8, lineHeight: 1.6 }}
+                  >
+                    가족편지의 양과 AI 응답 상태에 따라 약 1~3분 정도
+                    걸릴 수 있어요. 잠시만 기다려주세요.
+                  </p>
+                  <progress
+                    aria-label="주간 돌봄 기록 분석 중"
+                    style={{ width: '100%', marginTop: 12 }}
+                  />
+                </div>
+              )}
 
               {records.length === 0 && (
                 <p className="muted" style={{ marginTop: 14 }}>

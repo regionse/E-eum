@@ -10,7 +10,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        //  ★ 'localhost' 가 아니라 '127.0.0.1' 이다(2026-08-04).
+        //    Node 는 localhost 를 IPv6(::1) 먼저 시도하는데, uvicorn 은 127.0.0.1(IPv4)에만
+        //    바인딩한다. 그래서 매 요청이 ::1 로 한 번 헛걸음(ECONNREFUSED)한 뒤 IPv4 로 넘어갔다.
+        //    동작은 했지만 요청마다 지연이 붙었고, 프록시 로그에 AggregateError 가 계속 찍혔다.
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },

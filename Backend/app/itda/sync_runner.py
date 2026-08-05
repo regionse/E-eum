@@ -29,8 +29,11 @@
 """
 import asyncio
 import datetime
+import os
 import re
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 #  Backend/ — `python -m app.itda.scripts.…` 가 동작하려면 여기가 작업 디렉터리여야 한다.
@@ -83,68 +86,113 @@ def _fresh_state() -> dict:
         'steps': [
             {'key': s['key'], 'title': s['title'], 'desc': s['desc'],
              'status': 'waiting',      # waiting · running · ok · failed
-             'percent': 0, 'log': ''}
+             'percent': 0,
+             #  배치가 «300/613 (48%)» 을 찍으면 앞의 두 숫자도 함께 담는다.
+             #  퍼센트만 보여주면 "얼마나 남았나"를 가늠할 수 없다 — 8,273개짜리 강좌 임베딩에선
+             #  48% 라는 말보다 «3,971 / 8,273» 이 훨씬 쓸모 있다.
+             'done': 0, 'total': 0,
+             'elapsed': 0,             # 그 단계가 시작된 뒤 흐른 초
+             'log': ''}
             for s in STEPS
         ],
     }
 
 
 def snapshot() -> dict | None:
-    """현재 진행 상황. 아직 한 번도 안 돌렸으면 None."""
+    """현재 진행 상황. 아직 한 번도 안 돌렸으면 None.
+
+    ★ 도는 중인 단계의 경과시간은 **여기서 다시 계산한다.**
+      배치가 한 줄 찍을 때만 갱신하면, 적재처럼 조용히 오래 도는 단계에서 시계가 멈춰 보인다
+      (「경과 0초」인 채로 3분이 흐른다). 화면이 물어볼 때마다 지금 시각으로 다시 잰다.
+    """
     if _STATE is None:
         return None
-    #  얕은 복사로 충분하다 — 호출부는 읽기만 한다. steps 만 각각 복사한다.
-    return {**_STATE, 'steps': [dict(s) for s in _STATE['steps']]}
+    now = time.time()
+    steps = []
+    for s in _STATE['steps']:
+        c = dict(s)
+        t0 = c.pop('_t0', None)          # 내부용 — 화면에 내보내지 않는다
+        if t0 and c['status'] == 'running':
+            c['elapsed'] = int(now - t0)
+        steps.append(c)
+    return {**_STATE, 'steps': steps}
 
 
 def is_running() -> bool:
     return _STATE is not None and _STATE['status'] == 'running'
 
 
-async def _run_one(cmd: list[str], step: dict) -> tuple[bool, str]:
-    """배치 하나를 서브프로세스로 돌리며 진행 로그를 읽는다. (성공여부, 마지막 줄)
+def _run_blocking(cmd: list[str], step: dict, holder: dict) -> tuple[bool, str]:
+    """배치 하나를 **동기** subprocess 로 돌리며 진행 로그를 읽는다. 별도 스레드에서 호출된다.
 
-    ★ 타임아웃을 **여기 안에서** 건다. 바깥에서 asyncio.wait_for 로 감싸면 이 코루틴만
-      취소되고 자식 프로세스는 그대로 살아남아, 임베딩이 몰래 계속 돌면서 Pinecone·
-      Gemini 쿼터를 태운다. 취소하려면 반드시 kill 까지 해야 한다.
+    ★ 왜 asyncio.create_subprocess_exec 을 안 쓰나 (2026-08-04 실측)
+      윈도우에서 uvicorn 이 SelectorEventLoop 를 쓰면 그 함수가 **NotImplementedError** 를 낸다.
+      (윈도우에서 asyncio 서브프로세스는 ProactorEventLoop 에서만 된다)
+      혼자 asyncio.run() 으로 돌린 시험은 기본값이 Proactor 라 통과했는데, uvicorn 아래에서는
+      3단계가 전부 NotImplementedError 로 죽었다 — 내 시험이 실제 실행 환경과 달랐던 것이다.
+      리눅스 서버에서는 안 났을 버그지만, 개발 PC 에서만 죽는 코드는 두면 안 된다.
+      ⇒ 이벤트 루프에 기대지 않는 subprocess.Popen 을 스레드에서 돌린다. 어느 OS·어느 루프에서도 같다.
+
+    ★ PYTHONIOENCODING 을 박아 자식이 무조건 utf-8 로 찍게 한다.
+      없으면 윈도우 파이썬이 파이프에 cp949 로 써서, 화면에 뜨는 로그가
+      «자격증 임베딩 완료» → «?????? ?????? ???» 로 깨진다(실측).
     """
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, *cmd,
+    env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+    proc = subprocess.Popen(
+        [sys.executable, *cmd],
         cwd=str(BACKEND_ROOT),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding='utf-8',
+        errors='replace',      # 깨진 바이트가 와도 죽지 않는다 — 로그가 목적이다
+        bufsize=1,             # 줄 단위 — 배치가 찍는 대로 바로 읽힌다
     )
+    holder['proc'] = proc      # 타임아웃 때 바깥에서 kill 할 수 있게 넘겨둔다
     last = ''
-
-    async def pump():
-        nonlocal last
-        while True:
-            raw = await proc.stdout.readline()
-            if not raw:
-                break
-            #  배치는 한글을 찍는다. 서버(리눅스)는 utf-8, 개발 PC(윈도우)는 cp949 일 수 있어
-            #  깨져도 죽지 않게 replace 로 받는다 — 로그가 목적이지 파싱 정확도가 목적이 아니다.
-            line = raw.decode('utf-8', errors='replace').rstrip()
-            if not line:
-                continue
-            last = line
-            step['log'] = line[:200]
-            m = _PROGRESS.search(line)
-            if m:
-                step['percent'] = min(100, int(m.group(3)))
-        await proc.wait()
-
-    try:
-        await asyncio.wait_for(pump(), timeout=STEP_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return False, f'{STEP_TIMEOUT // 60}분을 넘겨 중단했어요.'
-    except asyncio.CancelledError:
-        proc.kill()
-        await proc.wait()
-        raise
+    t0 = time.time()
+    for raw in proc.stdout:
+        line = raw.rstrip()
+        if not line:
+            continue
+        last = line
+        step['log'] = line[:200]
+        step['elapsed'] = int(time.time() - t0)
+        m = _PROGRESS.search(line)
+        if m:
+            step['done'] = int(m.group(1))
+            step['total'] = int(m.group(2))
+            step['percent'] = min(100, int(m.group(3)))
+    proc.wait()
     return proc.returncode == 0, last
+
+
+async def _run_one(cmd: list[str], step: dict) -> tuple[bool, str]:
+    """위 동기 실행을 스레드로 넘기고 타임아웃을 건다. (성공여부, 마지막 줄)
+
+    ★ 타임아웃 때는 **반드시 프로세스를 kill 한다.** 스레드만 버리면 자식은 그대로 살아남아
+      임베딩이 몰래 계속 돌면서 Pinecone·Gemini 쿼터를 태운다.
+      kill 하면 stdout 이 닫혀 for 루프가 끝나고 스레드도 따라서 정리된다.
+    """
+    holder: dict = {}
+    task = asyncio.create_task(asyncio.to_thread(_run_blocking, cmd, step, holder))
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=STEP_TIMEOUT)
+    except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+        proc = holder.get('proc')
+        if proc and proc.poll() is None:
+            proc.kill()
+        try:
+            await task                      # 스레드가 정리될 때까지 기다린다
+        except Exception:                   # noqa: BLE001
+            pass
+        if isinstance(e, asyncio.CancelledError):
+            raise
+        #  1분 미만이면 «0분» 이 되어 말이 안 되므로 초로 적는다(시험 때 실측).
+        #  괄호로 감싸면 «분/초» 어느 쪽이 와도 조사가 어색해지지 않는다.
+        limit = (f'{STEP_TIMEOUT // 60}분' if STEP_TIMEOUT >= 60 else f'{STEP_TIMEOUT}초')
+        return False, f'제한 시간({limit})을 넘겨 중단했어요.'
 
 
 async def _run_all() -> None:
@@ -158,6 +206,7 @@ async def _run_all() -> None:
         for spec, step in zip(STEPS, _STATE['steps']):
             _STATE['current'] = spec['key']
             step['status'] = 'running'
+            step['_t0'] = time.time()          # snapshot() 이 경과시간을 다시 재는 기준
             ok_all = True
             for cmd in spec['commands']:
                 try:

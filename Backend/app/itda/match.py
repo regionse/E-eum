@@ -103,32 +103,123 @@ def _pinecone():
 #  질의와 후보를 '함께' 읽어 진짜 관련도를 매긴다 — 실측(2026-07-29):
 #    "어르신 돌보는 일" → 요양지원 0.76 · 사회복지 0.58 · 간호 0.32 · 보육교사 0.09
 #  실패(쿼터·네트워크·권한)하면 원래 순서를 그대로 쓴다 — 리랭크는 '개선'이지 '필수'가 아니다.
+#  ★ 2026-08-04 — 공급자를 갈아끼울 수 있게 바꿨다. 왜:
+#    Pinecone 인퍼런스 무료 등급은 **리랭크 월 500회**뿐이다. 8월 4일에 이미 소진되어
+#    로컬·서버 양쪽이 조용히 폴백으로 돌고 있었다(RRF 1위 · 벡터 순서).
+#    경고가 프로세스당 한 번만 찍히는 탓에 며칠간 아무도 몰랐다.
+#    ⇒ 여러 공급자를 순서대로 시도하고, 쿼터가 끝난 곳은 이번 프로세스에서 건너뛴다.
+#
+#  실사용량 환산(실측): 후보 12개 문서 ≈ 811토큰, 턴당 리랭크 2회(직업+강좌) ≈ 1,622토큰
+#    Pinecone 500회  = 약   250턴
+#    Jina 1,000만토큰 = 약 6,165턴   ← 25배
 RERANK_MODEL = os.environ.get('ITDA_RERANK_MODEL') or ENV.get('ITDA_RERANK_MODEL') or 'bge-reranker-v2-m3'
 
-_RERANK_WARNED = False        # 리랭커 실패 경고를 프로세스당 1회만 찍기 위한 플래그
+#  Jina — 카드 없이 키가 즉시 발급된다(https://jina.ai/reranker/). 한국어 포함 100+ 언어.
+JINA_KEY = os.environ.get('JINA_API_KEY') or ENV.get('JINA_API_KEY')
+#  모델명은 Jina 콘솔에서 고른 것과 맞춰야 한다(2026-08-04 기준 v3.5).
+#  .env 의 ITDA_JINA_RERANK_MODEL 로 언제든 갈아끼울 수 있게 두었다 —
+#  무료 등급에서 특정 모델이 막히면 콘솔에서 되는 걸 골라 그 이름만 넣으면 된다.
+JINA_MODEL = (os.environ.get('ITDA_JINA_RERANK_MODEL')
+              or ENV.get('ITDA_JINA_RERANK_MODEL')
+              or 'jina-reranker-v3.5')
+
+_RERANK_DEAD: set[str] = set()     # 쿼터·인증으로 끝난 공급자 — 매 요청 재시도하면 지연만 는다
+_RERANK_WARNED: set[str] = set()   # 경고는 공급자당 한 번만
+_RERANK_ACTIVE: str | None = None  # 마지막으로 성공한 공급자 (health 표시용)
+
+
+def _rerank_warn(provider, e, fatal):
+    if provider in _RERANK_WARNED:
+        return
+    _RERANK_WARNED.add(provider)
+    tail = ' — 이번 실행에서는 더 쓰지 않습니다.' if fatal else ''
+    print(f'[itda] ⚠️ 리랭커({provider}) 사용 불가{tail} '
+          f'{type(e).__name__}: {str(e)[:140]}', flush=True)
+
+
+def _is_fatal(e):
+    """쿼터 소진·인증 실패면 이번 프로세스에서 그 공급자를 접는다.
+    네트워크 순간 오류는 접지 않는다 — 다음 요청엔 될 수 있다."""
+    s = f'{type(e).__name__} {e}'.lower()
+    return any(k in s for k in ('429', 'ratelimit', 'resource_exhausted', 'quota',
+                                '401', '402', '403', 'unauthorized', 'forbidden',
+                                'payment', 'insufficient'))
+
+
+def _jina_sync(q, docs, n):
+    """Jina 리랭크 — 외부 의존성 없이 urllib 로 부른다(httpx 유무에 안 흔들리게)."""
+    body = json.dumps({'model': JINA_MODEL, 'query': q,
+                       'documents': list(docs), 'top_n': n,
+                       'return_documents': False}).encode()
+    #  ★ User-Agent 를 반드시 넣는다(2026-08-04 실측).
+    #    안 넣으면 urllib 기본값(Python-urllib/3.x)이 Jina 앞단 Cloudflare 에 걸려
+    #    **403 error code 1010** 이 온다. 키·모델과 무관하게 전부 막힌다.
+    #    처음엔 키나 모델 문제로 오해했는데, UA 만 붙이니 그대로 통과했다.
+    req = urllib.request.Request(
+        'https://api.jina.ai/v1/rerank', data=body,
+        headers={'Content-Type': 'application/json',
+                 'Authorization': f'Bearer {JINA_KEY}',
+                 'User-Agent': 'eum-itda/1.0 (+https://eum.r-e.kr)'})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        out = json.loads(r.read())
+    #  응답: {"results":[{"index":0,"relevance_score":0.98}, ...]}
+    #  점수 키 이름은 버전에 따라 relevance_score / score 로 갈린다 — 둘 다 받는다.
+    return [(int(x['index']), float(x.get('relevance_score', x.get('score', 0.0))))
+            for x in out.get('results', [])]
+
+
+async def _try_jina(q, docs, n):
+    return await asyncio.to_thread(_jina_sync, q, docs, n)
+
+
+async def _try_pinecone(q, docs, n):
+    res = await asyncio.to_thread(lambda: _pc().inference.rerank(
+        model=RERANK_MODEL, query=q, documents=list(docs),
+        top_n=n, return_documents=False))
+    return [(int(row.index), float(row.score)) for row in res.data]
+
+
+def rerank_health():
+    """지금 어떤 리랭커가 살아 있나 — 관리 화면·점검용.
+    이번 사고(무료 한도 소진을 며칠간 아무도 모름)를 다시 겪지 않으려고 노출한다."""
+    return {'active': _RERANK_ACTIVE,
+            'dead': sorted(_RERANK_DEAD),
+            'jina_key': bool(JINA_KEY),
+            'pinecone_key': bool(PINECONE_KEY)}
 
 
 async def rerank(query_text, docs, top_n=None):
     """[(문서문자열)] 을 질의와의 관련도로 재정렬 → [(원래인덱스, 점수)] 관련도 높은 순.
-    docs 가 비었거나 리랭크가 실패하면 [] 를 돌려준다(호출부가 원래 순서로 폴백)."""
+
+    공급자를 순서대로 시도한다(Jina → Pinecone). 전부 실패하면 [] 를 돌려주고,
+    호출부는 원래 순서를 그대로 쓴다 — 리랭크는 '개선'이지 '필수'가 아니다.
+    """
+    global _RERANK_ACTIVE
     q = re.sub(r'\s+', ' ', (query_text or '')).strip()
     if not q or not docs:
         return []
     n = top_n or len(docs)
-    try:
-        res = await asyncio.to_thread(lambda: _pc().inference.rerank(
-            model=RERANK_MODEL, query=q, documents=list(docs),
-            top_n=n, return_documents=False))
-        return [(int(row.index), float(row.score)) for row in res.data]
-    except Exception as e:
-        #  ★ 조용히 삼키면 안 된다(2026-07-30) — 리랭커가 상시 고장나도(키 만료·모델명 오타·쿼터)
-        #    아무 신호 없이 품질만 영구 저하됐다. 프로세스당 한 번만 찍어 로그를 도배하지 않는다.
-        global _RERANK_WARNED
-        if not _RERANK_WARNED:
-            _RERANK_WARNED = True
-            print(f'[itda] ⚠️ 리랭커 사용 불가 — 폴백으로 계속 진행합니다. '
-                  f'model={RERANK_MODEL} · {type(e).__name__}: {str(e)[:120]}')
-        return []                                  # 폴백은 호출부에서 (원래 순서 유지)
+
+    providers = []
+    if JINA_KEY:
+        providers.append(('jina', _try_jina))
+    if PINECONE_KEY:
+        providers.append(('pinecone', _try_pinecone))
+
+    for name, fn in providers:
+        if name in _RERANK_DEAD:
+            continue
+        try:
+            out = await fn(q, docs, n)
+            if out:
+                _RERANK_ACTIVE = name
+                return out
+        except Exception as e:                      # noqa: BLE001
+            fatal = _is_fatal(e)
+            if fatal:
+                _RERANK_DEAD.add(name)
+            _rerank_warn(name, e, fatal)
+    return []                                       # 폴백은 호출부에서 (원래 순서 유지)
 
 
 # ── ② 매칭: 질의 → 벡터검색 → 중복 제거 → 강좌 상세 ─────────────────
@@ -265,6 +356,17 @@ def _rrf(*ranked_id_lists, k=60):
     큰 쪽이 압도한다. 그래서 '순위'로 바꿔 합친다 — 어느 검색에서든 1등은 1등이다.
     두 검색에 다 있으면 점수가 커지고, 한쪽에만 있으면 작아진다.
     k=60 은 RRF 표준값(상위권 격차를 완만하게 해 한쪽 검색의 잡음에 덜 흔들린다).
+
+    ★ '원문 가중치' 시도는 **측정으로 기각했다**(2026-08-04).
+      가설: RRF 가 모든 순위에 똑같이 한 표를 주니, 사용자 원문 순위에 무게를 더 주면
+            LLM 변형이 원문을 밀어내는 것을 막을 수 있다.
+      실측: 「간호조무사가 되고 싶어요」의 정답(요양지원)이 무게 1.0→5.0 에서
+            8위 → 7위로 **거의 안 움직였다.** 「전기기능사」는 4위 → 6위로 오히려 나빠졌다.
+      왜 안 되나: k=60 이면 1/61 과 1/66 이 거의 같다. 즉 RRF 는 사실상 **표 세기**다 —
+            「어느 목록에서 1등인가」보다 「몇 개 목록에 나오는가」가 이긴다.
+            요양지원은 원문 목록에만 있고, 의료기기관리는 변형 3개 목록에 다 있었다.
+            무게로 이길 수 있는 구조가 아니다. ⇒ **질의 목록 자체를 손봐야 한다**
+            (그래서 DIRECT 는 변형을 아예 안 넘긴다 — itda_core 의 _alts 주석 참고).
     """
     score = {}
     for ids in ranked_id_lists:
@@ -372,10 +474,19 @@ async def match_jobs(db, query_text, top_k=6, min_score=0.0):
     #  (사용자 원문 · 슬롯 질의)를 앞에 두고 LLM 변형을 뒤에 둔다 — 잘려도 앵커는 남는다.
     queries = list(dict.fromkeys(queries))[:4]
 
+    #  ★ 질의 변형별 검색을 **동시에** 던진다(2026-08-04). 예전엔 for 루프로 하나씩 기다렸다.
+    #    실측: 카드 한 턴 10.21초 중 **4.52초가 여기**였다(벡터 1.26+1.07+0.97+1.19, 순차).
+    #    변형끼리는 서로 의존하지 않으므로 기다릴 이유가 없다 — 결과·순서·점수는 그대로다.
+    #    (키워드는 같은 MySQL 세션을 쓰므로 동시에 던지지 않는다. 실측 0.00초라 이득도 없다.)
+    over = max(top_k * 3, 12)
+    vecs = await asyncio.gather(*(_search(q, NS_JOB, over, min_score) for q in queries),
+                                return_exceptions=True)
     ranked, vec_score, kw_score = [], {}, {}
-    for q in queries:
-        vec = await _search(q, NS_JOB, max(top_k * 3, 12), min_score)        # [(job_code, cosine)]
-        kw = await _keyword_jobs(db, q, max(top_k * 3, 12))                  # [(job_code, kw_score)]
+    for q, vec in zip(queries, vecs):
+        if isinstance(vec, BaseException):            # 한 변형이 실패해도 나머지로 진행한다
+            print(f'[itda] 벡터검색 실패(변형 하나 건너뜀): {type(vec).__name__}: {vec}')
+            vec = []
+        kw = await _keyword_jobs(db, q, over)                                # [(job_code, kw_score)]
         ranked.append([c for c, _ in vec])
         ranked.append([c for c, _ in kw])
         for c, s in vec:                              # 점수는 '가장 높게 나온 값'을 남긴다
