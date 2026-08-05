@@ -967,20 +967,18 @@ async def recommend_facility_for_latest_analysis(
     longitude: float,
 ) -> dict:
     try:
-        # 가장 최근 완료된 주의 기간
-        period_start, period_end = get_week_period()
-
-        # 최근 완료된 주의 분석을 정확히 조회
+        # 해당 가족방에서 가장 최근에 저장된 주간 분석 조회
         statement = (
             select(weekly_care_analyses)
             .where(
                 weekly_care_analyses.care_group_id
-                == care_group_id,
-                weekly_care_analyses.period_start
-                == period_start,
-                weekly_care_analyses.period_end
-                == period_end,
+                == care_group_id
             )
+            .order_by(
+                weekly_care_analyses.period_end.desc(),
+                weekly_care_analyses.weekly_analysis_id.desc(),
+            )
+            .limit(1)
         )
 
         result = await db.execute(statement)

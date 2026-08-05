@@ -203,6 +203,7 @@ export function getSupportFacilityMap(facilityId) {
 export function analyzeWeeklyCare({
   careGroupId,
   targetDate,
+  signal,
 }) {
   const params = new URLSearchParams()
 
@@ -218,6 +219,7 @@ export function analyzeWeeklyCare({
     }`,
     {
       method: 'POST',
+      signal,
     },
   )
 }
@@ -226,11 +228,13 @@ export function recommendFacility({
   careGroupId,
   latitude,
   longitude,
+  signal,
 }) {
   return request(
     `/weekly-care-analyses/${careGroupId}/recommend`,
     {
       method: 'POST',
+      signal,
       body: JSON.stringify({
         latitude,
         longitude,
