@@ -497,11 +497,16 @@ async def match_jobs(db, query_text, top_k=6, min_score=0.0):
         return []
     order = _rrf(*ranked)                             # 모든 순위(질의×2)를 한 번에 RRF
     codes = list(vec_score.keys() | kw_score.keys())
+    #  ★ job_attr 조인 (2026-08-05) — 직업의 활동유형·다루는대상 태그.
+    #    LEFT JOIN 이라 태그가 없는 직업(현재 30개)도 그대로 나온다. 없으면 None.
+    #    ※ 이 값 자체는 순위를 바꾸지 않는다. 쓰는 쪽(itda_core)이 가중치로 쓴다.
     stmt = text("SELECT jc.job_code, jc.job_name, jc.job_mcls_name, jc.job_description, "
-                "       COUNT(cj.cert_id) "
-                "FROM job_catalog jc LEFT JOIN cert_job cj ON cj.job_code = jc.job_code "
+                "       COUNT(cj.cert_id), ja.act_type, ja.obj_type "
+                "FROM job_catalog jc "
+                "LEFT JOIN cert_job cj ON cj.job_code = jc.job_code "
+                "LEFT JOIN job_attr  ja ON ja.job_code = jc.job_code "
                 "WHERE jc.job_code IN :codes "
-                "GROUP BY jc.job_code").bindparams(
+                "GROUP BY jc.job_code, ja.act_type, ja.obj_type").bindparams(
                     bindparam("codes", expanding=True))
     rows = (await db.execute(stmt, {"codes": codes})).fetchall()
     info = {str(r[0]): r for r in rows}
@@ -513,6 +518,7 @@ async def match_jobs(db, query_text, top_k=6, min_score=0.0):
         out.append({'job_code': str(r[0]), 'job_name': r[1], 'group': r[2],
                     'description': r[3],                              # NCS DUTY_DEF (카드 설명·2026-07-29)
                     'n_cert': int(r[4]),
+                    'act_type': r[5], 'obj_type': r[6],               # job_attr 태그 (없으면 None)
                     'score': round(vec_score.get(code, 0.0), 3),      # 벡터 코사인 (_is_spread·notfound 판정용)
                     'kw_score': round(kw_score.get(code, 0.0), 2)})   # 키워드 점수
         if len(out) >= top_k:

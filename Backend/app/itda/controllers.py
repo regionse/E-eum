@@ -310,9 +310,27 @@ async def _saved_goal(db, map_id: int) -> Goal:
     )
 
 
+def _claim_session(st: dict, user_id: int) -> None:
+    """이 세션이 이 사용자의 것인지 확인하고, 처음이면 소유자로 표시한다 (2026-08-05).
+
+    왜 필요한가 — `session_id` 는 **프론트가 만들어 보내는 값**이고 대화 자체는 비로그인이다.
+    그래서 예전엔 로그인한 A 가 B 의 session_id 를 넘기면 **B 의 카드와 B 의 profile_json 이
+    A 의 지도로 저장**됐고, 그대로 A 가 조회할 수 있었다.
+    새어나가는 값이 가볍지 않다 — 제약 슬롯에는 학력부담·체력부담·비용부담이 들어 있다.
+    ⚠ 실제 악용에는 B 의 session_id(무작위 11자)를 알아야 하므로 무차별 대입은 비현실적이다.
+      그래도 **인증 경계에 검증이 없다는 것 자체가 문제**라 막는다.
+    ※ 비로그인 대화도 허용해야 하므로 '처음 만지는 로그인 사용자'가 소유자가 된다.
+    """
+    owner = st.get("owner")
+    if owner is not None and owner != user_id:
+        raise HTTPException(status_code=403, detail="이 대화의 결과가 아니에요.")
+    st["owner"] = user_id
+
+
 async def save_map(db, user_id: int, session_id: str) -> dict:
     """세션에 캐시된 마지막 카드를 미래설계지도로 저장 (로그인 사용자 소유)."""
     st = session.get(session_id)
+    _claim_session(st, user_id)
     card = st.get("last_card") or {}
     job_code = (card.get("job") or {}).get("code")
 
@@ -447,6 +465,8 @@ async def resume_map(db, user_id: int, map_id: int, session_id: str) -> dict:
                   f"{type(e).__name__}: {e}")
             profile = {}
     st = session.get(session_id)
+    #  ★ 여기도 남의 세션을 덮어쓸 수 있다 — 데이터가 새지는 않지만 남의 대화가 망가진다.
+    _claim_session(st, user_id)
     st["profile"] = profile                       # 세션에 슬롯 복원 → 대화 이어감
     st["last_card"] = None
     st["resumed_map_id"] = map_id                 # 저장 버튼이 '이미 저장됨'을 알 수 있게(save_map 참고)

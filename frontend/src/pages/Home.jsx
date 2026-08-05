@@ -22,7 +22,7 @@ export default function Home() {
             <span className="eyebrow">덜다 · 잇다 · 나누다</span>
             <h1>가족을 돌보는 청년을 위한<br />통합 돌봄 파트너</h1>
             <p className="lead">
-              흩어진 복지·교육 제도를, 청년이 닿을 수 있는 언어로.<br />
+              흩어진 정책 지원·교육 제도를, 청년이 닿을 수 있는 언어로.<br />
               이음이 대신 읽고 건네드려요.
             </p>
             <div className="hero-cta">
