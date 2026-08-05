@@ -36,19 +36,10 @@ async def collect_all_policy_items(
     모든 목록 페이지를 조회한다.
     """
 
-    collected_items: dict[
-        str,
-        dict[str, str | None],
-    ] = {}
+    collected_items: dict[str, dict[str, str | None]] = {}
 
-    for (
-        category_name,
-        category_url,
-    ) in CATEGORY_URLS.items():
-        print(
-            f"\n[{category_name}] "
-            "첫 목록 페이지 조회 중..."
-        )
+    for (category_name, category_url) in CATEGORY_URLS.items():
+        print(f"\n[{category_name}] 첫 목록 페이지 조회 중...")
 
         first_html = await fetch_policy_list_html(
             client=client,
@@ -131,23 +122,15 @@ async def process_policy_item(
     """
 
     # 경기청년포털에서 사용하는 외부 정책 ID
-    gyeonggi_external_id = list_item.get(
-        "article_no"
-    )
+    gyeonggi_external_id = list_item.get("article_no")
 
-    category_url = list_item.get(
-        "category_url"
-    )
+    category_url = list_item.get("category_url")
 
     if not gyeonggi_external_id:
-        raise ValueError(
-            "경기 정책 외부 ID가 없습니다."
-        )
+        raise ValueError("경기 정책 외부 ID가 없습니다.")
 
     if not category_url:
-        raise ValueError(
-            "경기 정책 카테고리 URL이 없습니다."
-        )
+        raise ValueError("경기 정책 카테고리 URL이 없습니다.")
 
     detail_html = await fetch_policy_detail_html(
         client=client,
@@ -187,13 +170,9 @@ async def run_gyeonggi_policy_sync(
     # MySQL policy.policy_id 목록
     changed_policy_ids: list[int] = []
 
-    failed_items: list[
-        dict[str, str | None]
-    ] = []
+    failed_items: list[dict[str, str | None]] = []
 
-    final_failed_items: list[
-        dict[str, str | None]
-    ] = []
+    final_failed_items: list[dict[str, str | None]] = []
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(
@@ -202,15 +181,10 @@ async def run_gyeonggi_policy_sync(
         ),
         follow_redirects=True,
     ) as client:
-        list_items = await collect_all_policy_items(
-            client
-        )
+        list_items = await collect_all_policy_items(client)
 
         if not list_items:
-            raise RuntimeError(
-                "경기청년포털에서 정책 목록을 "
-                "찾지 못했습니다."
-            )
+            raise RuntimeError("경기청년포털에서 정책 목록을 찾지 못했습니다.")
 
         print(
             "\n경기청년 정책 "
@@ -251,28 +225,14 @@ async def run_gyeonggi_policy_sync(
                     )
                 )
 
-                if (
-                    action
-                    == PolicySyncAction.CREATED
-                ):
+                if (action == PolicySyncAction.CREATED):
                     created_count += 1
-
-                    changed_policy_ids.append(
-                        db_policy_id
-                    )
-
+                    changed_policy_ids.append(db_policy_id)
                     print("  → 신규 등록")
 
-                elif (
-                    action
-                    == PolicySyncAction.UPDATED
-                ):
+                elif (action == PolicySyncAction.UPDATED):
                     updated_count += 1
-
-                    changed_policy_ids.append(
-                        db_policy_id
-                    )
-
+                    changed_policy_ids.append(db_policy_id)
                     print("  → 내용 변경")
 
                 else:
@@ -280,20 +240,15 @@ async def run_gyeonggi_policy_sync(
                     print("  → 변경 없음")
 
             except Exception as error:
-                failed_items.append(
-                    list_item
-                )
+                failed_items.append(list_item)
 
                 print(
                     "  → 1차 처리 실패: "
-                    f"{type(error).__name__}: "
-                    f"{error}"
+                    f"{type(error).__name__}: {error}"
                 )
 
             if index < len(list_items):
-                await asyncio.sleep(
-                    REQUEST_INTERVAL
-                )
+                await asyncio.sleep(REQUEST_INTERVAL)
 
         # =====================================
         # 실패 정책 재처리
@@ -301,19 +256,12 @@ async def run_gyeonggi_policy_sync(
 
         if failed_items:
             print(
-                f"\n경기 실패 정책 "
-                f"{len(failed_items)}건을 "
-                "다시 처리합니다."
+                f"\n경기 실패 정책 {len(failed_items)}건을 다시 처리합니다."
             )
 
-            for index, list_item in enumerate(
-                failed_items,
-                start=1,
-            ):
+            for index, list_item in enumerate(failed_items, start=1):
                 gyeonggi_external_id = (
-                    list_item.get(
-                        "article_no"
-                    )
+                    list_item.get("article_no")
                 )
 
                 policy_name = list_item.get(
@@ -337,43 +285,22 @@ async def run_gyeonggi_policy_sync(
                         )
                     )
 
-                    if (
-                        action
-                        == PolicySyncAction.CREATED
-                    ):
+                    if (action == PolicySyncAction.CREATED):
                         created_count += 1
+                        changed_policy_ids.append(db_policy_id)
 
-                        changed_policy_ids.append(
-                            db_policy_id
-                        )
+                        print("  → 재시도 성공: 신규 등록")
 
-                        print(
-                            "  → 재시도 성공: "
-                            "신규 등록"
-                        )
-
-                    elif (
-                        action
-                        == PolicySyncAction.UPDATED
-                    ):
+                    elif (action == PolicySyncAction.UPDATED):
                         updated_count += 1
+                        changed_policy_ids.append(db_policy_id)
 
-                        changed_policy_ids.append(
-                            db_policy_id
-                        )
-
-                        print(
-                            "  → 재시도 성공: "
-                            "내용 변경"
-                        )
+                        print("  → 재시도 성공: 내용 변경")
 
                     else:
                         skipped_count += 1
 
-                        print(
-                            "  → 재시도 성공: "
-                            "변경 없음"
-                        )
+                        print("  → 재시도 성공: 변경 없음")
 
                 except Exception as error:
                     final_failed_items.append(
@@ -382,18 +309,13 @@ async def run_gyeonggi_policy_sync(
 
                     print(
                         "  → 재시도 실패: "
-                        f"{type(error).__name__}: "
-                        f"{error}"
+                        f"{type(error).__name__}: {error}"
                     )
 
                 if index < len(failed_items):
-                    await asyncio.sleep(
-                        REQUEST_INTERVAL
-                    )
+                    await asyncio.sleep(REQUEST_INTERVAL)
 
-    failed_count = len(
-        final_failed_items
-    )
+    failed_count = len(final_failed_items)
 
     print("\n===== 경기 정책 결과 =====")
     print(f"목록 정책: {len(list_items)}건")

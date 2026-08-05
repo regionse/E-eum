@@ -20,12 +20,9 @@ from app.delda.services.policy_sync_service import (
 
 
 PAGE_SIZE = 50
-DETAIL_REQUEST_INTERVAL = 1.0
+DETAIL_REQUEST_INTERVAL = 1.0       # 정책 상세 요청 한 건을 처리한 뒤 다음 정책을 처리하기 전까지 기다리는 시간
 
-SyncSummary = dict[
-    str,
-    int | list[int],
-]
+SyncSummary = dict[str, int | list[int]]
 
 
 async def fetch_all_policy_list(
@@ -42,9 +39,7 @@ async def fetch_all_policy_list(
     page_no = 1
     total_count = 0
 
-    policy_items: list[
-        dict[str, str | None]
-    ] = []
+    policy_items: list[dict[str, str | None]] = []
 
     while True:
         print(
@@ -57,7 +52,7 @@ async def fetch_all_policy_list(
             api_key=api_key,
             page_no=page_no,
             num_of_rows=PAGE_SIZE,
-        )
+        )       # bytes 형태의 XML 원본
 
         total_count, page_items = (
             parse_policy_list_page(
@@ -126,15 +121,15 @@ async def process_policy_item(
         detail_item=detail_item,
     )
 
-    async with db.begin_nested():
-        action, db_policy_id = (
+    async with db.begin_nested():       # 데이터베이스에 SAVEPOINT를 만듦
+        action, db_policy_id = (        # 정규화된 정책을 DB와 비교하고 동기화. 
             await sync_single_policy(
                 db=db,
                 policy_data=policy_data,
             )
         )
 
-    return action, db_policy_id
+    return action, db_policy_id     # action : 정책 처리 결과, db_policy_id : policy 테이블의 pk
 
 
 async def run_welfare_policy_sync(
@@ -157,18 +152,17 @@ async def run_welfare_policy_sync(
     # MySQL policy.policy_id 목록
     changed_policy_ids: list[int] = []
 
-    failed_items: list[
-        dict[str, str | None]
-    ] = []
+    # 1차 실패 목록
+    failed_items: list[dict[str, str | None]] = []
 
-    final_failed_items: list[
-        dict[str, str | None]
-    ] = []
+    # 최종 실패 목록
+    final_failed_items: list[dict[str, str | None]] = []
 
+    # HTTP 클라이언트 생성
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(
-            30.0,
-            connect=10.0,
+            30.0,               # 연결 이후 읽기 등의 일반 타임아웃은 30초를 사용
+            connect=10.0,       # 서버와 연결을 맺는 과정은 최대 10초 기다림.
         ),
         follow_redirects=True,
     ) as client:
@@ -181,13 +175,11 @@ async def run_welfare_policy_sync(
 
         if not policy_items:
             raise RuntimeError(
-                "중앙부처 정책 목록을 "
-                "찾지 못했습니다."
+                "중앙부처 정책 목록을 찾지 못했습니다."
             )
 
         print(
-            "\n중앙부처 정책 상세 조회를 "
-            "시작합니다."
+            "\n중앙부처 정책 상세 조회를 시작합니다."
         )
 
         # =====================================
@@ -224,44 +216,26 @@ async def run_welfare_policy_sync(
                     )
                 )
 
-                if (
-                    action
-                    == PolicySyncAction.CREATED
-                ):
+                if (action == PolicySyncAction.CREATED):
                     created_count += 1
-
-                    changed_policy_ids.append(
-                        db_policy_id
-                    )
-
+                    changed_policy_ids.append(db_policy_id)
                     print("  → 신규 등록")
 
-                elif (
-                    action
-                    == PolicySyncAction.UPDATED
-                ):
+                elif (action == PolicySyncAction.UPDATED):
                     updated_count += 1
-
-                    changed_policy_ids.append(
-                        db_policy_id
-                    )
-
+                    changed_policy_ids.append(db_policy_id)
                     print("  → 내용 변경")
 
                 else:
                     skipped_count += 1
-
                     print("  → 변경 없음")
 
             except Exception as error:
-                failed_items.append(
-                    list_item
-                )
+                failed_items.append(list_item)
 
                 print(
                     "  → 1차 처리 실패: "
-                    f"{type(error).__name__}: "
-                    f"{error}"
+                    f"{type(error).__name__}: {error}"
                 )
 
             if index < len(policy_items):
@@ -275,8 +249,7 @@ async def run_welfare_policy_sync(
 
         if failed_items:
             print(
-                f"\n중앙부처 실패 정책 "
-                f"{len(failed_items)}건을 "
+                f"\n중앙부처 실패 정책 {len(failed_items)}건을 "
                 "다시 처리합니다."
             )
 
@@ -285,14 +258,10 @@ async def run_welfare_policy_sync(
                 start=1,
             ):
                 welfare_external_id = (
-                    list_item.get(
-                        "servId"
-                    )
+                    list_item.get("servId")
                 )
 
-                policy_name = list_item.get(
-                    "servNm"
-                )
+                policy_name = list_item.get("servNm")
 
                 print(
                     f"[재시도 "
@@ -311,67 +280,35 @@ async def run_welfare_policy_sync(
                         )
                     )
 
-                    if (
-                        action
-                        == PolicySyncAction.CREATED
-                    ):
+                    if (action == PolicySyncAction.CREATED):
                         created_count += 1
+                        changed_policy_ids.append(db_policy_id)
 
-                        changed_policy_ids.append(
-                            db_policy_id
-                        )
+                        print("  → 재시도 성공: 신규 등록")
 
-                        print(
-                            "  → 재시도 성공: "
-                            "신규 등록"
-                        )
-
-                    elif (
-                        action
-                        == PolicySyncAction.UPDATED
-                    ):
+                    elif (action == PolicySyncAction.UPDATED):
                         updated_count += 1
-
-                        changed_policy_ids.append(
-                            db_policy_id
-                        )
-
-                        print(
-                            "  → 재시도 성공: "
-                            "내용 변경"
-                        )
+                        changed_policy_ids.append(db_policy_id)
+                        print("  → 재시도 성공: 내용 변경")
 
                     else:
                         skipped_count += 1
-
-                        print(
-                            "  → 재시도 성공: "
-                            "변경 없음"
-                        )
+                        print("  → 재시도 성공: 변경 없음")
 
                 except Exception as error:
-                    final_failed_items.append(
-                        list_item
-                    )
+                    final_failed_items.append(list_item)
 
                     print(
                         "  → 재시도 실패: "
-                        f"{type(error).__name__}: "
-                        f"{error}"
+                        f"{type(error).__name__}: {error}"
                     )
 
                 if index < len(failed_items):
-                    await asyncio.sleep(
-                        DETAIL_REQUEST_INTERVAL
-                    )
+                    await asyncio.sleep(DETAIL_REQUEST_INTERVAL)
 
-    failed_count = len(
-        final_failed_items
-    )
+    failed_count = len(final_failed_items)
 
-    print(
-        "\n===== 중앙부처 정책 결과 ====="
-    )
+    print("\n===== 중앙부처 정책 결과 =====")
     print(f"전체 정책: {total_count}건")
     print(f"신규 등록: {created_count}건")
     print(f"내용 변경: {updated_count}건")

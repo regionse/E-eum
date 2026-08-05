@@ -8,24 +8,19 @@ BASE_URL = "https://youth.gg.go.kr"
 
 CATEGORY_URLS = {
     "일자리": (
-        f"{BASE_URL}/gg/intro/"
-        "youth-policy-job-test.do"
+        f"{BASE_URL}/gg/intro/youth-policy-job-test.do"
     ),
     "주거": (
-        f"{BASE_URL}/gg/intro/"
-        "youth-policy-educational-testing.do"
+        f"{BASE_URL}/gg/intro/youth-policy-educational-testing.do"
     ),
     "금융·복지·문화": (
-        f"{BASE_URL}/gg/intro/"
-        "youth-policy-housing-test.do"
+        f"{BASE_URL}/gg/intro/youth-policy-housing-test.do"
     ),
     "교육·직업훈련": (
-        f"{BASE_URL}/gg/intro/"
-        "youth-policy-culture-test.do"
+        f"{BASE_URL}/gg/intro/youth-policy-culture-test.do"
     ),
     "참여·권리": (
-        f"{BASE_URL}/gg/intro/"
-        "youth-policy-law-test.do"
+        f"{BASE_URL}/gg/intro/youth-policy-law-test.do"
     ),
 }
 
@@ -63,8 +58,8 @@ class GyeonggiPolicyCrawlerError(
 async def fetch_policy_list_html(
     client: httpx.AsyncClient,
     category_url: str,
-    offset: int = 0,
-    limit: int = 10,
+    offset: int = 0,        # 몇번째 데이터부터 조회할지
+    limit: int = 10,        # 한 번에 몇개씩 조회할지
 ) -> str:
     """
     경기청년포털 정책 목록 HTML을 조회한다.
@@ -84,9 +79,9 @@ async def fetch_policy_list_html(
         client=client,
         url=category_url,
         params={
-            "mode": "list",
-            "article.offset": offset,
-            "articleLimit": limit,
+            "mode": "list",                 # 목록 화면 요청
+            "article.offset": offset,       # 시작 위치
+            "articleLimit": limit,          # 한 번에 가져올 개수
         },
         request_name="경기 정책 목록",
     )
@@ -112,8 +107,8 @@ async def fetch_policy_detail_html(
         client=client,
         url=category_url,
         params={
-            "mode": "view",
-            "articleNo": article_no,
+            "mode": "view",     # 상세보기 요청
+            "articleNo": article_no,        # 정책 게시글 고유 번호
             "article.offset": 0,
             "articleLimit": 10,
         },
@@ -149,15 +144,10 @@ async def get_html_with_retry(
         except httpx.RequestError as error:
             if attempt >= max_retries:
                 raise GyeonggiPolicyCrawlerError(
-                    f"{request_name} 네트워크 요청이 "
-                    f"{max_retries}회 재시도 후에도 "
-                    "실패했습니다."
+                    f"{request_name} 네트워크 요청이 {max_retries}회 재시도 후에도 실패했습니다."
                 ) from error
 
-            wait_seconds = min(
-                2 ** (attempt + 1),
-                60,
-            )
+            wait_seconds = min(2 ** (attempt + 1), 60)
 
             print(
                 f"[{request_name}] 네트워크 오류: "
@@ -166,16 +156,11 @@ async def get_html_with_retry(
                 f"({attempt + 1}/{max_retries})"
             )
 
-            await asyncio.sleep(
-                wait_seconds
-            )
+            await asyncio.sleep(wait_seconds)
 
             continue
 
-        if (
-            response.status_code
-            in RETRYABLE_STATUS_CODES
-        ):
+        if (response.status_code in RETRYABLE_STATUS_CODES):
             if attempt >= max_retries:
                 raise GyeonggiPolicyCrawlerError(
                     f"{request_name} 요청에서 "
@@ -183,10 +168,7 @@ async def get_html_with_retry(
                     "반복되어 중단했습니다."
                 )
 
-            wait_seconds = min(
-                2 ** (attempt + 1),
-                60,
-            )
+            wait_seconds = min(2 ** (attempt + 1), 60)
 
             print(
                 f"[{request_name}] 일시적 오류: "
@@ -195,9 +177,7 @@ async def get_html_with_retry(
                 f"({attempt + 1}/{max_retries})"
             )
 
-            await asyncio.sleep(
-                wait_seconds
-            )
+            await asyncio.sleep(wait_seconds)
 
             continue
 

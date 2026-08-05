@@ -1,12 +1,12 @@
 from typing import (
     Literal,
-    TypedDict,
+    TypedDict,      # LangGraph의 상태 객체 구조를 정의. 딕셔너리에 들어갈 키와 타입을 미리 정할수 있음.    
 )
 
 from langgraph.graph import (
-    END,
-    START,
-    StateGraph,
+    END,        # 그래프 종료점
+    START,      # 그래프 시작점
+    StateGraph, # 상태를 고유하면서 여러 노드 연결하는 langgraph 객체
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,7 @@ class PolicyRecommendationGraphState(
     total=False,
 ):
     """
-    LangGraph 노드 사이에서 공유할 상태.
+    LangGraph의 모든 노드가 공유하는 상태 구조.
 
     db:
         현재 요청의 DB 세션
@@ -63,17 +63,17 @@ class PolicyRecommendationGraphState(
         프론트에 반환할 최종 API 응답
     """
 
-    db: AsyncSession
+    db: AsyncSession        # Agent Tool 검색, 즐겨찾기 조회, 추천 결과 저장에 사용
 
-    user_id: int
+    user_id: int            # 현재 로그인한 사용자 ID. 즐겨찾기 여부 조회, 추천 이력 저장
 
-    context: PolicyRecommendationContext
+    context: PolicyRecommendationContext        # 사용자 회원정보와 추천 입력값을 합친 Context
 
-    agent_output: PolicyAgentOutput
+    agent_output: PolicyAgentOutput             # Gemini Agent가 반환한 구조화된 결과
 
-    selected_policies: list[Policy]
+    selected_policies: list[Policy]             # Agent가 선택한 정책 ID에 대응하는 실제 SQLAlchemy Policy 객체
 
-    response: PolicyRecommendationResponse
+    response: PolicyRecommendationResponse      # 프론트엔드에 최종 반환할 응답
 
 
 # =========================================================
@@ -85,13 +85,12 @@ async def run_agent_node(
     state: PolicyRecommendationGraphState,
 ) -> dict:
     """
-    정책 추천 Agent를 실행한다.
+    그래프에서 가장 먼저 실행되는 노드로 정책 추천 Agent를 실행한다.
 
-    Agent 내부에서 필요하면
-    Hybrid RAG 검색 Tool을 호출한다.
+    Agent 내부에서 필요하면 Hybrid RAG 검색 Tool을 호출한다.
     """
 
-    execution = (
+    execution = (       # State에서 DB, Context 꺼내서 추천 Agent 실행
         await run_policy_recommendation_agent(
             db=state["db"],
             context=state["context"],
@@ -103,14 +102,14 @@ async def run_agent_node(
         "selected_policies": (
             execution.selected_policies
         ),
-    }
+    }       # 실행 결과 State에 저장.
 
 
 # =========================================================
 # Agent 결과 분기
 # =========================================================
 
-
+# Agent의 상태에 따라 다음 노드를 결정하는 라우터 함수
 def route_agent_result(
     state: PolicyRecommendationGraphState,
 ) -> Literal[
@@ -122,8 +121,7 @@ def route_agent_result(
     "urgent_support",
 ]:
     """
-    Agent가 반환한 status에 따라
-    다음 노드를 선택한다.
+    Agent가 반환한 status에 따라 다음 노드를 선택한다.
     """
 
     return state["agent_output"].status
@@ -138,19 +136,17 @@ def build_need_more_information_node(
     state: PolicyRecommendationGraphState,
 ) -> dict:
     """
-    추가 질문이 필요한 경우
-    API 응답 Schema로 변환한다.
+    추가 질문이 필요한 경우 API 응답 Schema로 변환한다.
     """
 
-    output = state["agent_output"]
+    output = state["agent_output"]      # Agent 출력 가져오기
 
-    if output.follow_up_question is None:
+    if output.follow_up_question is None:       # 질문 존재 여부 검증
         raise RuntimeError(
-            "추가 질문 응답에 "
-            "follow_up_question이 없습니다."
+            "추가 질문 응답에 follow_up_question이 없습니다."
         )
 
-    response = (
+    response = (        # 프론트에 AI가 이해한 현재 상황, 부족한 정보, 추가 질문, 선택지 전달
         PolicyNeedMoreInformationResponse(
             understood_situation=(
                 output.understood_situation
@@ -164,7 +160,7 @@ def build_need_more_information_node(
         )
     )
 
-    return {
+    return {        # State에 응답 저장
         "response": response,
     }
 
@@ -187,12 +183,12 @@ async def build_completed_response_node(
     agent_policy_map = {
         item.policy_id: item
         for item in output.selected_policies
-    }
+    }       # Agent가 선택한 정책을 정책 id 기준으로 dict로 생성 => Policy 객체와 빠르게 연결하기 위해
 
     selected_policies = state.get(
         "selected_policies",
         [],
-    )
+    )       # 실제 Policy 객체 가져오기
 
     # -----------------------------------------------------
     # 추천된 정책들의 즐겨찾기 여부 조회
@@ -201,37 +197,28 @@ async def build_completed_response_node(
     policy_ids = [
         policy.policy_id
         for policy in selected_policies
-    ]
+    ]       # 추천 정책 ID 추출
 
-    favorite_policy_ids: set[int] = set()
+    favorite_policy_ids: set[int] = set()       
 
+    # 즐겨찾기 조회
     if policy_ids:
         favorite_stmt = (
-            select(
-                PolicyFavorite.policy_id
-            )
+            select(PolicyFavorite.policy_id)
             .where(
-                PolicyFavorite.user_id
-                == state["user_id"],
-                PolicyFavorite.policy_id.in_(
-                    policy_ids
-                ),
+                PolicyFavorite.user_id == state["user_id"],
+                PolicyFavorite.policy_id.in_(policy_ids),
             )
         )
 
-        favorite_result = await state[
-            "db"
-        ].execute(
-            favorite_stmt
-        )
+        favorite_result = await state["db"].execute(favorite_stmt)
 
         favorite_policy_ids = set(
             favorite_result.scalars().all()
         )
 
-    recommendations: list[
-        RecommendedPolicyItemResponse
-    ] = []
+    # 추천 응답 리스트 생성
+    recommendations: list[RecommendedPolicyItemResponse] = []
 
     for rank, policy in enumerate(
         state.get(
@@ -242,12 +229,13 @@ async def build_completed_response_node(
     ):
         agent_policy = agent_policy_map.get(
             policy.policy_id
-        )
+        )       # 실제 Policy 객체와 같은 ID를 가진 Agent 판단을 가져옴. 
 
         if agent_policy is None:
             continue
 
-        recommendations.append(
+        recommendations.append(     # RecommendedPolicyItemResponse 생성
+                        # (DB Policy 객체에서 가져오는 값 + Agent 판단에서 가져오는 값 + LangGraph 노드에서 추가하는 값)
             RecommendedPolicyItemResponse(
                 policy_id=policy.policy_id,
                 source_name=policy.source_name,
@@ -299,10 +287,9 @@ async def build_completed_response_node(
             )
         )
 
-    if not recommendations:
+    if not recommendations:     # 추천 없는 경우
         raise RuntimeError(
-            "추천 완료 상태이지만 "
-            "저장할 추천 정책이 없습니다."
+            "추천 완료 상태이지만 저장할 추천 정책이 없습니다."
         )
 
     # -----------------------------------------------------
@@ -361,12 +348,11 @@ async def build_policy_lookup_response_node(
     추천 결과 이력에는 저장하지 않는다.
     """
 
-    output = state["agent_output"]
+    output = state["agent_output"]      # Agent 출력 가져오기
 
-    if not output.requested_policy_name:
+    if not output.requested_policy_name:        # 정책명 검증. 검색 요청한 정책명이 없으면 오류
         raise RuntimeError(
-            "정책 직접 조회 상태이지만 "
-            "requested_policy_name이 없습니다."
+            "정책 직접 조회 상태이지만 requested_policy_name이 없습니다."
         )
 
     policies = state.get(
@@ -374,10 +360,9 @@ async def build_policy_lookup_response_node(
         [],
     )
 
-    if not policies:
+    if not policies:        # 조회 정책 검증. 
         raise RuntimeError(
-            "정책 직접 조회 상태이지만 "
-            "조회된 정책이 없습니다."
+            "정책 직접 조회 상태이지만 조회된 정책이 없습니다."
         )
 
     # -----------------------------------------------------
@@ -397,19 +382,12 @@ async def build_policy_lookup_response_node(
                 PolicyFavorite.policy_id
             )
             .where(
-                PolicyFavorite.user_id
-                == state["user_id"],
-                PolicyFavorite.policy_id.in_(
-                    policy_ids
-                ),
+                PolicyFavorite.user_id == state["user_id"],
+                PolicyFavorite.policy_id.in_(policy_ids),
             )
         )
 
-        favorite_result = await state[
-            "db"
-        ].execute(
-            favorite_stmt
-        )
+        favorite_result = await state["db"].execute(favorite_stmt)
 
         favorite_policy_ids = set(
             favorite_result.scalars().all()
@@ -419,9 +397,7 @@ async def build_policy_lookup_response_node(
     # Policy 객체를 조회 응답 Schema로 변환
     # -----------------------------------------------------
 
-    policy_items: list[
-        PolicyDetailResponse
-    ] = []
+    policy_items: list[PolicyDetailResponse] = []
 
     for policy in policies[:5]:
         policy_items.append(
@@ -491,8 +467,7 @@ def build_no_policy_found_node(
     state: PolicyRecommendationGraphState,
 ) -> dict:
     """
-    추천 가능한 정책이 없는 경우
-    대체 행동과 함께 응답한다.
+    추천 가능한 정책이 없는 경우 대체 행동과 함께 응답한다.
     """
 
     output = state["agent_output"]
@@ -503,22 +478,18 @@ def build_no_policy_found_node(
         ),
         reason=(
             output.reason
-            or "현재 입력한 상황과 조건에 맞는 "
-            "정책을 찾지 못했습니다."
+            or "현재 입력한 상황과 조건에 맞는 정책을 찾지 못했습니다."
         ),
-        alternative_actions=[
+        alternative_actions=[       # 정책 찾지 못했을 경우 사용자에게 다음 행동 안내.
             PolicyAlternativeAction(
                 action_type=(
                     "welfare_hotline"
                 ),
                 title=(
-                    "보건복지상담센터에 "
-                    "문의하기"
+                    "보건복지상담센터에 문의하기"
                 ),
                 description=(
-                    "보건복지상담센터를 통해 "
-                    "현재 상황에 맞는 지원을 "
-                    "상담받을 수 있습니다."
+                    "보건복지상담센터를 통해 현재 상황에 맞는 지원을 상담받을 수 있습니다."
                 ),
                 phone_number="129",
             ),
@@ -530,13 +501,10 @@ def build_no_policy_found_node(
                     "주변 지원기관 찾아보기"
                 ),
                 description=(
-                    "나누다의 기관 찾기에서 "
-                    "거주지 주변의 지원기관을 "
-                    "확인할 수 있습니다."
+                    "나누다의 기관 찾기에서 거주지 주변의 지원기관을 확인할 수 있습니다."
                 ),
 
-                # 프론트 라우트가 확정된 뒤 입력
-                route=None,
+                route="/share/map",
             ),
         ],
     )
@@ -571,21 +539,19 @@ def build_invalid_input_node(
         "sensitive_information",
     }:
         raise RuntimeError(
-            "invalid_input 상태에 맞는 "
-            "reason_code가 없습니다. "
+            "invalid_input 상태에 맞는 reason_code가 없습니다. "
             f"현재 값: {output.reason_code}"
         )
 
     if output.message is None:
         raise RuntimeError(
-            "invalid_input 상태이지만 "
-            "안내 message가 없습니다."
+            "invalid_input 상태이지만 안내 message가 없습니다."
         )
 
     context = state["context"]
 
-    latest_follow_up_answer = (
-        context.follow_up_answers[-1]
+    latest_follow_up_answer = (     # 최초 입력인지 추가 답변인지 구분
+        context.follow_up_answers[-1]       # 추가 답변이 있으면 마지막 답변을 가져오기
         if context.follow_up_answers
         else None
     )
@@ -600,8 +566,9 @@ def build_invalid_input_node(
         reason_code=output.reason_code,
         input_stage=input_stage,
         message=output.message,
+        # 추가 질문 답변이 잘못된 경우 프론트에서 이전 질문을 다시 보여줄 수 있도록 정보들 리턴
         retry_example=output.retry_example,
-        retry_question_id=(
+        retry_question_id=(     
             latest_follow_up_answer.question_id
             if latest_follow_up_answer is not None
             else None
@@ -657,7 +624,7 @@ def build_urgent_support_node(
 
     output = state["agent_output"]
 
-    if output.reason_code not in {
+    if output.reason_code not in {      # 긴급 지원 상태에 맞는 코드인지 확인
         "self_harm_risk",
         "harm_to_others_risk",
         "immediate_danger",
@@ -673,7 +640,7 @@ def build_urgent_support_node(
         message=URGENT_SUPPORT_MESSAGES[
             output.reason_code
         ],
-        can_continue_policy_recommendation=False,
+        can_continue_policy_recommendation=False,       # 정책 추천 즉각 중단
     )
 
     return {
@@ -685,12 +652,12 @@ def build_urgent_support_node(
 # LangGraph 구성
 # =========================================================
 
-
+# LangGraph 객체 생성. 앞에 정의한 State 구조 사용하는 그래프 생성
 workflow = StateGraph(
     PolicyRecommendationGraphState
 )
 
-
+# 노드 등록. 문자열 노드 이름과 실행할 함수를 연결
 workflow.add_node(
     "run_agent",
     run_agent_node,
@@ -726,7 +693,7 @@ workflow.add_node(
     build_urgent_support_node,
 )
 
-# 시작하면 Agent 실행
+# 시작하면 Agent 실행. 그래프 시작 시 Agent부터 시행됨.
 workflow.add_edge(
     START,
     "run_agent",
@@ -734,6 +701,7 @@ workflow.add_edge(
 
 
 # Agent status에 따른 조건 분기
+# run_agent 끝나면 route_agent_result()를 실행 => 리턴값에 따라 다음 노드 선택.
 workflow.add_conditional_edges(
     "run_agent",
     route_agent_result,
@@ -760,7 +728,8 @@ workflow.add_conditional_edges(
 )
 
 
-# 각 응답 생성 노드가 끝나면 종료
+# 각 응답 생성 노드가 끝나면 종료. (END와 연결) => 한 번의 요청 안에서 반복 질문을 직접 수행하지 않음. 
+# 추가 질문은 같은 HTTP 요청 안에서 반복되는 것이 아니라 새 API 요청으로 이어지는 구조
 workflow.add_edge(
     "build_need_more_information",
     END,
@@ -791,13 +760,14 @@ workflow.add_edge(
     END,
 )
 
+# 그래프 compile (설계한 노드와 Edge를 실제 실행 가능한 LangGraph 객체로 변환)
 policy_recommendation_graph = (
     workflow.compile()
 )
 
 
 # =========================================================
-# 외부 호출 함수
+# 외부 호출 함수 (Controller나 service에서 호출할 최종 진입 함수)
 # =========================================================
 
 
@@ -812,7 +782,7 @@ async def run_policy_recommendation_graph(
     최종 API 응답을 반환한다.
     """
 
-    final_state = (
+    final_state = (     # 그래프 초기 State 전달
         await policy_recommendation_graph.ainvoke(
             {
                 "db": db,
@@ -822,14 +792,12 @@ async def run_policy_recommendation_graph(
         )
     )
 
-    response = final_state.get(
-        "response"
-    )
+    # 최종 응답 가져오기
+    response = final_state.get("response")
 
     if response is None:
         raise RuntimeError(
-            "정책 추천 LangGraph가 "
-            "응답을 생성하지 못했습니다."
+            "정책 추천 LangGraph가 응답을 생성하지 못했습니다."
         )
 
     return response

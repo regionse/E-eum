@@ -10,8 +10,8 @@ from pinecone import (
 load_dotenv()
 
 
-PINECONE_CLOUD="aws"
-PINECONE_REGION="us-east-1"
+POLICY_PINECONE_CLOUD="aws"
+POLICY_PINECONE_REGION="us-east-1"
 DEFAULT_POLICY_EMBEDDING_DIMENSION = 768
 
 

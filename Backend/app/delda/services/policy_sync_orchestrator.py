@@ -27,84 +27,73 @@ from app.delda.services.policy_embedding_service import (
 
 EMBEDDING_INTERVAL_SECONDS = 0.5
 EMBEDDING_RETRY_WAIT_SECONDS = 3.0
-PINECONE_FETCH_BATCH_SIZE = 100
 
-SyncSummary = dict[
-    str,
-    int | list[int],
-]
+SyncSummary = dict[str, int | list[int]]
+"""
+{
+    "created": int,
+    "updated": int,
+    "skipped": int,
+    "failed": int,
+    "changed_policy_ids": list[int],
+}
+"""
 
-EmbeddingSummary = dict[
-    str,
-    int | list[int],
-]
+EmbeddingSummary = dict[str, int | list[int]]
+"""
+{
+    "success": int,
+    "failed": int,
+    "failed_policy_ids": list[int],
+}
+"""
 
 
-def get_summary_count(
-    summary: SyncSummary,
-    key: str,
-) -> int:
+def get_summary_count(summary: SyncSummary, key: str) -> int:
     """
-    정책 동기화 결과에서
-    정수형 집계값을 가져온다.
+    동기화 결과 딕셔너리에서 특정 집계값을 안전하게 가져오는 함수    
     """
 
     value = summary.get(key)
 
-    if not isinstance(value, int):
+    if not isinstance(value, int):      # 가져온 value가 정수인지 아닌지 검사
         raise RuntimeError(
-            f"정책 동기화 결과의 "
-            f"{key} 값이 올바르지 않습니다."
+            f"정책 동기화 결과의 {key} 값이 올바르지 않습니다."
         )
 
     return value
 
 
-def get_changed_policy_ids(
-    summary: SyncSummary,
-) -> list[int]:
+def get_changed_policy_ids(summary: SyncSummary) -> list[int]:
     """
-    정책 동기화 결과에서
-    신규·변경 정책의 DB policy_id를 가져온다.
+    정책 동기화 결과에서 신규·변경 정책의 DB policy_id를 가져온다.
     """
 
-    value = summary.get(
-        "changed_policy_ids"
-    )
+    value = summary.get("changed_policy_ids")
 
-    if not isinstance(value, list):
+    if not isinstance(value, list):     # value가 list인지 검사
         raise RuntimeError(
-            "changed_policy_ids 값이 "
-            "목록 형태가 아닙니다."
+            "changed_policy_ids 값이 목록 형태가 아닙니다."
         )
 
-    if not all(
+    if not all(     # list 안의 모든 값이 정수인지 검사
         isinstance(policy_id, int)
         for policy_id in value
     ):
         raise RuntimeError(
-            "changed_policy_ids에는 "
-            "정수형 DB policy_id만 들어가야 합니다."
+            "changed_policy_ids에는 정수형 DB policy_id만 들어가야 합니다."
         )
 
     return value
 
 
-async def embed_policy(
-    *,
-    gemini_client,
-    pinecone_index,
-    policy: Policy,
-) -> None:
+async def embed_policy(*, gemini_client, pinecone_index, policy: Policy) -> None:
     """
-    정책 한 건을 임베딩하고
-    Pinecone에 저장한다.
-
-    Gemini와 Pinecone 코드가 동기 함수이므로
-    별도 스레드에서 실행한다.
+    정책 한 건을 임베딩하고 Pinecone에 저장한다.
+    Gemini와 Pinecone 코드가 동기 함수이므로 별도 스레드에서 실행한다.
     """
 
-    await asyncio.to_thread(
+    await asyncio.to_thread(        # 별도의 스레드에서 호출. 별도 스레드에서 해당 작업이 끝날 때까지 비동기적으로 기다림
         embed_and_upsert_policy,
         gemini_client,
         pinecone_index,
@@ -112,28 +101,22 @@ async def embed_policy(
     )
 
 
-async def embed_changed_policies(
-    *,
-    db: AsyncSession,
-    policy_ids: list[int],
-) -> EmbeddingSummary:
+async def embed_changed_policies(*, db: AsyncSession, policy_ids: list[int]) -> EmbeddingSummary:
     """
-    신규 등록되거나 내용이 변경된 정책만
-    임베딩하여 Pinecone에 저장한다.
+    신규 등록되거나 내용이 변경된 정책만 임베딩하여 Pinecone에 저장한다.
 
     1차 실패한 정책은 한 번 다시 시도한다.
     """
 
-    unique_policy_ids = sorted(
+    unique_policy_ids = sorted(         # 중복 제거 후 오름차순 정렬
         set(policy_ids)
     )
 
     # 신규·변경 정책이 없더라도
     # 임베딩 단계는 정상 완료된 것이다.
-    if not unique_policy_ids:
+    if not unique_policy_ids:       # 신규, 변경 정책이 하나도 없는 경우
         print(
-            "\n신규·변경 정책이 없어 "
-            "임베딩할 정책이 없습니다."
+            "\n신규·변경 정책이 없어 임베딩할 정책이 없습니다."
         )
 
         return {
@@ -144,31 +127,22 @@ async def embed_changed_policies(
 
     statement = (
         select(Policy)
-        .where(
-            Policy.policy_id.in_(
-                unique_policy_ids
-            )
-        )
-        .order_by(
-            Policy.policy_id
-        )
+        .where(Policy.policy_id.in_(unique_policy_ids))     # 신규, 변경 정책 pk 번호 조회
+        .order_by(Policy.policy_id)
     )
 
-    result = await db.execute(
-        statement
-    )
+    result = await db.execute(statement)
 
-    policies = list(
-        result.scalars().all()
-    )
+    policies = list(result.scalars().all())     # Policy 객체들의 list
 
+
+    # DB에 없는 id 확인
     found_policy_ids = {
         policy.policy_id
-        for policy in policies
+        for policy in policies      # 조회된 정책들의 ID를 dict로 만듦
     }
 
-    # changed_policy_ids에는 있지만
-    # DB에서 조회되지 않은 정책 ID
+    # changed_policy_ids에는 있지만 DB에서 조회되지 않은 정책 ID 확인
     missing_policy_ids = [
         policy_id
         for policy_id in unique_policy_ids
@@ -182,18 +156,14 @@ async def embed_changed_policies(
         )
 
     gemini_client, pinecone_index = (
-        create_embedding_clients()
+        create_embedding_clients()      # gemini, Pinecone 클라이언트 생성
     )
 
     success_count = 0
 
-    failed_policies: list[
-        Policy
-    ] = []
+    failed_policies: list[Policy] = []      # 1차 임베딩 실패한 정책 객체 저장할 list
 
-    final_failed_policy_ids: list[int] = (
-        missing_policy_ids.copy()
-    )
+    final_failed_policy_ids: list[int] = (missing_policy_ids.copy())        # 최종 실패 정책 ID 목록. 처음부터 DB에서 찾지 못한 ID를 넣어둠
 
     total_count = len(policies)
 
@@ -213,10 +183,7 @@ async def embed_changed_policies(
     # 1차 임베딩
     # ==========================================
 
-    for index, policy in enumerate(
-        policies,
-        start=1,
-    ):
+    for index, policy in enumerate(policies, start=1):
         print(
             f"[{index}/{total_count}] "
             f"policy-{policy.policy_id} "
@@ -237,9 +204,7 @@ async def embed_changed_policies(
             )
 
         except Exception as error:
-            failed_policies.append(
-                policy
-            )
+            failed_policies.append(policy)
 
             print(
                 "  → 1차 임베딩 실패: "
@@ -267,10 +232,7 @@ async def embed_changed_policies(
             EMBEDDING_RETRY_WAIT_SECONDS
         )
 
-        for index, policy in enumerate(
-            failed_policies,
-            start=1,
-        ):
+        for index, policy in enumerate(failed_policies, start=1):
             print(
                 f"[재시도 "
                 f"{index}/{len(failed_policies)}] "
@@ -347,9 +309,7 @@ async def create_policy_sync_execution(
 ) -> PolicyEmbeddingResult:
     """
     정책 최신화 실행 이력을 생성한다.
-
-    관리자 API와 명령어 직접 실행에서
-    공통으로 사용한다.
+    관리자 API와 명령어 직접 실행에서 공통으로 사용한다.
     """
 
     execution_result = PolicyEmbeddingResult(
@@ -361,14 +321,10 @@ async def create_policy_sync_execution(
         failed_count=0,
     )
 
-    db.add(
-        execution_result
-    )
+    db.add(execution_result)
 
     await db.commit()
-    await db.refresh(
-        execution_result
-    )
+    await db.refresh(execution_result)
 
     return execution_result
 
@@ -392,8 +348,7 @@ async def run_all_policy_sync(
 
     if execution_result is None:
         raise RuntimeError(
-            "정책 최신화 실행 이력을 "
-            "찾을 수 없습니다. "
+            "정책 최신화 실행 이력을 찾을 수 없습니다. "
             f"execution_id={execution_id}"
         )
 
@@ -430,42 +385,21 @@ async def run_all_policy_sync(
             )
         )
 
-        total_new_count += get_summary_count(
-            welfare_summary,
-            "created",
-        )
+        total_new_count += get_summary_count(welfare_summary, "created")
 
-        total_updated_count += get_summary_count(
-            welfare_summary,
-            "updated",
-        )
+        total_updated_count += get_summary_count(welfare_summary, "updated")
 
-        total_failed_count += get_summary_count(
-            welfare_summary,
-            "failed",
-        )
+        total_failed_count += get_summary_count(welfare_summary, "failed")
 
-        changed_policy_ids.update(
-            get_changed_policy_ids(
-                welfare_summary
-            )
-        )
+        changed_policy_ids.update(get_changed_policy_ids(welfare_summary))
 
-        execution_result.api_sync_at = (
-            datetime.now()
-        )
+        execution_result.api_sync_at = (datetime.now())
 
-        execution_result.new_count = (
-            total_new_count
-        )
+        execution_result.new_count = (total_new_count)
 
-        execution_result.updated_count = (
-            total_updated_count
-        )
+        execution_result.updated_count = (total_updated_count)
 
-        execution_result.failed_count = (
-            total_failed_count
-        )
+        execution_result.failed_count = (total_failed_count)
 
         await db.commit()
 
@@ -496,44 +430,21 @@ async def run_all_policy_sync(
     )
 
     try:
-        seoul_summary = (
-            await run_seoul_policy_sync(
-                db=db,
-            )
-        )
+        seoul_summary = (await run_seoul_policy_sync(db=db))
 
-        total_new_count += get_summary_count(
-            seoul_summary,
-            "created",
-        )
+        total_new_count += get_summary_count(seoul_summary, "created")
 
-        total_updated_count += get_summary_count(
-            seoul_summary,
-            "updated",
-        )
+        total_updated_count += get_summary_count(seoul_summary, "updated")
 
-        total_failed_count += get_summary_count(
-            seoul_summary,
-            "failed",
-        )
+        total_failed_count += get_summary_count(seoul_summary, "failed")
 
-        changed_policy_ids.update(
-            get_changed_policy_ids(
-                seoul_summary
-            )
-        )
+        changed_policy_ids.update(get_changed_policy_ids(seoul_summary))
 
-        execution_result.new_count = (
-            total_new_count
-        )
+        execution_result.new_count = (total_new_count)
 
-        execution_result.updated_count = (
-            total_updated_count
-        )
+        execution_result.updated_count = (total_updated_count)
 
-        execution_result.failed_count = (
-            total_failed_count
-        )
+        execution_result.failed_count = (total_failed_count)
 
         await db.commit()
 
@@ -564,44 +475,21 @@ async def run_all_policy_sync(
     )
 
     try:
-        gyeonggi_summary = (
-            await run_gyeonggi_policy_sync(
-                db=db,
-            )
-        )
+        gyeonggi_summary = (await run_gyeonggi_policy_sync(db=db))
 
-        total_new_count += get_summary_count(
-            gyeonggi_summary,
-            "created",
-        )
+        total_new_count += get_summary_count(gyeonggi_summary, "created")
 
-        total_updated_count += get_summary_count(
-            gyeonggi_summary,
-            "updated",
-        )
+        total_updated_count += get_summary_count(gyeonggi_summary, "updated")
 
-        total_failed_count += get_summary_count(
-            gyeonggi_summary,
-            "failed",
-        )
+        total_failed_count += get_summary_count(gyeonggi_summary, "failed")
 
-        changed_policy_ids.update(
-            get_changed_policy_ids(
-                gyeonggi_summary
-            )
-        )
+        changed_policy_ids.update(get_changed_policy_ids(gyeonggi_summary))
 
-        execution_result.new_count = (
-            total_new_count
-        )
+        execution_result.new_count = (total_new_count)
 
-        execution_result.updated_count = (
-            total_updated_count
-        )
+        execution_result.updated_count = (total_updated_count)
 
-        execution_result.failed_count = (
-            total_failed_count
-        )
+        execution_result.failed_count = (total_failed_count)
 
         await db.commit()
 
@@ -621,29 +509,16 @@ async def run_all_policy_sync(
     # 4. 크롤링 전체 완료 여부 기록
     # ==========================================
 
-    seoul_completed = (
-        seoul_summary is not None
-    )
+    seoul_completed = (seoul_summary is not None)
 
-    gyeonggi_completed = (
-        gyeonggi_summary is not None
-    )
+    gyeonggi_completed = (gyeonggi_summary is not None)
 
-    if (
-        seoul_completed
-        and gyeonggi_completed
-    ):
-        execution_result.crawling_at = (
-            datetime.now()
-        )
+    if (seoul_completed and gyeonggi_completed):
+        execution_result.crawling_at = (datetime.now())
 
-    execution_result.new_count = (
-        total_new_count
-    )
+    execution_result.new_count = (total_new_count)
 
-    execution_result.updated_count = (
-        total_updated_count
-    )
+    execution_result.updated_count = (total_updated_count)
 
     await db.commit()
 
@@ -656,7 +531,7 @@ async def run_all_policy_sync(
             await embed_changed_policies(
                 db=db,
                 policy_ids=list(
-                    changed_policy_ids
+                    changed_policy_ids      # dict이므로 list로 변화
                 ),
             )
         )
@@ -698,22 +573,14 @@ async def run_all_policy_sync(
     # 6. 최종 실행 결과 저장 및 출력
     # ==========================================
 
-    execution_result.new_count = (
-        total_new_count
-    )
+    execution_result.new_count = (total_new_count)
 
-    execution_result.updated_count = (
-        total_updated_count
-    )
+    execution_result.updated_count = (total_updated_count)
 
-    execution_result.failed_count = (
-        total_failed_count
-    )
+    execution_result.failed_count = (total_failed_count)
 
     await db.commit()
-    await db.refresh(
-        execution_result
-    )
+    await db.refresh(execution_result)
 
     print(
         "\n================================="
@@ -772,16 +639,14 @@ async def run_all_policy_sync_background(
     execution_id: int,
 ) -> None:
     """
-    관리자 API에서 정책 최신화를
-    백그라운드로 실행한다.
+    관리자 API에서 정책 최신화를 백그라운드로 실행한다.
 
-    API 요청에서 사용한 DB 세션을 재사용하지 않고,
-    백그라운드 작업용 세션을 새로 생성한다.
+    API 요청에서 사용한 DB 세션을 재사용하지 않고, 백그라운드 작업용 세션을 새로 생성한다.
     """
 
-    async with SessionLocal() as db:
+    async with SessionLocal() as db:        # 새로운 db 세션 사용
         try:
-            await run_all_policy_sync(
+            await run_all_policy_sync(      # 전체 최신화 실행
                 db=db,
                 execution_id=execution_id,
             )
