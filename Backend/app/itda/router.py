@@ -82,16 +82,26 @@ async def get_itda_sync_run(
     response_model=MessageResponse,
     summary="상담 대화 한 턴 (물어보거나 / 직업 방향 카드를 준다)",
 )
-async def message(request: MessageRequest, db: AsyncSession = Depends(get_db)):
+async def message(request: MessageRequest,
+                  db: AsyncSession = Depends(get_db),
+                  #  ★ 2026-08-06 — 로그인 필수. 잇다에 비로그인 체험 경로는 없다.
+                  #    (프론트는 RequireLogin 으로만 막고 있었고 백엔드는 열려 있었다)
+                  #    이 응답이 understanding 으로 슬롯(제약 포함)을 그대로 돌려주므로
+                  #    세션 소유자 확인까지 함께 한다 — _claim_session 주석 참고.
+                  user: User = Depends(get_current_user)):
     return await controllers.handle_message(
         db,
         session_id=request.session_id,
         message=request.message,
+        user_id=user.user_id,
     )
 
 
 @router.post("/reset", summary="세션 초기화")
-async def reset(request: ResetRequest):
+async def reset(request: ResetRequest,
+                user: User = Depends(get_current_user)):
+    #  남의 session_id 로 **진행 중인 대화를 지우는** 것을 막는다.
+    controllers.claim_session(request.session_id, user.user_id)
     session.reset(request.session_id)
     return {"ok": True}
 

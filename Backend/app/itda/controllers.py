@@ -137,8 +137,16 @@ def _progress(profile):
 #  db 는 라우터가 Depends(get_db) 로 요청마다 주입하는 async 세션.
 #  예전엔 run_in_threadpool 로 동기 step 을 스레드에 던졌는데, 그 스레드들이
 #  전역 pymysql 커넥션을 공유해 깨졌다(코드리뷰 HIGH). 이제 step 이 async 라 그냥 await.
-async def handle_message(db, session_id: str, message: str) -> MessageResponse:
+async def handle_message(db, session_id: str, message: str,
+                         user_id: int | None = None) -> MessageResponse:
     st = session.get(session_id)
+    #  ★ 2026-08-06 — **대화 자체를 소유자 확인한다.**
+    #    예전엔 저장(save_map)·이어서하기(resume_map)에만 검증이 있었다. 그런데 정작
+    #    보호하려던 값(제약 슬롯 — 학력부담·체력부담·비용부담)은 이 엔드포인트가
+    #    understanding=_public_profile(profile) 로 **매 턴 그대로 돌려주고** 있었다.
+    #    남의 session_id 를 아는 사람이 /itda/message 한 번이면 슬롯을 받아갔다.
+    if user_id is not None:
+        _claim_session(st, user_id)
     profile = st.get("profile") or {}
 
     try:
@@ -313,18 +321,31 @@ async def _saved_goal(db, map_id: int) -> Goal:
 def _claim_session(st: dict, user_id: int) -> None:
     """이 세션이 이 사용자의 것인지 확인하고, 처음이면 소유자로 표시한다 (2026-08-05).
 
-    왜 필요한가 — `session_id` 는 **프론트가 만들어 보내는 값**이고 대화 자체는 비로그인이다.
+    왜 필요한가 — `session_id` 는 **프론트가 만들어 보내는 값**이다.
     그래서 예전엔 로그인한 A 가 B 의 session_id 를 넘기면 **B 의 카드와 B 의 profile_json 이
     A 의 지도로 저장**됐고, 그대로 A 가 조회할 수 있었다.
     새어나가는 값이 가볍지 않다 — 제약 슬롯에는 학력부담·체력부담·비용부담이 들어 있다.
     ⚠ 실제 악용에는 B 의 session_id(무작위 11자)를 알아야 하므로 무차별 대입은 비현실적이다.
       그래도 **인증 경계에 검증이 없다는 것 자체가 문제**라 막는다.
-    ※ 비로그인 대화도 허용해야 하므로 '처음 만지는 로그인 사용자'가 소유자가 된다.
+
+    ★ 2026-08-06 — 「비로그인 대화도 허용해야 한다」는 옛 주석을 지웠다. **그런 경로는 없다.**
+      덜다·잇다·나누다 모두 로그인이 필요하다(이음이 없는 것은 로그인이 아니라 *본인확인*이다).
+      그래서 이제 /itda/message · /itda/reset 도 이 검증을 지난다.
+      '처음 만지는 로그인 사용자'가 소유자가 되는 규칙은 그대로 둔다 —
+      세션이 메모리라 서버가 재시작되면 소유자 표시도 함께 사라지기 때문이다.
     """
     owner = st.get("owner")
     if owner is not None and owner != user_id:
         raise HTTPException(status_code=403, detail="이 대화의 결과가 아니에요.")
     st["owner"] = user_id
+
+
+def claim_session(session_id: str, user_id: int) -> None:
+    """세션 소유자 확인만 한다 (2026-08-06). /itda/reset 처럼 st 를 안 만지는 자리에서 쓴다.
+
+    reset 도 막아야 하는 이유 — 남의 session_id 를 알면 **진행 중인 대화를 지울 수 있다.**
+    """
+    _claim_session(session.get(session_id), user_id)
 
 
 async def save_map(db, user_id: int, session_id: str) -> dict:
