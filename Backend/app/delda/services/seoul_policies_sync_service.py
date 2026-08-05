@@ -19,10 +19,7 @@ from app.delda.services.policy_sync_service import (
 
 DETAIL_REQUEST_INTERVAL = 0.5
 
-SyncSummary = dict[
-    str,
-    int | list[int],
-]
+SyncSummary = dict[str, int | list[int]]
 
 
 async def process_policy_item(
@@ -86,13 +83,9 @@ async def run_seoul_policy_sync(
     # MySQL policy.policy_id 목록
     changed_policy_ids: list[int] = []
 
-    failed_items: list[
-        dict[str, str | None]
-    ] = []
+    failed_items: list[dict[str, str | None]] = []
 
-    final_failed_items: list[
-        dict[str, str | None]
-    ] = []
+    final_failed_items: list[dict[str, str | None]] = []
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(
@@ -101,29 +94,18 @@ async def run_seoul_policy_sync(
         ),
         follow_redirects=True,
     ) as client:
-        print(
-            "서울복지포털 정책 목록을 "
-            "조회합니다."
-        )
+        print("서울복지포털 정책 목록을 조회합니다.")
 
-        list_html = await fetch_policy_list_html(
-            client=client,
-        )
+        list_html = await fetch_policy_list_html(client=client)     # 서울 목록 HTML 조회
 
-        list_items = parse_seoul_policy_list(
-            list_html
-        )
+        list_items = parse_seoul_policy_list(list_html)             # 문자열을 딕셔너리 리스트로 변환
 
         if not list_items:
             raise RuntimeError(
-                "서울복지포털에서 정책 목록을 "
-                "찾지 못했습니다."
+                "서울복지포털에서 정책 목록을 찾지 못했습니다."
             )
 
-        print(
-            f"서울 정책 {len(list_items)}건을 "
-            "확인했습니다."
-        )
+        print(f"서울 정책 {len(list_items)}건을 확인했습니다.")
 
         # =====================================
         # 1차 처리
@@ -157,28 +139,14 @@ async def run_seoul_policy_sync(
                     )
                 )
 
-                if (
-                    action
-                    == PolicySyncAction.CREATED
-                ):
+                if (action == PolicySyncAction.CREATED):
                     created_count += 1
-
-                    changed_policy_ids.append(
-                        db_policy_id
-                    )
-
+                    changed_policy_ids.append(db_policy_id)
                     print("  → 신규 등록")
 
-                elif (
-                    action
-                    == PolicySyncAction.UPDATED
-                ):
+                elif (action == PolicySyncAction.UPDATED):
                     updated_count += 1
-
-                    changed_policy_ids.append(
-                        db_policy_id
-                    )
-
+                    changed_policy_ids.append(db_policy_id)
                     print("  → 내용 변경")
 
                 else:
@@ -186,14 +154,11 @@ async def run_seoul_policy_sync(
                     print("  → 변경 없음")
 
             except Exception as error:
-                failed_items.append(
-                    list_item
-                )
+                failed_items.append(list_item)
 
                 print(
                     "  → 1차 처리 실패: "
-                    f"{type(error).__name__}: "
-                    f"{error}"
+                    f"{type(error).__name__}: {error}"
                 )
 
             if index < len(list_items):
@@ -216,15 +181,9 @@ async def run_seoul_policy_sync(
                 failed_items,
                 start=1,
             ):
-                seoul_external_id = (
-                    list_item.get(
-                        "policy_id"
-                    )
-                )
+                seoul_external_id = list_item.get("policy_id")
 
-                policy_name = list_item.get(
-                    "policy_name"
-                )
+                policy_name = list_item.get("policy_name")
 
                 print(
                     f"[재시도 "
@@ -243,53 +202,28 @@ async def run_seoul_policy_sync(
                         )
                     )
 
-                    if (
-                        action
-                        == PolicySyncAction.CREATED
-                    ):
+                    if (action == PolicySyncAction.CREATED):
                         created_count += 1
+                        changed_policy_ids.append(db_policy_id)
 
-                        changed_policy_ids.append(
-                            db_policy_id
-                        )
+                        print("  → 재시도 성공: 신규 등록")
 
-                        print(
-                            "  → 재시도 성공: "
-                            "신규 등록"
-                        )
-
-                    elif (
-                        action
-                        == PolicySyncAction.UPDATED
-                    ):
+                    elif (action == PolicySyncAction.UPDATED):
                         updated_count += 1
+                        changed_policy_ids.append(db_policy_id)
 
-                        changed_policy_ids.append(
-                            db_policy_id
-                        )
-
-                        print(
-                            "  → 재시도 성공: "
-                            "내용 변경"
-                        )
+                        print("  → 재시도 성공: 내용 변경")
 
                     else:
                         skipped_count += 1
-
-                        print(
-                            "  → 재시도 성공: "
-                            "변경 없음"
-                        )
+                        print("  → 재시도 성공: 변경 없음")
 
                 except Exception as error:
-                    final_failed_items.append(
-                        list_item
-                    )
+                    final_failed_items.append(list_item)
 
                     print(
                         "  → 재시도 실패: "
-                        f"{type(error).__name__}: "
-                        f"{error}"
+                        f"{type(error).__name__}: {error}"
                     )
 
                 if index < len(failed_items):

@@ -18,10 +18,11 @@ RRF_K = 60
 
 
 # =========================================================
-# 사용자 선택값 한글 변환
+# 사용자 선택값 한글 변환. 
+# 사용자 입력 스키마에 있는 영어 코드 값을 검색 문장용으로 만들기 위해 한글로 바꿈.
 # =========================================================
 
-
+# 현재 상황
 LIFE_STATUS_LABELS = {
     "student": "학생",
     "job_seeker": "취업 준비 중인 구직자",
@@ -32,7 +33,7 @@ LIFE_STATUS_LABELS = {
     "other": "기타 생활 상태",
 }
 
-
+# 돌봄 대상
 CARE_RECIPIENT_LABELS = {
     "parent": "부모님",
     "grandparent": "조부모님",
@@ -42,7 +43,7 @@ CARE_RECIPIENT_LABELS = {
     "other_family": "그 밖의 가족",
 }
 
-
+# 돌봄 기간
 CARE_DURATION_LABELS = {
     "under_6_months": "6개월 미만",
     "6_to_12_months": "6개월에서 1년",
@@ -52,7 +53,7 @@ CARE_DURATION_LABELS = {
     "unknown": "기간을 정확히 알기 어려움",
 }
 
-
+# 하루 돌봄 시간
 DAILY_CARE_TIME_LABELS = {
     "under_2_hours": "하루 2시간 미만",
     "2_to_4_hours": "하루 2시간에서 4시간",
@@ -61,7 +62,7 @@ DAILY_CARE_TIME_LABELS = {
     "varies": "날마다 다른 시간",
 }
 
-
+# 경제적 부담 정도
 FINANCIAL_BURDEN_LABELS = {
     "very_high": "경제적 부담이 매우 큼",
     "high": "경제적 부담이 큰 편",
@@ -70,7 +71,7 @@ FINANCIAL_BURDEN_LABELS = {
     "unknown": "경제적 부담 정도를 알기 어려움",
 }
 
-
+# 필요한 지원 유형
 SUPPORT_LABELS = {
     "living_expense": "생활비 지원",
     "housing": "주거 지원",
@@ -83,7 +84,7 @@ SUPPORT_LABELS = {
     "unknown": "복지 상담",
 }
 
-
+# 실제 하는 돌봄 활동
 CARE_ACTIVITY_LABELS = {
     "housework": "집안일과 식사 준비",
     "hospital_accompaniment": "병원과 외출 동행",
@@ -105,17 +106,17 @@ def build_policy_search_query(
     context: PolicyRecommendationContext,
 ) -> str:
     """
-    사용자 상황을 Pinecone 의미 검색에 사용할
-    자연어 문장으로 변환한다.
-
+    사용자 상황을 Pinecone 의미 검색에 사용할 자연어 문장으로 변환한다.
     생성된 문장은 DB에 저장하지 않는다.
     """
 
+    # 필요한 지원 유형 변환
     supports = [
         SUPPORT_LABELS[item.value]
         for item in context.needed_support_types
     ]
 
+    # 기본 상황 문장 생성
     sentences = [
         (
             f"{context.birth_year}년생이며 "
@@ -137,6 +138,7 @@ def build_policy_search_query(
         ),
     ]
 
+    # 돌봄 활동 있는 경우
     if context.care_activities:
         activities = [
             CARE_ACTIVITY_LABELS[item.value]
@@ -147,13 +149,15 @@ def build_policy_search_query(
             f"평소 제공하는 도움은 {', '.join(activities)}입니다."
         )
 
+    # 추가 자연어 입력 -> 그대로 검색 문장에 추가
     if context.additional_context:
         sentences.append(context.additional_context)
 
+    # 챗봇 후속 답변 추가
     for follow_up in context.follow_up_answers:
-        if isinstance(follow_up.answer, list):
+        if isinstance(follow_up.answer, list):      # 답변이 list인 경우
             answer = ", ".join(follow_up.answer)
-        else:
+        else:       # 답변이 문자열인 경우
             answer = follow_up.answer
 
         if answer:
@@ -171,10 +175,10 @@ def build_policy_keyword_query(
     context: PolicyRecommendationContext,
 ) -> str:
     """
-    MySQL FULLTEXT 검색에 사용할
-    핵심 키워드를 생성한다.
+    MySQL FULLTEXT 검색에 사용할 핵심 키워드를 생성한다.
     """
 
+    # 현재 상황 키워드
     life_keywords = {
         "student": ["학생", "학업", "교육"],
         "job_seeker": ["구직", "취업", "일자리"],
@@ -185,6 +189,7 @@ def build_policy_keyword_query(
         "other": [],
     }
 
+    # 지원 유형별 키워드
     support_keywords = {
         "living_expense": ["생활비", "생계비", "소득지원"],
         "housing": ["주거", "주거비", "월세"],
@@ -197,6 +202,7 @@ def build_policy_keyword_query(
         "unknown": ["복지상담"],
     }
 
+    # 기본 키워드. 모든 사용자에게 공통으로 넣는 키워드. 돌봄 대상도 추가함.
     keywords = [
         "가족돌봄",
         "가족돌봄청년",
@@ -205,12 +211,14 @@ def build_policy_keyword_query(
         ],
     ]
 
+    # 기본 키워드에 현재 상황 키워드 추가
     keywords.extend(
         life_keywords[
             context.current_life_status.value
         ]
     )
 
+    # 지원 유형별 키워드 추가
     for support in context.needed_support_types:
         keywords.extend(
             support_keywords[support.value]
@@ -227,9 +235,7 @@ def build_policy_keyword_query(
 # =========================================================
 
 
-def _get_search_regions(
-    region: str,
-) -> list[str]:
+def _get_search_regions(region: str) -> list[str]:
     """
     사용자 지역과 전국 정책을 함께 검색한다.
 
@@ -245,18 +251,23 @@ def _get_search_regions(
         user_region = "경기도"
 
     else:
-        user_region = normalized_region
+        user_region = normalized_region     # 그 외 지역은 그대로 사용
 
     if user_region == "전국":
         return ["전국"]
 
-    return ["전국", user_region]
+    return ["전국", user_region]        # 지역 + 전국 포함
 
 
 # =========================================================
 # MySQL FULLTEXT 검색
 # =========================================================
 
+# MATCH : 정책 field에서 키워드 검색. 
+# AGAINST : build_policy_keyword_query()가 만든 문자열 입력
+# WHERE : 지역 필터, 관련도 0보다 큰 값들 필터
+# ORDER BY : 관련도 순 정렬
+# LIMIT : 검색 개수 제한
 
 FULLTEXT_SQL = text(
     """
@@ -288,14 +299,8 @@ FULLTEXT_SQL = text(
     LIMIT :limit
     """
 ).bindparams(
-    bindparam(
-        "regions",
-        expanding=True,
-    ),
-    bindparam(
-        "limit",
-        type_=Integer,
-    ),
+    bindparam("regions", expanding=True),       # 지역을 바인딩 파라미터로 처리
+    bindparam("limit", type_=Integer),          # limit에 전달되는 값이 정수임을 명시
 )
 
 
@@ -307,8 +312,7 @@ async def _search_fulltext(
     limit: int,
 ) -> list[int]:
     """
-    MySQL FULLTEXT 검색 결과를
-    policy_id 목록으로 반환한다.
+    MySQL FULLTEXT 검색 결과를 policy_id 목록으로 반환한다.
     """
 
     result = await db.execute(
@@ -323,7 +327,7 @@ async def _search_fulltext(
     return [
         int(row["policy_id"])
         for row in result.mappings().all()
-    ]
+    ]       # 검색된 정책의 id 만 list형태로 return. 위에서 이미 score DESC 정렬했기 때문에 순서대로 검색 순위임. 
 
 
 # =========================================================
@@ -333,27 +337,23 @@ async def _search_fulltext(
 
 def _extract_policy_id(match) -> int | None:
     """
-    Pinecone 검색 결과에서
-    MySQL policy_id를 꺼낸다.
+    Pinecone 검색 결과에서 MySQL policy_id를 꺼낸다.
     """
 
-    metadata = getattr(
+    metadata = getattr(     # metadata 가져오기
         match,
         "metadata",
         None,
     ) or {}
 
     if metadata.get("policy_id") is not None:
-        return int(metadata["policy_id"])
+        return int(metadata["policy_id"])       # metadata의 policy_id 리턴
 
-    vector_id = str(
+    vector_id = str(        # metadata의 정책 ID가 없으면 벡터의 ID 확인
         getattr(match, "id", "")
     )
 
-    matched = re.search(
-        r"(\d+)$",
-        vector_id,
-    )
+    matched = re.search(r"(\d+)$", vector_id)       # 벡터 ID에서 마지막 숫자 추출
 
     if matched is None:
         return None
@@ -361,6 +361,7 @@ def _extract_policy_id(match) -> int | None:
     return int(matched.group(1))
 
 
+# 벡터 검색
 async def _search_vector(
     *,
     query: str,
@@ -368,8 +369,7 @@ async def _search_vector(
     limit: int,
 ) -> list[int]:
     """
-    검색 문장을 임베딩한 뒤
-    Pinecone에서 의미가 비슷한 정책을 검색한다.
+    검색 문장을 임베딩한 뒤 Pinecone에서 의미가 비슷한 정책을 검색한다.
     """
 
     gemini_client, pinecone_index = (
@@ -382,30 +382,29 @@ async def _search_vector(
         query,
     )
 
-    result = await asyncio.to_thread(
+    result = await asyncio.to_thread(       # 별도 스레드에서 Pinecone의 query() 호출
         pinecone_index.query,
-        vector=vector,
-        top_k=limit,
-        include_metadata=True,
+        vector=vector,      # 사용자 상황 임베딩한 벡터
+        top_k=limit,        # 유사도 높은 상위 정책 최대 리턴 갯수
+        include_metadata=True,      # 검색 결과에 metadata도 포함
         namespace=PINECONE_NAMESPACE,
-        filter={
+        filter={                    # 지역 필터
             "region": {
                 "$in": regions,
             }
         },
     )
 
+    # 결과에서 정책 id만 추출
     policy_ids: list[int] = []
 
     for match in result.matches:
-        policy_id = _extract_policy_id(
-            match
-        )
+        policy_id = _extract_policy_id(match)
 
         if (
             policy_id is not None
             and policy_id not in policy_ids
-        ):
+        ):      # id가 없거나 이미 들어있는 id가 아니면 id 추가
             policy_ids.append(policy_id)
 
     return policy_ids
@@ -415,8 +414,10 @@ async def _search_vector(
 # 두 검색 결과 결합
 # =========================================================
 
+# MySQL FULLTEXT 검색 순위와 Pinecone 검색 순위를 RRF 방식으로 결합. 
+# 검색 점수의 크기를 직접 비교하지 않고 각 검색 결과의 순위를 사용.
 
-def _combine_results(
+def _combine_results(       
     fulltext_ids: list[int],
     vector_ids: list[int],
     limit: int,
@@ -428,21 +429,20 @@ def _combine_results(
 
     scores: dict[int, float] = {}
 
-    for rank, policy_id in enumerate(
-        fulltext_ids,
-        start=1,
-    ):
+    # FULLTEXT 순위 점수 계산
+    for rank, policy_id in enumerate(fulltext_ids, start=1):
         scores[policy_id] = (
             scores.get(policy_id, 0)
             + 1 / (RRF_K + rank)
         )
 
+    # Vector 순위 점수 추가
     for rank, policy_id in enumerate(
         vector_ids,
         start=1,
     ):
         scores[policy_id] = (
-            scores.get(policy_id, 0)
+            scores.get(policy_id, 0)        # 기존 FULLTEXT 점수가 있으면 거기에 벡터 순위 점수 추가. 없으면 0점에 벡터 순위 점수 추가
             + 1 / (RRF_K + rank)
         )
 
@@ -450,9 +450,9 @@ def _combine_results(
         scores,
         key=scores.get,
         reverse=True,
-    )
+    )       # 점수 높은 순서대로 정렬
 
-    return sorted_ids[:limit]
+    return sorted_ids[:limit]       # 최대 갯수의 정책만 리턴
 
 
 # =========================================================
@@ -479,9 +479,9 @@ async def _load_policies(
         )
     )
 
-    policies = result.scalars().all()
+    policies = result.scalars().all()       # 조회 결과에서 Policy 객체만 꺼내기
 
-    policy_map = {
+    policy_map = {      # id를 key로 사용하고 Policy 객체를 value로 사용하는 dict 생성
         policy.policy_id: policy
         for policy in policies
     }
@@ -490,7 +490,7 @@ async def _load_policies(
         policy_map[policy_id]
         for policy_id in policy_ids
         if policy_id in policy_map
-    ]
+    ]       # 원래 RRF 순서인 policy_ids를 기준으로 정책 객체를 다시 꺼냄.
 
 
 
@@ -527,11 +527,7 @@ async def retrieve_policies_by_name(
         min(limit, 5),
     )
 
-    compact_name = re.sub(
-        r"\s+",
-        "",
-        normalized_name,
-    )
+    compact_name = re.sub(r"\s+", "", normalized_name)      # 띄어쓰기 제거 버전
 
     # -----------------------------------------------------
     # 1. 정확히 일치하는 정책 조회
@@ -539,13 +535,8 @@ async def retrieve_policies_by_name(
 
     exact_result = await db.execute(
         select(Policy)
-        .where(
-            Policy.policy_name
-            == normalized_name
-        )
-        .order_by(
-            Policy.policy_id.asc()
-        )
+        .where(Policy.policy_name == normalized_name)
+        .order_by(Policy.policy_id.asc())
         .limit(limit)
     )
 
@@ -560,16 +551,13 @@ async def retrieve_policies_by_name(
     partial_conditions = [
         Policy.policy_name.contains(
             normalized_name,
-            autoescape=True,
+            autoescape=True,        # 검색어에 SQL LIKE에서 특별한 의미를 가지는 문자가 포함돼도 일반 문자로 처리되도록 이스케이프
         ),
     ]
 
     if compact_name:
         partial_conditions.append(
-            func.replace(
-                Policy.policy_name,
-                " ",
-                "",
+            func.replace(Policy.policy_name, " ", "",
             ).contains(
                 compact_name,
                 autoescape=True,
@@ -579,16 +567,12 @@ async def retrieve_policies_by_name(
     partial_result = await db.execute(
         select(Policy)
         .where(
-            or_(
-                *partial_conditions
-            )
+            or_(*partial_conditions)        # 띄어쓰기 제거, 제거 안된 것 중 하나만 만족해도 검색
         )
         .order_by(
-            func.char_length(
-                Policy.policy_name
-            ).asc(),
-            Policy.policy_name.asc(),
-            Policy.policy_id.asc(),
+            func.char_length(Policy.policy_name).asc(),     # 정책명 짧은 순 정렬
+            Policy.policy_name.asc(),                       # 정책명 ㄱ, ㄴ, ㄷ 순 정렬
+            Policy.policy_id.asc(),                         # id순 정렬
         )
         .limit(limit)
     )
@@ -602,20 +586,12 @@ async def retrieve_policies_by_name(
     policies: list[Policy] = []
     added_policy_ids: set[int] = set()
 
-    for policy in (
-        exact_policies
-        + partial_policies
-    ):
-        if (
-            policy.policy_id
-            in added_policy_ids
-        ):
+    for policy in (exact_policies + partial_policies):
+        if (policy.policy_id in added_policy_ids):
             continue
 
         policies.append(policy)
-        added_policy_ids.add(
-            policy.policy_id
-        )
+        added_policy_ids.add(policy.policy_id)
 
         if len(policies) >= limit:
             break
@@ -635,23 +611,16 @@ async def retrieve_relevant_policies(
     limit: int = DEFAULT_SEARCH_LIMIT,
 ) -> list[Policy]:
     """
-    MySQL FULLTEXT와 Pinecone을 이용해
-    Agent가 검토할 후보 정책을 검색한다.
+    MySQL FULLTEXT와 Pinecone을 이용해 Agent가 검토할 후보 정책을 검색한다.
     """
 
-    semantic_query = build_policy_search_query(
-        context
-    )
+    semantic_query = build_policy_search_query(context)     # 사용자 전체 상황 자연어 문장으로 만듦. -> Gemini에 임베딩 되어 Pinecone 검색에 사용
 
-    keyword_query = build_policy_keyword_query(
-        context
-    )
+    keyword_query = build_policy_keyword_query(context)     # FULLTEXT 검색에 사용될 핵심 키워드 생성
 
-    regions = _get_search_regions(
-        context.region
-    )
+    regions = _get_search_regions(context.region)           # 검색 지역 생성 (list)
 
-    fulltext_ids, vector_ids = (
+    fulltext_ids, vector_ids = (        # 두 검색 동시 실행
         await asyncio.gather(
             _search_fulltext(
                 db=db,
@@ -667,12 +636,14 @@ async def retrieve_relevant_policies(
         )
     )
 
+    # RRF로 두 순위 합쳐서 최종 후보 ID 생성
     combined_ids = _combine_results(
         fulltext_ids,
         vector_ids,
         limit,
     )
 
+    # 정책 전체 정보 조회. Policy 들의 list 리턴
     return await _load_policies(
         db=db,
         policy_ids=combined_ids,

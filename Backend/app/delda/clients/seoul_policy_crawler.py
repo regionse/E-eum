@@ -161,7 +161,7 @@ async def get_html_with_retry(      # 재시도 함수
                 f"{request_name}에서 빈 HTML을 반환했습니다."
             )
 
-        return html_content
+        return html_content     # HTML 전체를 문자열로 리턴
 
     raise SeoulPolicyCrawlerError(
         f"{request_name} 요청 처리에 실패했습니다."
