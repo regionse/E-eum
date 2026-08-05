@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.itda.db import async_session                       # noqa: E402
 from app.itda import itda_core                              # noqa: E402
-from app.itda.itda_core import ItdaEngine, is_injection, pre_check   # noqa: E402
+from app.itda.itda_core import (ItdaEngine, is_injection, pre_check,   # noqa: E402
+                                claims_credential, is_meta, tells_situation)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -197,6 +198,37 @@ UNIT = [
         ('아 씨발 진짜 모르겠어요', True),        # 혼잣말 좌절 — 막지 않는다
         ('엄마 대소변 받아내는 게 제일 힘들어요', True),
     ]),
+    #  ★ 2026-08-06 새벽 — **홀드아웃 2벌이 찾은 것을 여기로 승격시킨다.**
+    #    홀드아웃은 한 번 쓰면 홀드아웃이 아니다(우리가 그걸로 고쳤으니까). 회귀로 옮긴다.
+    #    자세한 규율은 scripts/checks/README.md 참고.
+    ('claims_credential(보유 주장만)', lambda m: claims_credential(m), [
+        #  진짜 보유 주장 — 잡아야 한다
+        ('저 이미 우주항공정비기능사 자격증 있어요', True),
+        ('제가 드론조종마스터1급 있는데 이걸로 뭐 할 수 있어요?', True),
+        #  ⚠ 상담·희망 표현 — 잡으면 안 된다. 「말씀하신 자격은 확인 어려워요」가 나간다.
+        #    아래 첫 줄이 실제 사고다(홀드아웃2) — 가장 많은 정보를 준 발화였다.
+        ('예전에 편의점이랑 카페 알바 해봤고 지금은 할머니 때문에 집에 있는데 '
+         '자격증 하나라도 따두면 좋을까요', False),
+        ('자격증 따두면 좋을까요', False), ('자격증 뭐부터 따야 할까요', False),
+        ('기능사 따면 도움될까요', False), ('자격증 따고 싶은 마음이 있어요', False),
+        ('자격증이 뭐가 있어요?', False),
+    ]),
+    ('is_meta(대화에 대한 말)', lambda m: is_meta(m), [
+        #  ⚠ 아래는 전부 주제이탈로 redirect + 남용 카운트 되던 것들이다(홀드아웃 1·2차)
+        ('응', True), ('네', True), ('그래서요', True), ('응...', True), ('네!', True),
+        ('아까 말했잖아요', True), ('빨리 좀 알려주세요', True),
+        ('너 그거 진짜야?', True), ('나중에 다시 올게요', True),
+        #  ⚠ 짧은 대꾸를 부분일치로 넣으면 아래가 걸린다. 전체일치로 봐야 한다.
+        ('할머니가 응급실에 실려가셨어요', False), ('반응이 없어요', False),
+        ('제빵사가 되고 싶어요', False), ('오늘 서울 날씨 어때', False),
+        ('어머니가 아프셔서요', False),
+    ]),
+    ('tells_situation(사정 발화)', lambda m: tells_situation(m), [
+        ('할머니 간병하면서 학교를 못 다녔어요', True), ('어머니가 아프셔서요', True),
+        #  ⚠ 돌봄 낱말이 하나도 없는 «제약만» 발화 — 이탈로 빠지던 것(홀드아웃1)
+        ('낮에는 집을 못 비워요', True), ('동생이 아직 어려서 제가 봐야 해요', True),
+        ('제빵사가 되고 싶어요', False), ('오늘 서울 날씨 어때', False),
+    ]),
     ('pre_check(HARM=2층 판정으로)', lambda m: pre_check(m) == 'HARM', [
         ('죽여버릴거야', True), ('걔 패버리고 싶어', True),
         #  ⚠ 피해 신고도 여기로 온다. **차단이 아니라** harm_who() 가 누구 행동인지 본다.
@@ -350,7 +382,10 @@ async def main():
     ap.add_argument('--repeat', type=int, default=1, help='각 케이스 반복 횟수(편차 측정)')
     #  ★ 측정 전용 옵션 — 프로덕션의 MODEL 상수는 건드리지 않는다.
     #    itda_core 의 주석대로 "env 로 갈아끼우지 않는다(비용 사고 방지)" 원칙은 유지하고,
-    #    A/B 는 이 하네스에서 생성자 인자로만 주입한다. 실수로 비싼 모델이 서비스에 붙을 일이 없다.
+    #    A/B 는 이 하네스에서 생성자 인자로만 주입한다.
+    #  ⚠ 2026-08-06 정정 — 「실수로 비싼 모델이 서비스에 붙을 일이 없다」는 이제 거짓이다.
+    #    itda_core.MODEL 이 ENV('COURSE_LLM_MODEL') 로 외부화됐다(3축 통일). THINK_MODEL·
+    #    SPREAD_H·ATTR_LIFT 도 마찬가지다. 비용 방어선은 코드가 아니라 .env 관리에 있다.
     ap.add_argument('--model', default=None,
                     help='이 실행에만 쓸 모델 (예: gemini-3.6-flash). 생략하면 MODEL 상수')
     #  ★ 캐시 키에 모델이 안 들어간다 → 한 프로세스에서 두 모델을 돌리면 뒤 모델이 앞 결과를 받는다.

@@ -6,7 +6,8 @@
   itda_core.step()  →  {kind, reply, profile, missing, can_land, card}
   프론트가 기대      →  {type, reply, turn, max_turn, understanding, mode, goal, alternatives}
 
-· 세션에는 slot(profile) 만 보관한다. 대화 로그를 쌓지 않는다.
+· 세션에는 slot(profile) 을 중심으로 보관한다.
+  (⚠ _history·_summary 도 함께 담긴다 — session.get 도크스트링 참고. 2026-08-06 정정)
 · itda_core 는 async 다(2026-07-24). db 세션은 라우터가 Depends(get_db)로 주입한다.
 """
 import asyncio
@@ -228,7 +229,13 @@ async def handle_message(db, session_id: str, message: str,
     #    예전엔 문장 한 줄만 덧붙이고 아무 데도 안 보냈다(2026-08-04 이전).
     handoff = r.get("handoff")
     if kind == "offramp":
-        reply += "\n\n지금은 자격증보다 돌봄 지원이나 바로 해볼 수 있는 일부터 보는 것도 좋아요."
+        #  ★ 2026-08-06 — 「지금은 자격증**보다** 돌봄 지원…**부터** 보는 것도 좋아요」였다.
+        #    ① 사용자가 돌봄을 한 번도 말하지 않아도 무조건 붙는다(발화 검사가 없다).
+        #       프롬프트 [하지 말 것] — 말하지 않은 사정을 단정하지 마라.
+        #    ② 사실상 「당신은 아직 진로를 볼 때가 아니다」로 읽힌다. 프롬프트가 급여 규칙에서
+        #       경계한 자리와 같은 종류다 — 한 마디로 꿈을 접게 하는 자리.
+        #    핸드오프 버튼이 이미 붙으므로 문장이 상황을 규정할 필요가 없다.
+        reply += "\n\n지금 상황에서 도움이 될 만한 지원이 있는지도 같이 볼 수 있어요."
         handoff = handoff or dict(POLICY_HANDOFF)
 
     card = r.get("card")
@@ -387,6 +394,20 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     #    시험일정이 있는 자격증이 붙은 카드(=거의 모든 카드)를 받은 뒤 「저장」하면 터졌다.
     #    위 주석의 원칙 그대로다 — 지도는 **결론**을 담는다. 이건 과정이므로 뺀다.
     profile.pop("_last_certs", None)
+    #  ★★ 2026-08-06 — **원칙이 절반만 지켜지고 있었다.** 위 주석은 「옛 대화가 프롬프트에
+    #    섞이지 않게」인데, _summary(대화 요약 최대 800자)가 그대로 저장되고 있었다.
+    #    요약은 정의상 「사용자가 자기에 대해 말한 사실」이라 **제일 민감한 부분이 남는 쪽**이고,
+    #    resume_map 이 통째로 복원해 [앞선 대화 요약]으로 프롬프트에 다시 넣는다.
+    #    그리고 과정 플래그도 함께 살아남아 기능이 죽었다:
+    #      _landed=True  → 좁히기 게이트와 ASK→SEARCH 승격이 **영구히 막힌다.**
+    #                      이어서하기로 들어온 사용자는 칩 되묻기를 다시 못 받는다.
+    #      _abuse        → 옛 세션의 남용 누적치를 새 세션이 물려받는다.
+    for _k in ("_summary", "_landed", "_abuse", "_probed", "_narrowed",
+               "_narrow_opts", "_narrow_rest", "_ask_n", "_unsure", "_turns",
+               "_slot_turn", "_policy_offered", "_policy_declined", "_think_sig"):
+        profile.pop(_k, None)
+    #  ⚠ 남기는 것: 슬롯(관심분야·활동유형·다루는대상·세부관심·강점성향·제약)과
+    #    _exclude·_demote(「그건 아니다」라고 한 것). 그건 **결론**이다.
     #  그리고 같은 사고가 다시 나지 않게 직렬화에 안전망을 둔다(날짜가 또 섞여 들어와도
     #  저장이 죽지는 않는다). 위 pop 이 1차 방어, 이것이 2차다.
     _dump = lambda p: json.dumps(p, ensure_ascii=False, default=str)   # noqa: E731
