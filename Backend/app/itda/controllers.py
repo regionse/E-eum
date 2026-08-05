@@ -9,19 +9,22 @@
 · 세션에는 slot(profile) 만 보관한다. 대화 로그를 쌓지 않는다.
 · itda_core 는 async 다(2026-07-24). db 세션은 라우터가 Depends(get_db)로 주입한다.
 """
+import asyncio
 import json
 
 from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.itda import session
-from app.itda.schemas import (Goal, CertStep, Course, Hire, MessageResponse,
+from app.itda.schemas import (Goal, CertStep, Course, Hire, Handoff, MessageResponse,
                               ItdaSyncStatus, SyncRun)
 
 try:                                   # 서버(패키지) 경로
-    from app.itda.itda_core import ItdaEngine, missing_slots, ASK_ORDER, kst_today, kst_now
+    from app.itda.itda_core import (ItdaEngine, missing_slots, ASK_ORDER, kst_today,
+                                    kst_now, POLICY_HANDOFF)
 except ImportError:                    # standalone 실행 경로
-    from itda_core import ItdaEngine, missing_slots, ASK_ORDER, kst_today, kst_now
+    from itda_core import (ItdaEngine, missing_slots, ASK_ORDER, kst_today,
+                           kst_now, POLICY_HANDOFF)
 
 
 # 엔진은 프로세스당 하나 — DB·직무분야 목록을 매 요청마다 다시 읽지 않는다.
@@ -54,6 +57,13 @@ def _exam_text(exam):
     if not isinstance(exam, dict):             # 옛 튜플 형태 방어(저장된 카드 등)
         seq, doc, prac, pas = (list(exam) + [None] * 4)[:4]
         exam = {'seq': seq, 'doc': doc, 'prac': prac, 'pass': pas}
+    #  ★ 올해 일정이 다 끝난 자격증 (2026-08-05, _next_exam 의 past 플래그)
+    #    지난 날짜를 「접수 ~2026-05-04 (마감) · 필기 2026-05-09 …」로 늘어놓으면
+    #    사용자가 그게 무슨 뜻인지 직접 읽어내야 한다. 그냥 그렇다고 말한다.
+    #    ※ Q-Net API 가 당해년도만 주므로 「올해는 끝」이 우리가 아는 전부다 —
+    #      내년 공고 시점을 지어내지 않는다(카드에 없는 사실은 안 쓴다는 원칙).
+    if exam.get("past"):
+        return "올해 시험 일정은 끝났어요 (내년 일정 공고 전)"
     bits = []
     if exam.get("reg_end"):
         #  ★ D-day(2026-07-30) — 사용자가 놓쳐서 1년을 기다리는 건 접수 마감일이다.
@@ -92,6 +102,9 @@ def _to_goal(card) -> Goal:
             entry_note="" if free else (c.get("entry_note") or ""),
             exam=_exam_text(c.get("exam")),
             verified=bool(c.get("verified")),
+            #  ★ 2026-08-04 — 연 회차 수. 화면이 「자주 열려요」 배지로 쓸 수 있다.
+            exam_n=int(c.get("exam_n") or 0),
+            often=bool(c.get("often")),
             exam_method=c.get("exam_method") or "",
             outlook=c.get("outlook") or "",
             qual_gb=c.get("qual_gb") or "",
@@ -130,6 +143,9 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
 
     try:
         eng = get_engine()
+        #  ★ 이번 턴 사용량 (2026-08-04) — 엔진은 프로세스당 하나라 total_usage 가 계속 쌓인다.
+        #    호출 전후 차이를 떠서 **이 턴에 쓴 것만** 응답에 담는다.
+        _u0 = dict(eng.total_usage)
         r = await eng.step(db, profile, message)
     except Exception as e:
         print(f"[itda] step 실패: {type(e).__name__}: {e}")   # 서버 로그에만 남긴다
@@ -143,6 +159,54 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
         )
 
     profile = r["profile"]
+    #  ★ 2026-08-04 — 이번에 봇이 한 말을 다음 턴 프롬프트용으로 남긴다.
+    #    '_' 로 시작하므로 모델에게 슬롯으로 보이지 않고(profile_text 가 걸러냄),
+    #    화면에도 안 나간다(_public_profile 이 걸러냄). 오직 지시대명사 해석용이다.
+    #    길면 자른다 — 필요한 건 '무엇을 물었나'지 문장 전체가 아니다.
+    if r.get("reply"):
+        profile["_last_ask"] = str(r["reply"])[:300]
+    #  대화 이력 — HISTORY_MODE='full' 이 읽는다. 최근 것만 남겨 무한히 커지지 않게 한다.
+    #  r={'r':'u'|'b','t':텍스트} 로 짧게 담는다(키 이름이 길면 그것만으로 토큰이 는다).
+    hist = list(profile.get("_history") or [])
+    hist.append({"r": "u", "t": str(message)[:300]})
+    if r.get("reply"):
+        hist.append({"r": "b", "t": str(r["reply"])[:300]})
+
+    #  ★ 최근 창을 넘긴 앞부분은 버리지 않고 요약해 이어 붙인다(2026-08-04).
+    #    요약은 **응답을 보낸 뒤 백그라운드로** 돌린다 — 다음 턴에나 필요한 값이라
+    #    지금 기다릴 이유가 없다. 사용자는 답을 바로 받는다.
+    keep = eng.HISTORY_TURNS * 2
+    if len(hist) > eng.SUMMARIZE_AFTER * 2:
+        overflow, hist = hist[:-keep], hist[-keep:]
+
+        async def _fold(sid, old, chunk):
+            new = await eng.summarize(old, chunk)
+            s = session.get(sid)                     # 그 사이 바뀌었을 수 있어 다시 읽는다
+            if s.get("profile") is not None:
+                s["profile"]["_summary"] = new
+
+        asyncio.create_task(_fold(session_id, profile.get("_summary") or "", overflow))
+
+    #  ★ 분야(관심대분류) 갱신도 백그라운드로 (2026-08-04).
+    #    step() 이 '_think_stale' 을 남기면 여기서 큰 모델을 돌려 **다음 턴**에 반영한다.
+    #    이번 턴을 5.5초 붙잡지 않으려는 것 — 첫 착지(분야를 아예 모를 때)만 기다린다.
+    stale_sig = profile.pop("_think_stale", None)
+    if stale_sig:
+        async def _rethink(sid, snap, last, sig):
+            th = await eng.think(snap, last)
+            if not th:
+                return
+            p = session.get(sid).get("profile")     # 그 사이 바뀌었을 수 있어 다시 읽는다
+            if p is None:
+                return
+            if th.get("관심대분류") is not None:
+                p["관심대분류"] = [x for x in th["관심대분류"] if x]
+            p["_think_sig"] = sig                   # 같은 슬롯 상태로 또 부르지 않게
+
+        asyncio.create_task(_rethink(session_id, dict(profile),
+                                     str(message)[:300], stale_sig))
+
+    profile["_history"] = hist
     st["profile"] = profile
     done, total = _progress(profile)
 
@@ -152,8 +216,12 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
     msg_type = "result" if kind == "card" else ("blocked" if kind == "blocked" else "ask")
 
     reply = r["reply"]
+    #  ★ OFFRAMP = 「어떤 일에도 이어주기 어렵다」 → 이건 정의상 **덜다로 건네야 하는** 경우다.
+    #    예전엔 문장 한 줄만 덧붙이고 아무 데도 안 보냈다(2026-08-04 이전).
+    handoff = r.get("handoff")
     if kind == "offramp":
         reply += "\n\n지금은 자격증보다 돌봄 지원이나 바로 해볼 수 있는 일부터 보는 것도 좋아요."
+        handoff = handoff or dict(POLICY_HANDOFF)
 
     card = r.get("card")
     if card:
@@ -184,6 +252,9 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
         alternatives=alts,
         options=r.get("options") or [],
         option_notes=r.get("option_notes") or [],
+        handoff=Handoff(**handoff) if handoff else None,
+        usage={k: eng.total_usage.get(k, 0) - _u0.get(k, 0)
+               for k in ("in", "out", "think", "cached", "calls")},
     )
 
 
@@ -262,6 +333,24 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
                             detail="아직 저장할 결과가 없어요. 대화로 직업을 찾은 뒤 저장해 주세요.")
 
     profile = dict(st.get("profile") or {})
+    #  ★ 2026-08-04 — 대화 이력은 저장하지 않는다.
+    #    _history 는 다음 턴 프롬프트용 임시 상태다. 지도에 넣으면 한 장마다 최대 7천 자가
+    #    붙고, '이어서하기'로 복원했을 때 남의 옛 대화가 프롬프트에 섞인다.
+    #    지도가 담아야 하는 건 **결론(슬롯·직업·이유)**이지 과정이 아니다.
+    profile.pop("_history", None)
+    profile.pop("_last_ask", None)
+    #  ★★ 2026-08-05 (코드감사) — **저장이 500 으로 죽고 있었다.**
+    #    _last_certs(2026-08-04 추가)는 「시험이 언제예요?」에 DB 값 그대로 답하려고 남겨둔
+    #    **다음 턴용 임시 상태**인데, 그 안의 exam 은 _next_exam() 이 DB 에서 꺼낸
+    #    `datetime.date` 객체다. aiomysql 은 DATE 를 문자열이 아니라 date 로 준다.
+    #    아래 json.dumps 에는 default= 가 없다 →
+    #      TypeError: Object of type date is not JSON serializable → 라우터에 try 도 없어 HTTP 500.
+    #    시험일정이 있는 자격증이 붙은 카드(=거의 모든 카드)를 받은 뒤 「저장」하면 터졌다.
+    #    위 주석의 원칙 그대로다 — 지도는 **결론**을 담는다. 이건 과정이므로 뺀다.
+    profile.pop("_last_certs", None)
+    #  그리고 같은 사고가 다시 나지 않게 직렬화에 안전망을 둔다(날짜가 또 섞여 들어와도
+    #  저장이 죽지는 않는다). 위 pop 이 1차 방어, 이것이 2차다.
+    _dump = lambda p: json.dumps(p, ensure_ascii=False, default=str)   # noqa: E731
     #  ★ 추천 이유를 함께 저장한다(2026-07-30) — 대화 카드엔 나오는데 저장된 지도엔 없었다.
     #    itda_map 에 컬럼이 없어 profile_json 안에 '_' 키로 담는다('_' 는 노출 필터가 걸러낸다).
     if card.get("job_reason"):
@@ -278,7 +367,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         done, _ = _progress(profile)
         await db.execute(text(
             "UPDATE itda_map SET progress_step = :ps, profile_json = :pj WHERE map_id = :mid"),
-            {"ps": done, "pj": json.dumps(profile, ensure_ascii=False), "mid": map_id})
+            {"ps": done, "pj": _dump(profile), "mid": map_id})
         #  자격증·강좌는 통째로 다시 넣는다(카드가 바뀌었을 수 있다).
         await db.execute(text("DELETE FROM itda_map_cert WHERE map_id = :mid"), {"mid": map_id})
         await db.execute(text("DELETE FROM itda_map_course WHERE map_id = :mid"), {"mid": map_id})
@@ -292,7 +381,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
         "VALUES (:uid, :jc, '진행중', :ps, :pj, :now)"),
         {"uid": user_id, "jc": job_code, "ps": done,
-         "pj": json.dumps(profile, ensure_ascii=False),
+         "pj": _dump(profile),
          "now": kst_now()})
     map_id = res.lastrowid
     await _fill_map_children(db, map_id, card)

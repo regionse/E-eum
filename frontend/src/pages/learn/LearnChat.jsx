@@ -10,8 +10,33 @@ import { BAD_WORDS } from '../../utils/text.js'
 // 그 직업의 자격증(≤3) + 무료강좌 + 국비훈련 안내를 미래설계지도로 그려준다.
 //  · 대화(이해)는 백엔드 LLM이, 결과(직업·자격·강좌)는 코드가 정한다. (자유로운 상담 + 갇힌 출력)
 //  · 선고가 아니라 안내 — "이런 방향이 맞아 보여요" (2026-07-29 NCS 원툴)
-const GREET = { role: 'bot', kind: 'text', text: '어떤 일이 잘 맞을지 같이 찾아봐요. 관심 있는 것이나 좋아하는 걸 편하게 말해주세요 — 막연해도 괜찮아요.' }
+//  ★ 첫인사 교체(2026-08-04) — 예전 문구는 인사 없이 곧장 «관심 있는 것이나 좋아하는 걸
+//    말해주세요» 였다. **첫마디부터 숙제를 내는 셈**이고, 그 숙제는 여유가 있어야 풀린다.
+//    우리 사용자는 하루 2시간 자며 주 7일 일하기도 한다(월드비전 2024 심층면접).
+//    ⇒ 인사만 하고, 질문은 누구나 답할 수 있는 것 하나로 연다(백엔드 _ASK_Q 와 같은 결).
+const GREET = { role: 'bot', kind: 'text', greet: 'hello', text: '안녕하세요, 교육·상담을 맡은 잇다예요.\n요즘 뭐 하고 지내세요? 일이든 돌봄이든, 하고 계신 걸 그대로 말씀해 주셔도 돼요.' }
+//  '이어서하기'로 들어왔을 때의 머리말. 위 GREET 과 똑같이 **우리가 쓴 안내문**이라 같은 규칙을 받는다.
+const RESUME_GREET = { role: 'bot', kind: 'text', greet: 'resume', text: '저장한 지도를 이어서 볼게요 — 더 이야기하면 방향을 다듬을 수 있어요.' }
 const GOAL_EXAMPLES = ['나무나 식물을 다루는 일', '컴퓨터로 뭔가 만드는 일', '사람에게 도움이 되는 일']
+
+//  ★ 머리말은 '저장된 대화'가 아니라 '지금 코드의 문구'로 되살린다 (2026-08-05)
+//  무슨 일이 있었나 — 8/4 에 GREET 을 새 문구로 바꿨는데 화면엔 계속 옛 문구가 나왔다.
+//    옛 문구는 src 어디에도 없었다. localStorage(eum_itda_chat_<uid>)에 **대화 통째로**
+//    저장돼 있었고, 아래 useState 가 draft.msgs 를 그대로 되살린 것이다.
+//    즉 코드를 고쳐도 이미 한 번 들어와 본 사용자에게는 옛 인사말이 영원히 남는다.
+//  왜 draft 를 통째로 버리지 않나 — '하던 대화 이어가기'는 의도된 기능이다(새로고침·중간이탈 복구).
+//    버려야 할 것은 대화가 아니라 **낡아버린 우리 대사**뿐이다.
+//  어떻게 — 머리말에 greet 표식을 달아두고, 되살릴 때 표식이 가리키는 지금 문구로 갈아끼운다.
+//    표식이 없는 옛 draft(8/4 이전 저장분)는 위치로 판별한다 — 이 화면에서 msgs[0] 은
+//    항상 봇 머리말이다(사용자 발화는 push 로 뒤에만 붙는다). 그래서 위치 판별이 안전하다.
+function reviveGreet(msgs) {
+  const first = msgs?.[0]
+  if (!first || first.role !== 'bot' || first.kind !== 'text') return msgs   // 예상 밖 모양이면 손대지 않는다
+  const fresh = (first.greet === 'resume' || String(first.text || '').startsWith('저장한 지도'))
+    ? RESUME_GREET : GREET
+  if (first.text === fresh.text && first.greet) return msgs                  // 이미 최신 문구
+  return [fresh, ...msgs.slice(1)]
+}
 export default function LearnChat() {
   const toast = useToast()
   const loc = useLocation()
@@ -20,9 +45,9 @@ export default function LearnChat() {
   const uid = user?.user_id                          // ★ 대화 draft를 사용자별로 분리(계정 섞임 방지)
   const rs = loc.state?.goal ? loc.state : null      // '이어서하기'로 들어온 경우(복원된 세션+지도)
   const draft = loadItdaDraft(uid)                   // 이 사용자의 보관 대화만 복원. '새 지도/이어서하기'는 LearnHub가 비운다.
-  const [msgs, setMsgs] = useState(() => draft ? draft.msgs
+  const [msgs, setMsgs] = useState(() => draft ? reviveGreet(draft.msgs)
     : rs
-    ? [{ role: 'bot', kind: 'text', text: '저장한 지도를 이어서 볼게요 — 더 이야기하면 방향을 다듬을 수 있어요.' },
+    ? [RESUME_GREET,
        { role: 'bot', kind: 'goal', goal: rs.goal, alternatives: [] }]
     : [GREET])
   const [input, setInput] = useState('')
@@ -90,10 +115,11 @@ export default function LearnChat() {
       //    언마운트돼 setMsgs 가 무효화되고, 그 답이 draft 에도 안 남아 영구히 사라졌다.
       //    (백엔드는 이미 처리해 슬롯을 갱신한 상태라, 사용자만 '무응답'으로 보였다.)
       //    localStorage 저장은 React 상태와 무관하므로 떠나도 살아남는다 → 돌아오면 답이 보인다.
+      //  handoff — 시간·비용 이야기가 나오면 백엔드가 덜다(정책)로 건네줄 딱지를 달아준다(2026-08-04).
       const added = res.type === 'result'
-        ? [...(res.reply ? [{ role: 'bot', kind: 'text', text: res.reply }] : []),
+        ? [...(res.reply ? [{ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff }] : []),
            { role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] }]
-        : [{ role: 'bot', kind: 'text', text: res.reply,
+        : [{ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff,
              options: res.options || [], notes: res.option_notes || [] }]
       saveItdaDraft(uid, { sid, msgs: [...msgsRef.current, ...added], mapped })
 
@@ -102,11 +128,11 @@ export default function LearnChat() {
         //  ★ 지도를 바로 펼치지 않는다(2026-07-30) — 대화 도중 카드가 갑자기 나오면
         //    사용자가 확인할 틈 없이 결론이 던져지는(충동적인) 느낌을 준다.
         //    한 번 더 "이 방향 맞을까요?"로 확인받고, 누를 때 지도를 연다. 데이터는 이미 받아뒀다.
-        if (res.reply) push({ role: 'bot', kind: 'text', text: res.reply })
+        if (res.reply) push({ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff })
         push({ role: 'bot', kind: 'propose', goal: res.goal, alternatives: res.alternatives || [] })
       } else {
         //  좁히기 선택지가 오면 클릭 chip 으로 그린다(2026-07-30) — 예전엔 NCS 원문을 손으로 타이핑해야 했다.
-        push({ role: 'bot', kind: 'text', text: res.reply,
+        push({ role: 'bot', kind: 'text', text: res.reply, handoff: res.handoff,
                options: res.options || [], notes: res.option_notes || [] })
       }
     } catch (e) {
@@ -183,7 +209,9 @@ export default function LearnChat() {
                      fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
               <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal}
-                onPick={(o) => send(o)} onRetry={send} />
+                onPick={(o) => send(o)} onRetry={send}
+                //  덜다로 갈 때 대화를 버리지 않는다 — draft 는 그대로 남으므로 돌아오면 이어진다.
+                onHandoff={(h) => nav(h.path || '/welfare/policy')} />
             ))}
             {busy && <TypingBubble onCancel={cancel} />}
             <div ref={endRef} />
@@ -308,7 +336,7 @@ function ProposeCard({ goal, alternatives, onOpen }) {
   )
 }
 
-function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry }) {
+function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry, onHandoff }) {
   if (m.kind === 'text') return (
     <div style={{ alignSelf: m.role === 'me' ? 'flex-end' : 'stretch' }}>
       <div className={`bubble ${m.role === 'me' ? 'me' : 'bot'}`}
@@ -317,6 +345,15 @@ function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry }) {
       {m.retry && (
         <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
           onClick={() => onRetry?.(m.retry)}>다시 보내기 ↻</button>
+      )}
+      {/* 덜다(정책)로 건네주기 (2026-08-04) — 시간·비용 제약은 진로 상담만으로 안 풀린다.
+          대화를 끊지 않는다: 버튼일 뿐이고, 안 눌러도 진로 이야기는 그대로 이어진다. */}
+      {m.handoff?.path && (
+        <button className="btn btn-ghost btn-sm"
+          style={{ marginTop: 9, borderColor: 'var(--teal-200)', color: 'var(--teal-700)' }}
+          onClick={() => onHandoff?.(m.handoff)}>
+          {m.handoff.label || '받을 수 있는 지원 찾아보기'} →
+        </button>
       )}
       {/* 좁히기 선택지 — 눌러서 고른다(2026-07-30). 설명 한 줄로 NCS 원문의 뜻을 알려준다. */}
       {m.options?.length > 0 && (
@@ -333,6 +370,19 @@ function ChatItem({ m, onSave, onOpenGoal, onPick, onRetry }) {
               )}
             </button>
           ))}
+          {/* ★ 「이 중에 없어요」 (2026-08-05)
+              왜 필요한가 — SOCcer 자가코딩 실측에서 이 선택지를 **14~18%가 누른다**
+                (v1 17% N=23,699 · v2 14% N=12,060 · Next Steps UK 18%).
+                우리 칩엔 그 자리가 없어서, 안 맞는 사람은 아무 말이나 쓰거나 아무거나 눌렀다.
+              누르면 그 문구를 그대로 보낸다 — 백엔드 none_of_these() 가 이미 알아듣고,
+              **동네를 떠나지 않고** 보여준 것만 강등해 같은 슬롯으로 다시 찾는다.
+                (근거: 「없음」을 고른 사람의 27~54%는 실제로 그 목록 안에 답이 있었다) */}
+          <button className="card" onClick={() => onPick('이 중에 없어요')}
+            style={{ textAlign: 'left', cursor: 'pointer', padding: '9px 14px',
+              width: '100%', display: 'block', background: 'transparent',
+              borderStyle: 'dashed' }}>
+            <span className="muted" style={{ fontSize: 13.5 }}>이 중에 없어요</span>
+          </button>
         </div>
       )}
     </div>
@@ -361,18 +411,40 @@ function Examples({ items, onPick }) {
 //  ※ 단계 문구를 시간으로 추측해 바꾸는 방식은 2026-07-30 에 폐기했다(실제 진행과 어긋나 산만했다).
 //    대신 ①문구는 하나로 고정 ②경과 초를 실제로 세어 보여주고 ③오래 걸리면 멈출 수 있게 한다.
 //    경과 시간은 추측이 아니라 사실이라 어긋날 일이 없다.
+//  ★★ 기다리는 동안 무엇을 보여줄 것인가 (2026-08-05)
+//    실측 문제 — 첫 턴이 간헐적으로 6~9초 걸린다.
+//    근거: ACM CUI '25 (arXiv 2507.22352, N=54, 조건 1.5s/4.0s/6.5s)
+//      · "latency above 4 seconds degrades quality of experience"
+//      · "natural conversational fillers improve perceived response time"
+//        — 4.0s 에서 p<0.01 · 6.5s 에서 p<0.0001 · 64.81%가 자연 추임새를 선호
+//      · "Artificial wait indicators showed no significant improvement over
+//         no filler conditions"  ← 스피너·초 카운터가 여기 해당한다
+//    ⇒ 초 카운터를 앞세우지 않는다(시계를 보게 만든다). 대신 **말이 자연스럽게 이어지게** 한다.
+//    ※ 참고 — Gnewuch et al. (BISE 2022, N=202): 2.3초 지연은 **초보 사용자**에게
+//      오히려 사회적 실재감을 높였다(b=0.69, p<0.05). 우리 사용자는 그쪽이다.
+//      그러니 목표는 0초가 아니라 「4초 선을 넘을 때 자연스럽게 말 걸기」다.
+const WAIT_LINES = [
+  [0, '네, 듣고 있어요…'],
+  [3, '말씀해 주신 걸 정리하고 있어요…'],
+  [6, '비슷한 일들을 찾아보는 중이에요…'],
+  [10, '조금만요, 거의 다 됐어요…'],
+]
+
 function TypingBubble({ onCancel }) {
   const [sec, setSec] = useState(0)
   useEffect(() => {
     const t = setInterval(() => setSec((s) => s + 1), 1000)
     return () => clearInterval(t)
   }, [])
+  //  지난 구간 중 마지막 문구 — 시간이 갈수록 말이 바뀐다(고정 문장은 멈춘 것처럼 보인다).
+  const line = WAIT_LINES.reduce((acc, [t, s]) => (sec >= t ? s : acc), WAIT_LINES[0][1])
   return (
     <div className="bubble bot" style={{ display: 'inline-flex', alignItems: 'center',
       gap: 10, width: 'fit-content', fontSize: 15, flexWrap: 'wrap' }}>
       <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-      <span>대화하신 내용을 이해하고 있어요…</span>
-      {sec >= 3 && <span className="muted" style={{ fontSize: 12.5 }}>{sec}초</span>}
+      <span>{line}</span>
+      {/* 초 카운터는 10초 넘게 걸릴 때만 — 그 전엔 시계를 보게 만들 이유가 없다 */}
+      {sec >= 10 && <span className="muted" style={{ fontSize: 12.5 }}>{sec}초</span>}
       {sec >= 6 && onCancel && (
         <button className="btn btn-plain btn-sm" onClick={onCancel}
           style={{ fontSize: 12.5, padding: '2px 10px' }}>멈추기</button>

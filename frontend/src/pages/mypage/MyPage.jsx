@@ -3,6 +3,7 @@ import { NavLink, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../store/auth.jsx'
 import { useToast, PageHead, Modal } from '../../components/ui/index.jsx'
 import { updateMe } from '../../api/auth.js'
+import { getToken } from '../../api/client.js'
 import {
   getUserConsents,
   updateUserConsents,
@@ -400,7 +401,12 @@ function Withdraw() {
 export default function MyPage() {
   const { user } = useAuth()
 
-  if (!user) {
+  //  ★ 2026-08-04 — 토큰도 함께 본다(관리자 화면과 같은 수정).
+  //    세션이 네 군데에 나뉘어 있는데(eum_token · eum_user · eum_admin · eum_family)
+  //    JWT 는 공용이고, 401 이 한 번 나면 client.js 가 **토큰만** 비운다(24시간 만료마다 발생).
+  //    그러면 eum_user 가 남아 이 화면이 열리고, 안의 호출은 인증 없이 나가 전부 실패했다.
+  //    ⇒ 둘 중 하나라도 없으면 로그인 화면으로 보낸다.
+  if (!user || !getToken()) {
     return <Navigate to="/login" replace />
   }
 

@@ -46,11 +46,7 @@ from app.delda.services.policy_recommendation_prompt import (
 )
 
 
-# 현재 파일:
-# Backend/app/delda/services/policy_recommendation_service.py
-#
-# parents[2]:
-# Backend/app
+
 ENV_PATH = (
     Path(__file__)
     .resolve()
@@ -64,7 +60,7 @@ load_dotenv(ENV_PATH)
 DEFAULT_LLM_MODEL = "gemini-2.5-flash"
 
 # Agent에게 전달할 최대 후보 정책 수
-MAX_CANDIDATE_COUNT = 10
+MAX_CANDIDATE_COUNT = 15
 
 # 정책의 각 상세 내용을 어느 정도까지
 # Agent에게 전달할지 정한다.
@@ -77,6 +73,7 @@ MAX_FOLLOW_UP_QUESTION_COUNT = 3
 
 # =========================================================
 # Agent 구조화 응답 Schema
+# Agent가 요청을 세가지로 분류
 # =========================================================
 
 
@@ -91,14 +88,14 @@ PolicyRequestIntent = Literal[
     "specific_policy_eligibility",
 ]
 
-
+# Agent 상태 타입
 PolicyAgentStatus = Literal[
-    "need_more_information",
-    "recommendation_completed",
-    "policy_lookup_completed",
-    "no_policy_found",
-    "invalid_input",
-    "urgent_support",
+    "need_more_information",        # 추가 질문 필요
+    "recommendation_completed",     # 추천 완료
+    "policy_lookup_completed",      # 특정 정책 정보 조회 완료
+    "no_policy_found",              # 추천, 조회할 정책 없음
+    "invalid_input",                # 잘못되거나 무관한 입력
+    "urgent_support",               # 즉각적인 위험 관련 입력
 ]
 
 
@@ -114,11 +111,11 @@ PolicyAgentReasonCode = Literal[
     "immediate_danger",
 ]
 
-
+# 정책 자격 상태. 
 PolicyEligibilityStatus = Literal[
-    "eligible",
-    "needs_confirmation",
-    "ineligible",
+    "eligible",     # 핵심 조건 확인되어 신청 대상에게 해당한다고 판단
+    "needs_confirmation",       # 정책은 관련이 있지만 핵심 조건 일부가 확인되지 않음
+    "ineligible",           # 사용자의 조건이 정책과 맞지 않음.
 ]
 
 
@@ -127,29 +124,28 @@ class AgentSelectedPolicy(BaseModel):
     Agent가 검토한 정책의 자격 판단 결과.
     """
 
+    # 정의되지 않은 필드 Agent가 임의로 추가하지 못하게 함.
     model_config = ConfigDict(
         extra="forbid",
     )
 
     policy_id: int
 
-    eligibility_status: (
-        PolicyEligibilityStatus
-    )
+    eligibility_status: PolicyEligibilityStatus
 
     fitness: PolicyFitnessValue
 
-    confirmed_conditions: list[str] = Field(
+    confirmed_conditions: list[str] = Field(        # 사용자 정보로 확인된 정책 조건
         default_factory=list,
         max_length=10,
     )
 
-    missing_conditions: list[str] = Field(
+    missing_conditions: list[str] = Field(          # 확인되지 않은 핵심 정책 조건
         default_factory=list,
         max_length=10,
     )
 
-    recommendation_reason: str = Field(
+    recommendation_reason: str = Field(             # 정책 추천 이유
         min_length=1,
         max_length=1000,
     )
@@ -167,29 +163,29 @@ class PolicyAgentOutput(BaseModel):
         extra="forbid",
     )
 
-    status: PolicyAgentStatus
+    status: PolicyAgentStatus       # 응답의 상태. 추가질문 필요, 추천 완료 등...
 
-    # 사용자가 원하는 처리 방식
+    # 사용자 요청 종류. 여러 정책 추천, 특정 정책 검색 등...
     request_intent: PolicyRequestIntent
 
-    understood_situation: str = Field(
+    understood_situation: str = Field(      # Agent가 이해한 사용자 상황
         min_length=1,
         max_length=1500,
     )
 
-    selected_policies: list[
+    selected_policies: list[        # 맞춤 추천 또는 자격 확인에서 선택된 정책
         AgentSelectedPolicy
     ] = Field(
         default_factory=list,
         max_length=5,
     )
 
-    missing_information: list[str] = Field(
+    missing_information: list[str] = Field(     # 추가 질문이 필요한 이유나 부족한 정보
         default_factory=list,
         max_length=5,
     )
 
-    follow_up_question: (
+    follow_up_question: (           # 추가 질문 한 건. need_more_information 상태일 때 필요
         PolicyFollowUpQuestion | None
     ) = None
 
@@ -247,6 +243,8 @@ class PolicyAgentExecution:
 
     selected_policies:
         Agent가 선택한 실제 SQLAlchemy Policy 객체
+    
+    위의 두 개의 값 묶어서 리턴
     """
 
     output: PolicyAgentOutput
@@ -261,14 +259,10 @@ class PolicyAgentExecution:
 
 def _create_model() -> ChatGoogleGenerativeAI:
     """
-    정책 추천 Agent에서 사용할
-    Gemini 채팅 모델을 생성한다.
+    정책 추천 Agent에서 사용할 Gemini 채팅 모델을 생성한다.
     """
 
-    api_key = os.getenv(
-        "GEMINI_API_KEY",
-        "",
-    ).strip()
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
 
     if not api_key:
         raise RuntimeError(
@@ -277,11 +271,11 @@ def _create_model() -> ChatGoogleGenerativeAI:
 
     model_name = DEFAULT_LLM_MODEL
 
-    return ChatGoogleGenerativeAI(
+    return ChatGoogleGenerativeAI(      # 모델 생성
         model=model_name,
         api_key=api_key,
         temperature=0.0,
-        max_retries=2,
+        max_retries=2,      # 모델 호출 실패 시 2번 재시도
     )
 
 
@@ -290,28 +284,18 @@ def _shorten_text(
     max_length: int = MAX_POLICY_TEXT_LENGTH,
 ) -> str:
     """
-    정책 내용이 너무 길어져 Agent 입력 토큰이
-    과도하게 증가하는 것을 방지한다.
+    정책 내용이 너무 길어져 Agent 입력 토큰이 과도하게 증가하는 것을 방지한다.
     """
 
     if not value:
         return "-"
 
-    normalized_value = " ".join(
-        value.split()
-    )
+    normalized_value = " ".join(value.split())
 
-    if (
-        len(normalized_value) <= max_length
-    ):
+    if (len(normalized_value) <= max_length):
         return normalized_value
 
-    return (
-        normalized_value[
-            :max_length
-        ]
-        + "..."
-    )
+    return (normalized_value[:max_length] + "...")
 
 
 def _normalize_condition_text(
@@ -325,9 +309,7 @@ def _normalize_condition_text(
     if not value:
         return ""
 
-    return " ".join(
-        value.split()
-    )
+    return " ".join(value.split())
 
 
 def _normalize_user_age_text(
@@ -337,8 +319,7 @@ def _normalize_user_age_text(
     prepend_if_missing: bool,
 ) -> str:
     """
-    Agent가 작성한 사용자의 나이를
-    백엔드에서 계산한 만 나이로 보정한다.
+    Agent가 작성한 사용자의 나이를 백엔드에서 계산한 만 나이로 보정한다.
 
     understood_situation:
         출생연도와 만 나이가 없으면 앞에 추가
@@ -433,8 +414,7 @@ def _requires_unconfirmed_gender(
     policy: Policy,
 ) -> bool:
     """
-    현재 사용자 Context에는 성별 정보가 없으므로,
-    특정 성별만 대상으로 하는 정책인지 확인한다.
+    현재 사용자 Context에는 성별 정보가 없으므로, 특정 성별만 대상으로 하는 정책인지 확인한다.
 
     성별 제한이 명확하면 최종 추천에서 제외한다.
     """
@@ -740,8 +720,7 @@ def _policy_to_agent_data(
     policy: Policy,
 ) -> dict:
     """
-    Policy 객체를 Agent Tool이 반환할
-    JSON 형태로 변환한다.
+    Policy 객체를 Agent Tool이 반환할 JSON 형태로 변환한다.
     """
 
     return {
@@ -778,8 +757,7 @@ def _is_repeated_follow_up_question(
     context: PolicyRecommendationContext,
 ) -> bool:
     """
-    Agent가 사용자가 이미 답변한
-    동일 정책의 동일 조건을 다시 질문했는지 확인한다.
+    Agent가 사용자가 이미 답변한 동일 정책의 동일 조건을 다시 질문했는지 확인한다.
     """
 
     if (
@@ -800,7 +778,7 @@ def _is_repeated_follow_up_question(
             and answer.condition_key
             == question.condition_key
         ):
-            return True
+            return True         # policy_id, condition_key가 같으면 같은 질문으로 판단 -> True 리턴
 
     return False
 
@@ -809,8 +787,7 @@ def _format_follow_up_answer(
     item: PolicyFollowUpAnswer,
 ) -> str:
     """
-    추가 질문 한 건과 사용자의 답변을
-    Agent에게 전달할 문자열로 만든다.
+    추가 질문 한 건과 사용자의 답변을 Agent에게 전달할 문자열로 만든다.
     """
 
     if isinstance(item.answer, list):
@@ -866,8 +843,7 @@ def _format_follow_up_answers(
     answers: list[PolicyFollowUpAnswer],
 ) -> str:
     """
-    여러 개의 이전 추가 답변을
-    Agent에게 전달할 문자열로 만든다.
+    여러 개의 이전 추가 답변을 Agent에게 전달할 문자열로 만든다.
     """
 
     if not answers:
@@ -883,22 +859,21 @@ def _build_user_message(
     context: PolicyRecommendationContext,
 ) -> str:
     """
-    최초 폼 입력과 챗봇 추가 답변을 구분해서
-    Agent에게 전달한다.
+    최초 폼 입력과 챗봇 추가 답변을 구분해서 Agent에게 전달한다.
     """
 
     is_follow_up_chat = bool(
         context.follow_up_answers
-    )
+    )       # 최초 폼입력인지 추가 채팅인지 확인
 
     follow_up_question_count = len(
         context.follow_up_answers
-    )
+    )       # 질문 횟수 계산
 
     can_ask_follow_up = (
         follow_up_question_count
         < MAX_FOLLOW_UP_QUESTION_COUNT
-    )
+    )       # 추가 질문 가능 여부 판단. (질문 3개 초과 -> 불가능으로 판단)
 
     request_stage = (
         "follow_up_chat"
@@ -929,7 +904,7 @@ def _build_user_message(
         f"거주지역: {context.region}"
     )
 
-    if is_follow_up_chat:
+    if is_follow_up_chat:       # 이전 답변, 최신 답변 구분
         previous_answers = (
             context.follow_up_answers[:-1]
         )
@@ -1070,10 +1045,7 @@ def create_policy_recommendation_agent(
     """
 
     # Tool이 검색한 Policy 객체를 보관한다.
-    #
-    # Agent는 policy_id만 반환하므로,
-    # Agent 실행 후 실제 Policy 객체와
-    # 다시 연결할 때 사용한다.
+    # Agent는 policy_id만 반환하므로, Agent 실행 후 실제 Policy 객체와 다시 연결할 때 사용한다.
     candidate_store: dict[int, Policy] = {}
 
     @tool
@@ -1092,7 +1064,7 @@ def create_policy_recommendation_agent(
             }
         )
 
-        policies = (
+        policies = (        # Hybrid RAG 실행. 최대 15개의 정책 후보 검색
             await retrieve_relevant_policies(
                 db=db,
                 context=retrieval_context,
@@ -1100,25 +1072,24 @@ def create_policy_recommendation_agent(
             )
         )
 
-        candidate_store.clear()
+        candidate_store.clear()     # 이전 Tool 호출 결과를 비움.
 
         for policy in policies:
             candidate_store[
                 policy.policy_id
-            ] = policy
+            ] = policy      # 실제 ORM 객체 저장
 
-        if not policies:
+        if not policies:        # 검색된 정책 없을때 리턴되는 형태
             return json.dumps(
                 {
                     "candidate_count": 0,
-                    "message": (
-                        "검색된 정책 후보가 없습니다."
-                    ),
+                    "message": ("검색된 정책 후보가 없습니다."),
                     "policies": [],
                 },
                 ensure_ascii=False,
             )
 
+        # 정책이 있을 때 리턴되는 형태
         return json.dumps(
             {
                 "candidate_count": len(policies),
@@ -1131,6 +1102,7 @@ def create_policy_recommendation_agent(
         )
 
 
+    # 특정 정책 조회와 특정 정책 자격 확인에서 사용하는 Tool
     @tool
     async def find_policy_by_name(
         policy_name: str,
@@ -1167,10 +1139,7 @@ def create_policy_recommendation_agent(
                         policy_name
                     ),
                     "candidate_count": 0,
-                    "message": (
-                        "입력한 이름과 일치하는 "
-                        "정책을 찾지 못했습니다."
-                    ),
+                    "message": ("입력한 이름과 일치하는 정책을 찾지 못했습니다."),
                     "policies": [],
                 },
                 ensure_ascii=False,
@@ -1198,7 +1167,7 @@ def create_policy_recommendation_agent(
         )
     
 
-    model = _create_model()
+    model = _create_model()     # agent 생성
 
     agent = create_agent(
         model=model,
@@ -1237,12 +1206,13 @@ async def run_policy_recommendation_agent(
     5. 구조화된 추천 결과 생성
     """
 
+    # 현재 API 요청에만 사용할 Agent와 저장소 생성
     agent, candidate_store = (
         create_policy_recommendation_agent(
             db=db,
             context=context,
         )
-    )
+    )       
 
     messages = [
         {
@@ -1269,12 +1239,11 @@ async def run_policy_recommendation_agent(
 
         structured_response = result.get(
             "structured_response"
-        )
+        )       # 구조화 응답 추출
 
         if structured_response is None:
             raise RuntimeError(
-                "정책 추천 Agent가 구조화된 "
-                "결과를 반환하지 않았습니다."
+                "정책 추천 Agent가 구조화된 결과를 반환하지 않았습니다."
             )
 
         if isinstance(
@@ -1294,10 +1263,8 @@ async def run_policy_recommendation_agent(
         # 최대 질문 횟수에 도달했는데도
         # Agent가 추가 질문을 생성한 경우
         if (
-            output.status
-            == "need_more_information"
-            and len(context.follow_up_answers)
-            >= MAX_FOLLOW_UP_QUESTION_COUNT
+            output.status == "need_more_information"
+            and len(context.follow_up_answers) >= MAX_FOLLOW_UP_QUESTION_COUNT
         ):
             if attempt == 0:
                 messages.append(
@@ -1336,9 +1303,7 @@ async def run_policy_recommendation_agent(
                     "missing_information": [],
                     "follow_up_question": None,
                     "reason": (
-                        "현재까지 확인된 정보로는 "
-                        "신청 가능성이 높은 정책을 "
-                        "확정하기 어렵습니다."
+                        "현재까지 확인된 정보로는 신청 가능성이 높은 정책을 확정하기 어렵습니다."
                     ),
                     "reason_code": "none",
                     "message": None,
@@ -1349,8 +1314,7 @@ async def run_policy_recommendation_agent(
         # need_more_information인데 추가 질문이 빠진 경우
         # Agent에게 한 번 다시 생성하도록 요청한다.
         if (
-            output.status
-            == "need_more_information"
+            output.status == "need_more_information"
             and output.follow_up_question is None
         ):
             if attempt == 0:
@@ -1479,6 +1443,7 @@ need_more_information을 반환하지 마세요.
     )
 
 
+    # 특정 정책 요청의 정책명 검증
     if (
         output.request_intent
         in {
@@ -1488,8 +1453,7 @@ need_more_information을 반환하지 마세요.
         and not output.requested_policy_name
     ):
         raise RuntimeError(
-            "특정 정책 요청이지만 "
-            "requested_policy_name이 없습니다."
+            "특정 정책 요청이지만 requested_policy_name이 없습니다."
         )
     
 
@@ -1519,13 +1483,10 @@ need_more_information을 반환하지 마세요.
     # 특정 정책 단순 조회 결과 확정
     # -----------------------------------------------------
 
-    lookup_policy_objects: list[
-        Policy
-    ] = []
+    lookup_policy_objects: list[Policy] = []
 
     if (
-        output.request_intent
-        == "specific_policy_lookup"
+        output.request_intent == "specific_policy_lookup"
     ):
         if not output.requested_policy_name:
             raise RuntimeError(
@@ -1659,11 +1620,14 @@ need_more_information을 반환하지 마세요.
 
     used_policy_ids: set[int] = set()
 
+    # ================================================
+    # 제일 중요한 백엔드 후처리 부분
+    # ================================================
+
     for selected in output.selected_policies:
         policy_id = selected.policy_id
 
-        # Hybrid RAG가 검색하지 않은 정책을
-        # Agent가 만들어 반환한 경우 제외한다.
+        # Hybrid RAG가 검색하지 않은 정책을 Agent가 만들어 반환한 경우 제외한다.
         if policy_id not in candidate_store:
             continue
 
@@ -1695,7 +1659,7 @@ need_more_information을 반환하지 마세요.
         ):
             continue
 
-
+        # 명확한 연령 범위 밖이면 제외
         if _is_outside_explicit_age_range(
             policy=policy,
             user_age=context.age,
@@ -1715,13 +1679,12 @@ need_more_information을 반환하지 마세요.
         ):
             continue
 
-
+        # 적합도 보정
         selected = _normalize_policy_fitness(
             selected
         )
 
-        # 적합도가 낮은 정책은
-        # 최종 추천에서 제외한다.
+        # 적합도가 낮은 정책은 최종 추천에서 제외한다.
         if selected.fitness == "low":
             continue
 
@@ -1742,17 +1705,15 @@ need_more_information을 반환하지 마세요.
     # 상태별 결과 정리
     # -----------------------------------------------------
 
-    if (
-        output.status
-        == "policy_lookup_completed"
+    if (        # 특정 정책 조회 요청인지 확인
+        output.status == "policy_lookup_completed"
     ):
         if (
             output.request_intent
             != "specific_policy_lookup"
         ):
             raise RuntimeError(
-                "policy_lookup_completed 상태지만 "
-                "요청 의도가 정책 조회가 아닙니다."
+                "policy_lookup_completed 상태지만 요청 의도가 정책 조회가 아닙니다."
             )
 
         if not lookup_policy_objects:
@@ -1806,9 +1767,8 @@ need_more_information을 반환하지 마세요.
                 lookup_policy_objects
             )
 
-    elif (
-        output.status
-        == "recommendation_completed"
+    elif (          # 검증 후 유효한 정책이 한 건도 없으면 no_policy_found, 유효한 정책이 있다면 출력.
+        output.status == "recommendation_completed"
     ):
         if not valid_agent_policies:
             output = output.model_copy(
@@ -1823,10 +1783,7 @@ need_more_information을 반환하지 마세요.
                     "reason": (
                         output.reason
                         or (
-                            "지원 대상과 선정 기준을 "
-                            "확인한 결과 추천할 수 "
-                            "있는 정책을 찾지 "
-                            "못했습니다."
+                            "지원 대상과 선정 기준을 확인한 결과 추천할 수 있는 정책을 찾지 못했습니다."
                         )
                     ),
                     "reason_code": "none",
@@ -1853,17 +1810,15 @@ need_more_information을 반환하지 마세요.
                 }
             )
 
-    elif (
-        output.status
-        == "need_more_information"
+    elif (      # 질문이 없는 경우
+        output.status == "need_more_information"
     ):
         # -------------------------------------------------
         # Agent가 질문을 누락한 경우
         # -------------------------------------------------
 
         if output.follow_up_question is None:
-            # Agent가 선택한 정책 중에서
-            # 자격이 확인된 정책만 다시 추린다.
+            # Agent가 선택한 정책 중에서 자격이 확인된 정책만 다시 추린다.
             eligible_pairs = [
                 (
                     agent_policy,
@@ -1879,8 +1834,7 @@ need_more_information을 반환하지 마세요.
                 )
             ]
 
-            # 확정 가능한 정책이 있다면
-            # 추천 완료로 보정한다.
+            # 확정 가능한 정책이 있다면 추천 완료로 보정한다.
             if eligible_pairs:
                 valid_agent_policies = [
                     agent_policy
@@ -1925,9 +1879,7 @@ need_more_information을 반환하지 마세요.
                         "missing_information": [],
                         "follow_up_question": None,
                         "reason": (
-                            "관련 정책 후보는 있었지만 "
-                            "현재 정보만으로 신청 가능성을 "
-                            "확정하지 못했습니다."
+                            "관련 정책 후보는 있었지만 현재 정보만으로 신청 가능성을 확정하지 못했습니다."
                         ),
                         "reason_code": "none",
                         "message": None,
@@ -1967,7 +1919,7 @@ need_more_information을 반환하지 마세요.
 
             selected_policy_objects = []
 
-    elif output.status == "no_policy_found":
+    elif output.status == "no_policy_found":        # 다른 결과 필드를 모두 비우고 reason을 확정
         output = output.model_copy(
             update={
                 "selected_policies": [],
@@ -1977,8 +1929,7 @@ need_more_information을 반환하지 마세요.
                 "reason": (
                     output.reason
                     or (
-                        "현재 상황에 맞는 정책을 "
-                        "찾지 못했습니다."
+                        "현재 상황에 맞는 정책을 찾지 못했습니다."
                     )
                 ),
                 "reason_code": "none",
@@ -1989,6 +1940,7 @@ need_more_information을 반환하지 마세요.
 
         selected_policy_objects = []
 
+    # 허용된 reason code인지 검사. 정책 결과와 질문은 모두 비움.
     elif output.status == "invalid_input":
         if output.reason_code not in {
             "unrelated_topic",
@@ -2029,15 +1981,13 @@ need_more_information을 반환하지 마세요.
             "immediate_danger",
         }:
             raise RuntimeError(
-                "urgent_support 상태에 맞는 "
-                "reason_code가 없습니다. "
+                "urgent_support 상태에 맞는 reason_code가 없습니다. "
                 f"현재 값: {output.reason_code}"
             )
 
         if not output.message:
             raise RuntimeError(
-                "urgent_support 상태이지만 "
-                "안내 message가 없습니다."
+                "urgent_support 상태이지만 안내 message가 없습니다."
             )
 
         output = output.model_copy(
@@ -2056,8 +2006,7 @@ need_more_information을 반환하지 마세요.
 
     else:
         raise RuntimeError(
-            "처리할 수 없는 정책 추천 "
-            f"Agent 상태입니다: "
+            "처리할 수 없는 정책 추천 Agent 상태입니다: "
             f"{output.status}"
         )
 
@@ -2067,6 +2016,7 @@ need_more_information을 반환하지 마세요.
             selected_policy_objects
         ),
     )
+    # 정리된 Agent 출력, 검증된 실제 Policy 객체 리턴
 
 
 

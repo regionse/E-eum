@@ -1343,28 +1343,27 @@ function AlternativeAction({
   )
 
 
-  // 보건복지상담센터 전화
-  if (
-    action.action_type
-      === 'welfare_hotline'
-    && action.phone_number
-  ) {
-    return (
-      <a
-        href={
-          `tel:${action.phone_number}`
-        }
-        className="card"
-        style={{
-          display: 'block',
-          padding: 13,
-          textDecoration: 'none',
-        }}
-      >
-        {content}
-      </a>
-    )
-  }
+// 보건복지상담센터 홈페이지 이동
+if (
+  action.action_type
+    === 'welfare_hotline'
+) {
+  return (
+    <a
+      href="https://www.129.go.kr/"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="card"
+      style={{
+        display: 'block',
+        padding: 13,
+        textDecoration: 'none',
+      }}
+    >
+      {content}
+    </a>
+  )
+}
 
 
   // 나누다 기관 찾기 이동

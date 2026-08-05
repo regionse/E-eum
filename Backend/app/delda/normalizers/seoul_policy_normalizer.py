@@ -11,6 +11,8 @@ BASE_URL = "https://wis.seoul.go.kr"
 SOURCE_NAME = "서울복지포털"
 
 
+# 카테고리 숫자 비트값으로 저장
+# 생애주기
 LIFE_CYCLE_BITS = {
     1: "영유아·아동",
     2: "청소년",
@@ -19,6 +21,7 @@ LIFE_CYCLE_BITS = {
     16: "노년",
 }
 
+# 가구 특성
 FAMILY_BITS = {
     1: "저소득",
     2: "장애인",
@@ -29,6 +32,7 @@ FAMILY_BITS = {
     64: "다자녀",
 }
 
+# 서비스 유형
 SERVICE_BITS = {
     1: "건강",
     2: "생활지원",
@@ -38,6 +42,7 @@ SERVICE_BITS = {
     32: "보육",
 }
 
+# 생활 지원 영역
 LIFE_SUPPORT_BITS = {
     1: "교육",
     2: "입양·위탁",
@@ -48,9 +53,7 @@ LIFE_SUPPORT_BITS = {
 }
 
 
-def clean_text(
-    value: str | None,
-) -> str | None:
+def clean_text(value: str | None) -> str | None:
     """
     HTML 문자 코드와 불필요한 공백을 정리한다.
     """
@@ -59,33 +62,22 @@ def clean_text(
         return None
 
     cleaned = html.unescape(value)
-    cleaned = cleaned.replace(
-        "\xa0",
-        " ",
-    )
+    cleaned = cleaned.replace("\xa0", " ")
 
     lines: list[str] = []
 
     for line in cleaned.splitlines():
-        normalized_line = re.sub(
-            r"[ \t]+",
-            " ",
-            line,
-        ).strip()
+        normalized_line = re.sub(r"[ \t]+", " ", line).strip()
 
         if normalized_line:
-            lines.append(
-                normalized_line
-            )
+            lines.append(normalized_line)
 
     result = "\n".join(lines).strip()
 
     return result or None
 
 
-def get_element_text(
-    element: Tag | None,
-) -> str | None:
+def get_element_text(element: Tag | None) -> str | None:
     """
     BeautifulSoup 태그의 텍스트를 정리해 반환한다.
     """
@@ -94,17 +86,11 @@ def get_element_text(
         return None
 
     return clean_text(
-        element.get_text(
-            separator="\n",
-            strip=True,
-        )
+        element.get_text(separator="\n", strip=True,)
     )
 
 
-def require_value(
-    value: str | None,
-    field_name: str,
-) -> str:
+def require_value(value: str | None, field_name: str,) -> str:
     """
     필수값이 없으면 예외를 발생시킨다.
     """
@@ -113,14 +99,11 @@ def require_value(
         return value
 
     raise ValueError(
-        f"필수 서울 정책 데이터가 없습니다: "
-        f"{field_name}"
+        f"필수 서울 정책 데이터가 없습니다: {field_name}"
     )
 
 
-def unique_values(
-    values: list[str],
-) -> list[str]:
+def unique_values(values: list[str]) -> list[str]:
     """
     중복을 제거하면서 기존 순서를 유지한다.
     """
@@ -134,32 +117,22 @@ def unique_values(
     return result
 
 
-def decode_bit_values(
-    raw_value: str | None,
-    mapping: dict[int, str],
-) -> list[str]:
+def decode_bit_values(raw_value: str | None, mapping: dict[int, str]) -> list[str]:
     """
     비트값을 실제 카테고리 이름으로 변환한다.
     """
 
     try:
-        value = int(
-            raw_value or "0"
-        )
+        value = int(raw_value or "0")
     except ValueError:
         return []
 
     return [
-        label
-        for bit, label in mapping.items()
-        if value & bit
+        label for bit, label in mapping.items() if value & bit
     ]
 
 
-def extract_javascript_argument(
-    href: str | None,
-    pattern: str,
-) -> str | None:
+def extract_javascript_argument(href: str | None, pattern: str) -> str | None:
     """
     JavaScript 함수 호출 안의 값을 추출한다.
     """
@@ -167,10 +140,7 @@ def extract_javascript_argument(
     if not href:
         return None
 
-    match = re.search(
-        pattern,
-        href,
-    )
+    match = re.search(pattern, href)
 
     if not match:
         return None
@@ -178,25 +148,16 @@ def extract_javascript_argument(
     return match.group(1).strip()
 
 
-def parse_seoul_policy_list(
-    html_content: str,
-) -> list[dict[str, str | None]]:
+def parse_seoul_policy_list(html_content: str) -> list[dict[str, str | None]]:
     """
     정책 목록 HTML에서 기본 정보를 추출한다.
     """
 
-    soup = BeautifulSoup(
-        html_content,
-        "html.parser",
-    )
+    soup = BeautifulSoup(html_content, "html.parser")
 
-    items: list[
-        dict[str, str | None]
-    ] = []
+    items: list[dict[str, str | None]] = []
 
-    for card in soup.select(
-        "ul.card-ls > li"
-    ):
+    for card in soup.select("ul.card-ls > li"):
         detail_anchor = card.select_one(
             'a[href^="javascript:detailOpen("]'
         )
@@ -204,88 +165,41 @@ def parse_seoul_policy_list(
         if detail_anchor is None:
             continue
 
-        detail_href = detail_anchor.get(
-            "href"
-        )
+        detail_href = detail_anchor.get("href")
 
-        if not isinstance(
-            detail_href,
-            str,
-        ):
+        if not isinstance(detail_href, str):
             continue
 
         policy_id = (
-            extract_javascript_argument(
-                detail_href,
-                r"detailOpen\((\d+)\)",
-            )
+            extract_javascript_argument(detail_href, r"detailOpen\((\d+)\)")
         )
 
         if not policy_id:
             continue
 
-        department_element = (
-            card.select_one(
-                "div.cnt > p"
-            )
-        )
+        department_element = (card.select_one("div.cnt > p"))
 
-        application_anchor = (
-            card.select_one(
-                'a[href^="javascript:pageOpen("]'
-            )
-        )
+        application_anchor = (card.select_one('a[href^="javascript:pageOpen("]'))
 
         application_url = None
 
         if application_anchor is not None:
-            application_href = (
-                application_anchor.get(
-                    "href"
-                )
-            )
+            application_href = (application_anchor.get("href"))
 
-            if isinstance(
-                application_href,
-                str,
-            ):
+            if isinstance(application_href, str):
                 application_url = (
-                    extract_javascript_argument(
-                        application_href,
-                        r"pageOpen\('([^']+)'",
-                    )
+                    extract_javascript_argument(application_href, r"pageOpen\('([^']+)'",)
                 )
 
-        detail_url = (
-            f"{BASE_URL}/sec/ctg/"
-            f"categoryDetail.do?id={policy_id}"
-        )
+        detail_url = f"{BASE_URL}/sec/ctg/categoryDetail.do?id={policy_id}"
 
         items.append(
             {
                 "policy_id": policy_id,
-                "policy_name": (
-                    get_element_text(
-                        card.select_one(
-                            "dl.con dt p"
-                        )
-                    )
-                ),
-                "policy_summary": (
-                    get_element_text(
-                        card.select_one(
-                            "dl.con dd"
-                        )
-                    )
-                ),
-                "institution_name": (
-                    get_element_text(
-                        department_element
-                    )
-                ),
-                "application_url": (
-                    application_url
-                ),
+                "policy_name": (get_element_text(card.select_one("dl.con dt p"))),
+                "policy_summary": (get_element_text(card.select_one("dl.con dd"))),
+                "institution_name": (get_element_text(department_element)),
+                "application_url": (application_url),
                 "detail_url": detail_url,
             }
         )
@@ -293,17 +207,12 @@ def parse_seoul_policy_list(
     return items
 
 
-def get_hidden_value(
-    soup: BeautifulSoup,
-    element_id: str,
-) -> str | None:
+def get_hidden_value(soup: BeautifulSoup, element_id: str) -> str | None:
     """
     hidden input의 value 값을 가져온다.
     """
 
-    element = soup.select_one(
-        f"#{element_id}"
-    )
+    element = soup.select_one(f"#{element_id}")
 
     if element is None:
         return None
@@ -316,25 +225,17 @@ def get_hidden_value(
     return value.strip()
 
 
-def extract_detail_info(
-    soup: BeautifulSoup,
-) -> dict[str, str]:
+def extract_detail_info(soup: BeautifulSoup) -> dict[str, str]:
     """
     상세 페이지의 dt와 dd를 딕셔너리로 변환한다.
     """
 
     result: dict[str, str] = {}
 
-    for item in soup.select(
-        ".sv-inf-bx .prf-bx .cd dl"
-    ):
-        label = get_element_text(
-            item.select_one("dt")
-        )
+    for item in soup.select(".sv-inf-bx .prf-bx .cd dl"):
+        label = get_element_text(item.select_one("dt"))
 
-        value = get_element_text(
-            item.select_one("dd")
-        )
+        value = get_element_text(item.select_one("dd"))
 
         if label and value:
             result[label] = value
@@ -342,10 +243,7 @@ def extract_detail_info(
     return result
 
 
-def extract_external_links(
-    soup: BeautifulSoup,
-    application_url: str | None,
-) -> list[tuple[str, str]]:
+def extract_external_links(soup: BeautifulSoup, application_url: str | None) -> list[tuple[str, str]]:
     """
     신청 페이지와 관련 사이트 주소를 추출한다.
     """
@@ -354,30 +252,18 @@ def extract_external_links(
     seen_urls: set[str] = set()
 
     if application_url:
-        absolute_url = urljoin(
-            BASE_URL,
-            application_url,
-        )
+        absolute_url = urljoin(BASE_URL, application_url)       # 상대 URL을 절대 URL로 바꿉니다.
 
-        links.append(
-            (
-                "신청하기",
-                absolute_url,
-            )
-        )
+        links.append(("신청하기", absolute_url))
 
-        seen_urls.add(
-            absolute_url
-        )
+        seen_urls.add(absolute_url)
 
     selectors = (
         ".sv-inf-bx .dtl-bx a[href], "
         ".category-btbx a[href]"
     )
 
-    for anchor in soup.select(
-        selectors
-    ):
+    for anchor in soup.select(selectors):
         href = anchor.get("href")
 
         if not isinstance(href, str):
@@ -392,10 +278,7 @@ def extract_external_links(
         ):
             continue
 
-        absolute_url = urljoin(
-            BASE_URL,
-            href,
-        )
+        absolute_url = urljoin(BASE_URL, href)
 
         if absolute_url in seen_urls:
             continue
@@ -408,29 +291,16 @@ def extract_external_links(
         ):
             continue
 
-        label = (
-            get_element_text(anchor)
-            or "관련 사이트"
-        )
+        label = (get_element_text(anchor) or "관련 사이트")
 
-        links.append(
-            (
-                label,
-                absolute_url,
-            )
-        )
+        links.append((label, absolute_url))
 
-        seen_urls.add(
-            absolute_url
-        )
+        seen_urls.add(absolute_url)
 
     return links
 
 
-def create_target_detail(
-    life_cycles: list[str],
-    family_types: list[str],
-) -> str | None:
+def create_target_detail(life_cycles: list[str], family_types: list[str]) -> str | None:
     """
     생애주기와 가구 특성을 대상 설명으로 만든다.
     """
@@ -452,71 +322,39 @@ def create_target_detail(
     return "\n".join(lines) or None
 
 
-def normalize_seoul_policy(
-    list_item: dict[str, str | None],
-    detail_html: str,
-) -> NormalizedPolicy:
+def normalize_seoul_policy(list_item: dict[str, str | None], detail_html: str) -> NormalizedPolicy:
     """
     목록 정보와 상세 HTML을 합쳐
     NormalizedPolicy로 변환한다.
     """
 
-    soup = BeautifulSoup(
-        detail_html,
-        "html.parser",
-    )
+    soup = BeautifulSoup(detail_html, "html.parser")
 
-    policy_id = require_value(
-        list_item.get("policy_id"),
-        field_name="policy_id",
-    )
+    policy_id = require_value(list_item.get("policy_id"), field_name="policy_id")
 
     detail_name = get_element_text(
-        soup.select_one(
-            ".sv-inf-bx .prf-bx .inf h3"
-        )
+        soup.select_one(".sv-inf-bx .prf-bx .inf h3")
     )
 
     detail_summary = get_element_text(
-        soup.select_one(
-            ".sv-inf-bx .prf-bx .inf p"
-        )
+        soup.select_one(".sv-inf-bx .prf-bx .inf p")
     )
 
-    detail_info = extract_detail_info(
-        soup
-    )
+    detail_info = extract_detail_info(soup)
 
     life_cycles = decode_bit_values(
-        get_hidden_value(
-            soup,
-            "lifeCycleValue",
-        ),
+        get_hidden_value(soup, "lifeCycleValue"),
         LIFE_CYCLE_BITS,
     )
 
     family_types = decode_bit_values(
-        get_hidden_value(
-            soup,
-            "familyValue",
-        ),
-        FAMILY_BITS,
-    )
+        get_hidden_value(soup, "familyValue",), FAMILY_BITS)
 
     service_types = decode_bit_values(
-        get_hidden_value(
-            soup,
-            "serviceValue",
-        ),
-        SERVICE_BITS,
-    )
+        get_hidden_value(soup, "serviceValue"), SERVICE_BITS)
 
     support_areas = decode_bit_values(
-        get_hidden_value(
-            soup,
-            "lifeSupportValue",
-        ),
-        LIFE_SUPPORT_BITS,
+        get_hidden_value(soup, "lifeSupportValue"), LIFE_SUPPORT_BITS,
     )
 
     categories = unique_values(
@@ -527,17 +365,10 @@ def normalize_seoul_policy(
     )
 
     policy_content = get_element_text(
-        soup.select_one(
-            ".sv-inf-bx .dtl-bx .txt-tp1"
-        )
+        soup.select_one(".sv-inf-bx .dtl-bx .txt-tp1")
     )
 
-    external_links = extract_external_links(
-        soup,
-        list_item.get(
-            "application_url"
-        ),
-    )
+    external_links = extract_external_links(soup, list_item.get("application_url"))
 
     application_method = None
 
@@ -562,17 +393,13 @@ def normalize_seoul_policy(
 
     policy_name = require_value(
         detail_name
-        or list_item.get(
-            "policy_name"
-        ),
+        or list_item.get("policy_name"),
         field_name="policy_name",
     )
 
     institution_name = (
         detail_info.get("소관부서")
-        or list_item.get(
-            "institution_name"
-        )
+        or list_item.get("institution_name")
         or "서울특별시"
     )
 
