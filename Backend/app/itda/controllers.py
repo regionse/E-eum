@@ -57,6 +57,13 @@ def _exam_text(exam):
     if not isinstance(exam, dict):             # 옛 튜플 형태 방어(저장된 카드 등)
         seq, doc, prac, pas = (list(exam) + [None] * 4)[:4]
         exam = {'seq': seq, 'doc': doc, 'prac': prac, 'pass': pas}
+    #  ★ 올해 일정이 다 끝난 자격증 (2026-08-05, _next_exam 의 past 플래그)
+    #    지난 날짜를 「접수 ~2026-05-04 (마감) · 필기 2026-05-09 …」로 늘어놓으면
+    #    사용자가 그게 무슨 뜻인지 직접 읽어내야 한다. 그냥 그렇다고 말한다.
+    #    ※ Q-Net API 가 당해년도만 주므로 「올해는 끝」이 우리가 아는 전부다 —
+    #      내년 공고 시점을 지어내지 않는다(카드에 없는 사실은 안 쓴다는 원칙).
+    if exam.get("past"):
+        return "올해 시험 일정은 끝났어요 (내년 일정 공고 전)"
     bits = []
     if exam.get("reg_end"):
         #  ★ D-day(2026-07-30) — 사용자가 놓쳐서 1년을 기다리는 건 접수 마감일이다.
@@ -332,6 +339,18 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     #    지도가 담아야 하는 건 **결론(슬롯·직업·이유)**이지 과정이 아니다.
     profile.pop("_history", None)
     profile.pop("_last_ask", None)
+    #  ★★ 2026-08-05 (코드감사) — **저장이 500 으로 죽고 있었다.**
+    #    _last_certs(2026-08-04 추가)는 「시험이 언제예요?」에 DB 값 그대로 답하려고 남겨둔
+    #    **다음 턴용 임시 상태**인데, 그 안의 exam 은 _next_exam() 이 DB 에서 꺼낸
+    #    `datetime.date` 객체다. aiomysql 은 DATE 를 문자열이 아니라 date 로 준다.
+    #    아래 json.dumps 에는 default= 가 없다 →
+    #      TypeError: Object of type date is not JSON serializable → 라우터에 try 도 없어 HTTP 500.
+    #    시험일정이 있는 자격증이 붙은 카드(=거의 모든 카드)를 받은 뒤 「저장」하면 터졌다.
+    #    위 주석의 원칙 그대로다 — 지도는 **결론**을 담는다. 이건 과정이므로 뺀다.
+    profile.pop("_last_certs", None)
+    #  그리고 같은 사고가 다시 나지 않게 직렬화에 안전망을 둔다(날짜가 또 섞여 들어와도
+    #  저장이 죽지는 않는다). 위 pop 이 1차 방어, 이것이 2차다.
+    _dump = lambda p: json.dumps(p, ensure_ascii=False, default=str)   # noqa: E731
     #  ★ 추천 이유를 함께 저장한다(2026-07-30) — 대화 카드엔 나오는데 저장된 지도엔 없었다.
     #    itda_map 에 컬럼이 없어 profile_json 안에 '_' 키로 담는다('_' 는 노출 필터가 걸러낸다).
     if card.get("job_reason"):
@@ -348,7 +367,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         done, _ = _progress(profile)
         await db.execute(text(
             "UPDATE itda_map SET progress_step = :ps, profile_json = :pj WHERE map_id = :mid"),
-            {"ps": done, "pj": json.dumps(profile, ensure_ascii=False), "mid": map_id})
+            {"ps": done, "pj": _dump(profile), "mid": map_id})
         #  자격증·강좌는 통째로 다시 넣는다(카드가 바뀌었을 수 있다).
         await db.execute(text("DELETE FROM itda_map_cert WHERE map_id = :mid"), {"mid": map_id})
         await db.execute(text("DELETE FROM itda_map_course WHERE map_id = :mid"), {"mid": map_id})
@@ -362,7 +381,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
         "VALUES (:uid, :jc, '진행중', :ps, :pj, :now)"),
         {"uid": user_id, "jc": job_code, "ps": done,
-         "pj": json.dumps(profile, ensure_ascii=False),
+         "pj": _dump(profile),
          "now": kst_now()})
     map_id = res.lastrowid
     await _fill_map_children(db, map_id, card)

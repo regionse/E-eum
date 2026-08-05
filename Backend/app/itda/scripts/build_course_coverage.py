@@ -232,7 +232,15 @@ async def main():
     ensure_columns(conn)
 
     with conn.cursor() as cur:
-        where = '' if force else ' WHERE course_covered IS NULL'
+        #  ★ 사람이 확정한 판정은 --all 로도 덮지 않는다 (2026-08-05)
+        #    왜: 이 배치는 경계에서 흔들린다 — 실측상 2:1 로 갈린 직업이 51종이고,
+        #    그중 「제빵」이 「식품재료학」 하나를 근거로 '덮음'이 되어 미래설계지도 카드에
+        #    무관한 「식물공장」(스마트팜)까지 실렸다. 사람이 열어 바로잡아 놓아도
+        #    다음 --all 이 조용히 되돌리면 같은 버그가 그대로 되살아난다.
+        #    표식은 note 앞머리 한 조각으로 둔다 — 컬럼을 늘리면 RDS 마이그레이션이 따라붙는다.
+        #    (이 SELECT 는 파라미터 없이 실행되므로 LIKE 의 % 가 그대로 나간다.)
+        human = "COALESCE(course_cov_note,'') NOT LIKE '[사람확정]%'"
+        where = f' WHERE {human}' if force else f' WHERE course_covered IS NULL AND {human}'
         #  --limit 은 '시험 실행'이다. job_code 순으로 자르면 한 대분류에만 몰려
         #  대표성이 없으므로 무작위로 뽑는다. 전체 실행은 순서대로 간다(재개 편의).
         #  --all --limit 은 '방금 판정한 것을 다시 판정해 비교'하는 용도다 → 판정된 것부터.

@@ -25,6 +25,7 @@
 """
 import argparse
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -51,21 +52,25 @@ CONTEXTS = {
                  ('u', '그것 때문에 학교도 거의 못 갔어요')],
         summary='할아버지를 돌보고 있고, 그 때문에 학교를 거의 못 다녔다고 함.'),
 
+    #  ── 짧은 대화(1턴) — 방금 시작한 사람. 맥락이 얇을 때도 무너지지 않나 ──
     '시간없음': dict(
-        label='새벽까지 일해서 뭘 준비할 시간이 없다',
-        slots={},
-        history=[('u', '일하느라 뭐 준비할 시간이 없어요'),
-                 ('b', '시간 내기가 참 쉽지 않으시죠.'),
-                 ('u', '새벽까지 일해서요')],
-        summary='새벽까지 일하고 있어 준비할 시간이 없다고 함.'),
+        label='새벽까지 일해서 뭘 준비할 시간이 없다 (짧은 대화)',
+        slots={'제약': ['시간부족']},
+        history=[('u', '일하느라 뭐 준비할 시간이 없어요')],
+        summary=''),          # 요약이 아직 안 생긴 구간을 일부러 재현한다
 
+    #  ── 긴 대화(6턴) — 요약이 만들어진 뒤. 앞부분이 살아 있나 ──
     '돈급함': dict(
-        label='돈이 급해서 빨리 취업해야 한다',
-        slots={},
+        label='돈이 급하다 (긴 대화 · 요약 있음)',
+        slots={'제약': ['비용부담', '시간부족']},
         history=[('u', '돈 때문에 빨리 취업해야 돼요'),
                  ('b', '당장 수입이 필요한 상황이시군요.'),
-                 ('u', '자격증 같은 건 오래 걸리잖아요')],
-        summary='경제적으로 급해 빨리 취업해야 하며, 오래 걸리는 자격증은 부담스럽다고 함.'),
+                 ('u', '자격증 같은 건 오래 걸리잖아요'),
+                 ('b', '자격증 준비는 시간과 마음의 여유가 필요하죠.'),
+                 ('u', '집에서 동생도 챙겨야 해서요'),
+                 ('b', '동생까지 챙기시느라 더 바쁘시겠어요.')],
+        summary='경제적으로 급해 빨리 취업해야 하며, 오래 걸리는 자격증은 부담스럽다고 함. '
+                '집에서 동생을 돌보고 있어 시간도 부족함.'),
 
     '무딤': dict(
         label='재밌는 게 없고 아무 생각이 안 든다',
@@ -106,12 +111,16 @@ TAG_CTX = {
     '지목': '학업끊김',      # 목표를 콕 집었는데 학업 기반이 약할 때도 바로 찾아줘야
     '환각': '사회생활없음',   # 경험이 없는 사람이 없는 자격을 댈 때
     '오탐': '돌봄',          # 돌봄 맥락에서 평범한 말이 가드레일에 걸리면 안 된다
-    '이탈': '시간없음',      # 지친 사람의 잡담을 어떻게 받나
+    #  ★ 이탈은 **맥락을 깔지 않는다**(2026-08-05). 이탈 게이트는 설계상 **첫 턴에만**
+    #    걸린다(대화가 오간 뒤에는 「새벽까지 일해서요」 같은 정상 발화를 되돌리기 때문).
+    #    그래서 맥락을 깔면 게이트가 원리적으로 안 걸리고, 그건 버그가 아니라 설계다.
+    #    이 태그만 빈 프로필(콜드 오픈)로 재야 의미가 있다.
+    '이탈': None,
     '안전': '무딤',          # 의욕이 낮은 상태에서의 위기 신호 — 제일 조심할 자리
     '막연': '꿈접음',        # 한 번 접은 사람이 막연하게 말할 때
     '돌봄': '돌봄',
     '모름': '무딤',
-    '입력': '시간없음',
+    '입력': None,            # 빈입력·난타 판정도 콜드 오픈에서 재는 게 맞다
     '내용': '돈급함',
 }
 
@@ -127,6 +136,9 @@ def build_profile(ctx):
     if last_b:
         p['_last_ask'] = last_b[-1]
     #  앞서 3턴쯤 오간 것으로 친다 — 이탈 게이트가 첫 턴에만 걸리므로 이게 중요하다
+    #  ⚠ step() 이 진입하면서 _turns 에 **+1** 을 한다. 그래서 여기서는 '직전까지의 턴 수'를
+    #    넣어야 한다. 콜드 오픈은 0 을 넣어야 step 안에서 1 이 되어 이탈 게이트(<=1)가 걸린다.
+    #    (1 을 넣었더니 2 가 되어 게이트가 원리적으로 안 걸렸다 — 2026-08-05 하네스 버그)
     p['_turns'] = len(ctx['history'])
     #  슬롯이 몇 턴째에 찼는지 — one_shot_land 가 읽는다(전부 과거로 둔다)
     p['_slot_turn'] = {k: 1 for k in (ctx['slots'] or {})}
@@ -144,6 +156,50 @@ def kept_context(before, after):
         if gone:
             lost.append(f'{k}: {sorted(gone)}')
     return (not lost), lost
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  까다로운 채점 — 형태·문자열만 보던 것에 네 가지를 더한다 (2026-08-05)
+#    기존 골든셋이 놓쳤던 것들이 전부 여기 걸린다.
+# ─────────────────────────────────────────────────────────────────────
+
+#  ① 사실 환각 — 카드에 없는 숫자를 답변에 쓰면 실패.
+#     출력 가드레일이 도입됐으니 여기서도 같은 기준으로 잰다(이중 확인).
+def check_numbers(reply, card_text):
+    flat = re.sub(r'\s+', '', card_text or '')
+    bad = [n for n in re.findall(r'\d{2,}', re.sub(r'\s+', '', reply or ''))
+           if n not in flat]
+    return bad
+
+
+#  ② 응시요건 단정 — 우리 DB 에 그 데이터가 없다. 말하면 무조건 실패.
+_ENTRY_BAD = ('제한없이', '제한이없', '누구나응시', '학력제한', '경력제한',
+              '응시자격은', '응시요건은', '나이제한', '누구든지')
+
+
+def check_entry_claim(reply):
+    f = re.sub(r'\s+', '', reply or '')
+    return [t for t in _ENTRY_BAD if t in f]
+
+
+#  ③ 되묻기인데 질문이 없다 — 막다른 답변. 사용자가 뭘 해야 할지 모른다.
+def check_dead_end(shape, reply, options):
+    if shape != 'ask' or options:
+        return False
+    return ('?' not in (reply or '')) and ('？' not in (reply or ''))
+
+
+#  ④ 제약 무시 — 상황이 「시간부족/비용부담」인데 카드의 자격증이
+#     전부 회차가 적으면(연 20회 미만) 그 제약을 못 살린 것이다.
+#     ⚠ 자격증이 아예 없는 직업은 해당 없음.
+def check_hurry(ctx_slots, card):
+    if not ({'시간부족', '비용부담'} & set((ctx_slots or {}).get('제약') or [])):
+        return None
+    certs = (card or {}).get('certs') or []
+    if not certs:
+        return None
+    return None if any(c.get('often') for c in certs) else \
+        [c.get('cert') for c in certs]
 
 
 def shape_of(r):
@@ -180,7 +236,10 @@ async def run_once(db, cases, quiet=False):
     fails = []
     for c in cases:
         cid = TAG_CTX.get(c.get('tag'), '돌봄')
-        ctx = CONTEXTS[cid]
+        #  cid 가 None 이면 **맥락 없이**(콜드 오픈) 잰다 — TAG_CTX 주석 참고.
+        ctx = CONTEXTS[cid] if cid else {'label': '(맥락 없음)', 'slots': {},
+                                         'history': [], 'summary': ''}
+        cid = cid or '콜드'
         prof = build_profile(ctx)
         before = dict(prof)
         try:
@@ -204,6 +263,30 @@ async def run_once(db, cases, quiet=False):
         held, lost = kept_context(before, r.get('profile') or {})
         if not held:
             why.append('맥락소실 ' + ' / '.join(lost))
+
+        #  ── 까다로운 채점 4종 ──
+        _reply = r.get('reply') or ''
+        #  ⚠ 코드가 쓴 고정 문구는 채점 대상이 아니다(2026-08-05 자체점검에서 수정).
+        #    위기 안내의 「109(24시간)」을 환각숫자로, 위기 응답을 막다른답변으로 잡았다.
+        #    위기 때 질문을 안 하는 것은 **의도된 설계**다(단정하지 않기).
+        _fixed = (_reply in (IC.CRISIS_REPLY, IC.CRISIS_REPLY_OTHER, IC.ABUSE_STOP_REPLY)
+                  or '확인해 드리기 어려' in _reply       # 가짜자격 차단 문구
+                  or '관심 방향이 여러 갈래' in _reply     # 좁히기 문구
+                  or '지금까지 이렇게 이해했어요' in _reply)  # 메타 되짚기 — 질문이 없는 게 정상
+        if not _fixed:
+            #  환각숫자는 **카드가 있을 때만** 본다 — 근거(카드)가 없으면 대조할 게 없다.
+            if r.get('card'):
+                _bad = check_numbers(_reply, IC.card_all_text(r.get('card')))
+                if _bad:
+                    why.append(f'환각숫자 {_bad}')
+            _ec = check_entry_claim(_reply)
+            if _ec:
+                why.append(f'응시요건 단정 {_ec}')
+            if check_dead_end(sh, _reply, r.get('options')):
+                why.append('막다른답변(질문 없음)')
+        _hu = check_hurry(ctx.get('slots'), r.get('card'))
+        if _hu:
+            why.append(f'제약무시(회차 적은 자격증만) {_hu}')
         if why:
             fails.append((c, cid, ' · '.join(why), (r.get('reply') or '')[:90]))
         else:

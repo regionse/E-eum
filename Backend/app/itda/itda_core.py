@@ -17,7 +17,7 @@
 
 DB 접속정보 : app/itda/db.py 가 etc/.env 에서 읽는다(팀 database.py 는 경로가 안 맞음).
 """
-import re, json, asyncio
+import re, json, asyncio, hashlib
 import urllib.request, urllib.parse
 from datetime import datetime, timedelta, timezone
 
@@ -284,6 +284,75 @@ _REJECT_LAST = ('말고', '말구', '아니고', '아니라', '아닌데', '빼�
                 '안맞', '안맞아', '별로예요', '별론데', '내키지', '부담스')
 
 
+#  ── 「이 중에 없음」 (2026-08-05) ────────────────────────────────────
+#  위 _REJECT_LAST 는 「**그거** 말고」 — 하나를 콕 집어 물리는 말이다.
+#  이것은 「**다** 아니다」 — 보여준 목록 전체가 안 맞는다는 말이고, 걸리는 말이 다르다.
+#    「다 아닌 것 같은데요」 → '아닌데' 가 아니라 '아닌것'이라 _REJECT_LAST 에 안 걸린다(실측).
+#    「이 중에 없어요」     → 어느 목록에도 없다.
+#  안 걸리면 강등이 아예 안 돌아, 모델이 즉흥으로 답한다. 실측 —
+#    칩 [요양지원·산후육아지원·보육] → 「다 아닌 것 같은데요」
+#    → 「기계 쪽, 아니면 데이터를 정리하는 일처럼 **아예 다른 분야**는요?」
+#    돌봄 동네를 통째로 떠났다. 그 동네엔 아직 가사지원·진로지원·병원안내가 남아 있는데.
+#  ★ 근거 — SOCcer 자가코딩(Josse et al. 2025): 「이 중에 없음」을 고른 사람을
+#    전문가가 재코딩했더니 **원래 목록 안에 정답이 있었던 비율이 27%(v1)·54%(v2)**였다.
+#    즉 「다 아니다」는 「그 동네가 아니다」가 아니라 「그 **셋**이 아니다」인 경우가 많다.
+#  ⇒ 동네를 떠나지 않는다. 보여준 것만 강등하고 **같은 슬롯으로** 다시 찾는다.
+#    (하드 배제가 아니라 강등인 것도 같은 이유다 — 남는 게 없으면 되살아난다)
+_NONE_OF_THESE = ('다아니', '다아닌', '전부아니', '모두아니', '다틀리',
+                  '중에없', '해당없', '다별로', '전부별로',
+                  '다안맞', '전부안맞', '하나도안', '다마음에안')
+
+
+def none_of_these(msg):
+    """보여준 목록 **전체**가 안 맞는다는 말인가."""
+    m = re.sub(r'\s+', '', msg or '')
+    return any(t in m for t in _NONE_OF_THESE)
+
+
+#  ── 알맹이 없는 맞장구 (2026-08-05 · 코드감사) ────────────────────────
+#  왜 필요한가 — 주 질의(q)는 **사용자 원문**이다(2026-08-03에 그렇게 바꿨고 그건 옳다).
+#    그런데 「착지 요청 문구는 검색어가 아니다」라는 예외는 wants_land 한 경우에만 걸려 있다.
+#    코드가 ASK→SEARCH 로 **강제 승격한 턴**은 그 예외를 안 받는다. 실측 경로:
+#      1턴 「빵 만드는 게 좋아요」 → 2축 충족, one_shot_land 로 보류
+#      2턴 사용자가 「네」        → 승격 → **주 질의 = "네"**
+#    _search_query 는 `if query: return query` 라 이때 **슬롯을 아예 안 쓴다.**
+#    「빵」이 슬롯에 있는데 검색어에 한 글자도 안 들어간다.
+#  ★ 논문 근거 — Kononykhina, Haensch & Kreuter (2026), 119개 실험:
+#      "How respondents describe their work matters more than any model
+#       or design choice (ICC = 0.76)"
+#    사용자의 서술이 가장 지배적인 변수인데, 그걸 「네」로 덮어쓰고 있었다.
+#  ⇒ 발화 **전체**가 맞장구뿐이면 이번 턴 질의를 비운다(= 슬롯으로 찾는다).
+#    _UNCERTAIN_ONLY 와 같은 방식이다 — 뒤에 뭐가 붙으면 정보가 있는 것이므로 건드리지 않는다.
+_THIN_ACK = frozenset((
+    '네', '넵', '옙', '예', '응', '어', '음', '아', '오',
+    '그래', '그래요', '그렇군요', '그렇구나', '그러네요', '그쵸', '그죠',
+    '맞아', '맞아요', '맞습니다', '알겠어', '알겠어요', '알겠습니다',
+    '좋아', '좋아요', '좋네요', '괜찮아요', '오케이', 'ok', 'ㅇㅋ', 'ㄴㅇ', 'ㅇㅇ',
+))
+
+
+def is_thin_ack(msg):
+    """발화 전체가 알맹이 없는 맞장구인가 → 검색어로 쓰지 않는다."""
+    m = _FILLER_RE.sub('', (msg or '').lower())
+    return bool(m) and m in _THIN_ACK
+
+
+def useless_answer(msg):
+    """되물음에 대한 **답변**이 쓸모없는가 (2026-08-05).
+
+    ★ 근거 — Sekulić et al., ECIR 2024 (arXiv 2401.11463), ClariQ 기반 유용성 분류:
+        되물음-답변 쌍의 유용성 분포가 None **32%** / Answer 53% / Question 11% / 둘 다 6%
+        그리고 쓸모없는 답을 그냥 갖다 쓰면 nDCG@3 가 **13% 떨어진다**.
+        원문: "it is better not to use any information provided by such questions
+               and answers, than to use it wrongly"
+    우리 적응적 되물음은 **질문**은 검사했는데(_answered_already) **답변**은 안 했다.
+    답이 「몰라요」·「네」·「아무거나」면 그게 그대로 다음 턴 검색어가 된다.
+    ⇒ 쓸모없으면 그 답을 검색어로도, 슬롯 근거로도 쓰지 않는다.
+      한쪽으로만 틀린다 — 버리는 쪽이라 최악이어도 지금까지 모은 슬롯으로 찾는다.
+    """
+    return is_thin_ack(msg) or is_uncertain(msg)
+
+
 def rejects_last_card(msg):
     """직전 추천을 물리는 말인가 — 좁게만 잡는다."""
     m = re.sub(r'\s+', '', msg or '')
@@ -327,7 +396,9 @@ _LAND_REQ = ('추천해', '추천좀', '추천부탁', '추천이나', '추천�
 #    목록에 '시험이언제'는 넣었는데 「시험**은** 언제예요?」가 안 걸려 모델이 얼버무렸다.
 #    그래서 '무엇에 대해'(시험·접수)와 '무엇을 묻나'(언제·날짜)를 **따로** 보고 둘 다 있으면 잡는다.
 _EXAM_WHAT = ('시험', '접수', '원서', '필기', '실기')
-_EXAM_WHEN = ('언제', '몇일', '며칠', '날짜', '일정', '기간', '마감', '몇월')
+#  ★ 2026-08-05 (코드감사) — '기간' 단독을 뺐다. 「시험 준비 기간이 얼마나 걸려요?」가
+#    걸려서 준비기간을 물었는데 접수 마감일 표가 나갔다. 붙은 형태만 잡는다.
+_EXAM_WHEN = ('언제', '몇일', '며칠', '날짜', '일정', '접수기간', '시험기간', '마감', '몇월')
 
 
 def asks_exam(msg):
@@ -496,6 +567,96 @@ def drop_echo(reply, last_reply, thr=0.55):
     return out or reply
 
 
+#  ── 출력 가드레일 (2026-08-05) — **나가는 말에서 지어낸 사실을 뗀다** ──────────
+#
+#  왜: 지금까지 가드레일이 전부 **입력 쪽**이었다. 나가는 말은 아무도 안 봤다.
+#      실측 사고 — 🤖「전기기능사는 학력이나 경력 제한 없이 누구나 응시할 수 있는 자격증이에요」
+#      우리 DB 에는 응시제한 유무(bool)와 안내문(text)까지만 있다. **모델이 지어낸 것이다.**
+#
+#  실무 표준은 claim decomposition → NLI (응답을 원자적 주장으로 쪼개 근거와 대조).
+#  전용 모델이 있지만(MiniCheck 770M 이 GPT-4 정확도에 비용 400배 저렴, EMNLP 2024 /
+#  Paladin-mini 3.8B BACC 91.8%·70ms) 우리는 3일 안에 못 붙인다.
+#  ⇒ **규칙 계층(<1ms, 비용 0)만 먼저** 깐다. 우리는 이미 근거 대조기(_grounded)를 갖고 있다.
+#
+#  두 가지만 한다:
+#    ① 응시요건을 말하는 문장은 **통째로 제거**한다. 우리에겐 그 데이터가 없다.
+#    ② 답변에 나온 **숫자·연도·회차**가 카드 텍스트에 없으면 그 문장을 제거한다.
+#  ⚠ 문장 단위로만 지운다. 남는 게 없으면 원문을 그대로 둔다(빈 답변보다 낫다).
+#  ⚠ 코드가 쓴 문구(위기·좁히기·시험일정)에는 적용하지 않는다 — 이미 DB 값이다.
+
+#  응시요건을 단정하는 표현 — 이게 들어간 문장은 근거가 있어도 위험하다.
+#  (우리 DB 는 「제한 없음이 확인됨/미확인」 두 값뿐이고, 학력·경력 요건 원문이 없다)
+_ENTRY_CLAIM = ('제한없이', '제한 없이', '제한이없', '제한이 없', '누구나응시', '누구나 응시',
+                '학력제한', '학력 제한', '경력제한', '경력 제한', '응시자격은', '응시요건은',
+                '나이제한', '나이 제한', '자격조건은', '응시조건은', '누구든지')
+ENTRY_SAFE = '응시 자격은 자격증마다 달라서, 카드에 적힌 안내와 큐넷에서 꼭 확인해 주세요.'
+
+
+def _sentences(text):
+    return [s for s in re.split(r'(?<=[.!?…])\s+|\n+', text or '') if s.strip()]
+
+
+def scrub_output(reply, card_text=''):
+    """나가는 말에서 **근거 없는 사실 문장**을 뗀다 → (정리된 말, 뗀 이유 목록).
+
+    card_text 는 이번 턴에 실제로 나가는 카드의 모든 텍스트(직업·자격증·시험일정 등)다.
+    여기 없는 숫자를 말했다면 모델이 지어낸 것이다.
+    """
+    if not reply:
+        return reply, []
+    flat_card = re.sub(r'\s+', '', card_text or '')
+    kept, dropped = [], []
+    for s in _sentences(reply):
+        f = re.sub(r'\s+', '', s)
+        #  ① 응시요건 단정 — 데이터가 없으므로 무조건 뺀다
+        if any(t.replace(' ', '') in f for t in _ENTRY_CLAIM):
+            dropped.append(f'응시요건 단정: {s.strip()[:40]}')
+            continue
+        #  ② 카드에 없는 숫자 — 날짜·회차·개수를 지어낸 경우
+        #    2자리 이상 숫자만 본다(「3개」 같은 건 문장 표현이라 오탐이 크다)
+        nums = [n for n in re.findall(r'\d{2,}', f)]
+        bad = [n for n in nums if n not in flat_card]
+        if bad:
+            dropped.append(f'카드에 없는 숫자 {bad}: {s.strip()[:40]}')
+            continue
+        kept.append(s.strip())
+    out = ' '.join(kept).strip()
+    _entry = any('응시요건' in d for d in dropped)
+    #  ⚠ 다 지워졌을 때 원문을 되돌리면 **가드가 무의미해진다**(2026-08-05 자체시험에서 발견).
+    #    실측 사고 문장(「…제한 없이 누구나 응시할 수 있는 자격증이에요」)이 한 문장짜리라
+    #    정확히 이 경우에 해당했다. 대체할 안전 문구가 있으면 그걸 쓴다.
+    if not out:
+        if _entry:
+            return ENTRY_SAFE, dropped
+        if dropped:
+            return '말씀해 주신 걸 바탕으로 아래에서 확인해 주세요.', dropped
+        return reply, dropped
+    if _entry:
+        out = (out + '\n' + ENTRY_SAFE).strip()
+    return out, dropped
+
+
+def card_all_text(card):
+    """카드가 담은 모든 사실 텍스트 — 출력 대조의 '근거'가 된다."""
+    if not isinstance(card, dict):
+        return ''
+    bits = []
+    j = card.get('job') or {}
+    if isinstance(j, dict):
+        bits += [str(j.get('name') or ''), str(j.get('group') or ''), str(j.get('description') or '')]
+    for c in (card.get('certs') or []):
+        bits += [str(c.get('cert') or ''), str(c.get('grade') or ''), str(c.get('entry_note') or ''),
+                 str(c.get('exam_method') or ''), str(c.get('outlook') or ''), str(c.get('exam_n') or '')]
+        ex = c.get('exam')
+        if isinstance(ex, dict):
+            bits += [str(v) for v in ex.values() if v]
+    for c in (card.get('courses') or []):
+        bits.append(str(c.get('title') or ''))
+    bits += [str(x) for x in (card.get('alternatives') or [])]
+    bits.append(str(card.get('guide') or ''))
+    return ' '.join(bits)
+
+
 def narrow_reply(options):
     """관심이 넓어 후보가 흩어졌을 때 '좁히는' 질문 — 실제 후보 직업에서 뽑은 선택지로 되묻는다.
     지어낸 선택지가 아니라 검색이 실제로 올린 직업들이라, 사용자가 자기 언어로 고를 수 있다."""
@@ -513,10 +674,34 @@ _UNCERTAIN = ('모르겠', '몰라', '글쎄', '아무거나', '상관없', '모
               '생각안해', '생각해본적', '생각해보지', '생각못해', '생각안', '안해봤',
               '떠오르지', '떠오르는게없', '딱히없', '없는것같', '잘안떠')
 
+#  ★★ 2026-08-05 — **흔한 회피 한 마디가 통째로 빠져 있었다.**
+#    실측(HTTP, 4턴): 「글쎄요」→「음...」→「그냥요」→「잘 모르겠어요」
+#      1턴 사다리 1단 · 2턴 모델 열린질문 · 3턴 모델 열린질문 · 4턴 사다리 2단
+#      → 4턴을 못 정했는데 **3단(보기 제시)에 못 갔다.** 「음...」·「그냥요」가 안 세어진다.
+#    그렇다고 위 목록(부분일치)에 '음'·'그냥'을 넣으면 오탐이 확실하다 —
+#      「마음이 갔어요」에 '음' · 「그냥 빵 만드는 게 좋아요」에 '그냥'.
+#      후자는 **진짜 정보를 준 턴**이라 사다리를 올리면 안 되는 바로 그 경우다.
+#    ⇒ 경계를 길이에 둔다. **발화 전체가 그 한 마디일 때만** 회피로 본다.
+#      「그냥요」는 회피지만 「그냥 빵이 좋아요」는 정보다 — 뒤에 뭐가 붙으면 정보가 있다.
+#  ⚠ '어'·'네'·'뭐' 는 넣지 않았다. 「어」·「네」는 맞장구(동의)라 회피와 뜻이 반대고,
+#    「뭐?」는 되묻기(META)라 is_meta 가 받아야 한다.
+_UNCERTAIN_ONLY = frozenset((
+    '음', '으음', '음음', '흠', '흐음',
+    '그냥', '그냥요', '그냥뭐', '뭐지', '뭘까', '뭐랄까', '뭐라해야하지',
+    '아직', '아직요', '아직은', '딱히', '딱히요',
+    '없어', '없어요', '없는데', '없네요',
+))
+
+#  버리는 글자: 공백·구두점·물결·웃음·울음 — 「음...」「그냥요ㅋㅋ」「없어요ㅠㅠ」를 같은 말로 본다.
+_FILLER_RE = re.compile(r'[\s.,!?…·~\-_"\'()\[\]。、？！ㅋㅎㅠㅜ]+')
+
 def is_uncertain(msg):
     """'잘 모르겠어요' 류 — 좁히기 질문에 이게 오면 하나 골라 던지지 않는다."""
     m = re.sub(r'\s+', '', msg or '')
-    return any(u in m for u in _UNCERTAIN)
+    if any(u in m for u in _UNCERTAIN):
+        return True
+    #  구두점을 뗀 알맹이가 회피 한 마디 **그 자체**일 때만(부분일치 아님 — 오탐 방지)
+    return _FILLER_RE.sub('', m) in _UNCERTAIN_ONLY
 
 def guide_reply(profile):
     """착지 대신 '같이 찾아보는' 되물음 — 왜 끌렸는지부터 연다(선고 금지)."""
@@ -571,10 +756,27 @@ def ask_reply(profile):
 #   실사용 로그: "생각 안 해봤다"가 두 번 왔는데 코드가 같은 질문을 글자 그대로 반복했다.
 #   못 정하는 사람에게 같은 걸 다시 묻는 건 압박이다. 턴마다 **각도를 바꾼다** —
 #   좋아하는 것 → 싫은 것(빼기가 더 쉽다) → 아예 보기 제시(고르기만 하면 되게).
+#
+#   ★★ 2026-08-05 — 2단을 「좋아하는 잡지·유튜브」로 바꾼다.
+#     왜 — 우리 사용자는 **직업 경험 자체가 없다.** 「뭘 잘하세요?」·「뭐가 싫으세요?」는
+#     둘 다 답할 재료를 요구한다. 실제로 이 단계에서 계속 막혔다.
+#     근거 ① Career Construction Interview(Savickas·Hartung) 3번 문항 원문:
+#         "What are your favorite magazines, TV shows, or web sites? What do you like
+#          about them?" → "Manifest interests reflected in these **vicarious
+#          environments** indicate potential educational and occupational settings"
+#       직업 경험을 **하나도 요구하지 않으면서** 진로 신호를 뽑는, 검증된 문구다.
+#     근거 ② Masters et al. (2022, JCD, N=502): 청소년은 "자기가 안다고 느끼는 직업"
+#       안에서만 답한다 → 그냥 「뭐가 좋아요?」로는 아는 목록 밖으로 못 나간다.
+#     근거 ③ 「강점을 물어라」는 기각했다 — Tracey(2002): 흥미와 유능감은 서로를 동등하게
+#       예측한다("predict each other equally over time") · Neubauer(2021): 자기평가는
+#       능력이 아니라 성격을 반영한다 · Ludwikowski(2019): 능력검사 추가 이득 +1.5%.
+#     ⚠ Cardoso(2017) 경고: 어릴수록 자기 경험을 이야기로 만들기 어려워한다 →
+#       서술을 요구하지 말고 **대상만** 묻는다(무엇을 보느냐 → 뭐가 좋으냐 한 문장).
 _UNSURE_STEPS = [
     None,      # 1회: 빠진 슬롯의 보기 질문(ask_reply)을 그대로 쓴다
-    ('그럼 반대로 여쭤볼게요 — 이건 좀 아니다 싶은 게 있으세요?\n'
-     '사람 많은 곳 · 몸 많이 쓰는 일 · 하루 종일 앉아 있는 일 중에 하나만 빼주셔도 좁혀져요.'),
+    ('괜찮아요, 바로 안 떠오르는 게 당연해요. 그럼 다른 걸 여쭤볼게요 —\n'
+     '요즘 자주 보는 유튜브 채널이나 프로그램, 웹사이트 같은 게 있으세요?\n'
+     '그게 뭐든 상관없어요. 어떤 점이 좋으신지만 한마디 붙여주시면 돼요.'),
     ('괜찮아요, 지금 정하지 않아도 돼요. 그럼 제가 몇 가지 방향을 보여드릴게요 —\n'
      '· 사람 돌보는 일 (요양·간호 쪽)\n'
      '· 손으로 만드는 일 (제과제빵·가구 쪽)\n'
@@ -777,9 +979,37 @@ def profile_text(p):
 #   "첫 번째요" · "그거요" 로 답하면 근거가 없어 슬롯이 버려지고(verify_slots) 이름도 없어
 #   (_named_entity) 같은 질문이 다시 나갔다. 좁혔다는 사실과 그때 보여준 선택지를 기억해
 #   ① 순서·번호로 답해도 받아들이고 ② 두 번은 좁히지 않는다.
-_ORDINAL = {'첫': 0, '처음': 0, 'первый': 0, '하나': 0, '일번': 0, '1번': 0, '1': 0,
-            '두번': 1, '둘': 1, '이번째': 1, '2번': 1, '2': 1, '세번': 2, '셋': 2, '3번': 2, '3': 2,
-            '네번': 3, '넷': 3, '4번': 3, '4': 3, '마지막': -1}
+_ORDINAL = {'첫': 0, '처음': 0, '하나': 0, '한': 0, '1': 0,
+            '둘': 1, '두': 1, '2': 1,
+            '셋': 2, '세': 2, '3': 2,
+            '넷': 3, '네': 3, '4': 3,
+            '마지막': -1}
+#  ★ 이것들은 **'번/번째/째'가 붙어야** 순서다. 특히 「네」는 긍정이지 4번이 아니다.
+_ORD_AMBIG = ('한', '두', '세', '네')
+#  ★ 발화 **전체**가 순서 표현일 때만 인정한다(2026-08-05 · 코드감사).
+#    예전엔 부분일치였다: `for k in _ORDINAL: if k in m`. 그래서 14자 이하 발화에
+#    '하나'·'처음'·'둘'·숫자 한 글자가 **어디든 박혀 있으면** 그 위치의 칩이 확정됐다.
+#    재현된 실측(칩 [요양지원·가사지원·취업알선·진로지원·자원봉사관리] 제시 직후):
+#      「하나도 모르겠어요」 → '하나' → 요양지원 카드 확정
+#      「처음 듣는 말이에요」 → '처음' → 요양지원 카드 확정
+#      「둘 중에 뭐가 나아요?」 → '둘'  → 가사지원 카드 확정
+#      「2년제 나왔어요」·「고3때부터요」·「1년 정도 했어요」도 전부 확정
+#    이 분기는 _step 맨 앞이라 **LLM·슬롯추출·is_uncertain 가드를 전부 건너뛰고**
+#    바로 카드로 나간다. 「모르겠다」고 말한 사람이 카드를 받는 최악의 경로였다.
+_ORD_RE = re.compile(r'^(첫|처음|하나|한|둘|두|셋|세|넷|네|마지막|[1-4])'
+                     r'(번째|번|째)?(요|이요|이것|이거|거)?$')
+
+
+def ordinal_of(m):
+    """발화 전체가 순서 표현인가 → 위치(없으면 None). m 은 공백 제거된 문자열."""
+    mm = _ORD_RE.match(m or '')
+    if not mm:
+        return None
+    key, suffix = mm.group(1), mm.group(2)
+    if key in _ORD_AMBIG and not suffix:
+        return None                      # 「네」 = 긍정 · 「두」 = 미완성 말
+    return _ORDINAL.get(key)
+
 
 def pick_from_options(msg, options):
     """좁히기 선택지에 대한 답을 해석 → 고른 항목(없으면 None).
@@ -791,17 +1021,26 @@ def pick_from_options(msg, options):
     m = re.sub(r'\s+', '', msg or '')
     if not m:
         return None
-    for o in options:                       # ① 이름 직접 언급(가장 확실)
-        if re.sub(r'\s+', '', o) in m:
-            return o
-    if len(m) > 14:                          # 긴 문장은 순서 답변이 아니다(오해석 방지)
-        return None
-    for k, i in _ORDINAL.items():            # ② 순서 표현
-        if k in m:
-            try:
-                return options[i]
-            except IndexError:
-                return None
+    #  ★★ 여러 개를 고르는 것을 받는다 (2026-08-05)
+    #    근거 — Bing 실운영 로그(Microsoft, SIGIR 2020, 노출 7,461만):
+    #      "in 7.30% of the interactions with the clarification pane, users click on
+    #       multiple candidate answers. This suggests that in many of these cases, the
+    #       users would like to explore different candidate answers"
+    #    그리고 Amazon 실데이터에서 **발화의 52%가 멀티인텐트**(평균 1.6개)다
+    #    (Gangadharaiah & Narayanaswamy, NAACL 2019). 싱글인텐트 모델은 같은 데이터에서
+    #    문장수준 정확도 57.27, 멀티라벨 모델은 89.41 — 하나만 남기는 비용이 32점이다.
+    #    ⇒ 「요양지원이랑 아이돌봄이요」를 한쪽만 받으면 안다고 하면서 절반을 버리는 것이다.
+    #    ※ 반환은 그대로 **하나**다(세부관심 슬롯은 스칼라라 계약을 안 바꾼다).
+    #      나머지는 호출부가 _narrow_rest 로 남겨 다음 후보 풀에 살려 둔다.
+    _named = [o for o in options if re.sub(r'\s+', '', o) in m]
+    if _named:                              # ① 이름 직접 언급(가장 확실)
+        return _named[0] if len(_named) == 1 else _named
+    _i = ordinal_of(m)                      # ② 순서 표현 — 발화 전체가 그것일 때만
+    if _i is not None:
+        try:
+            return options[_i]
+        except IndexError:
+            return None
     #  ③ 짧게 줄여 답한 경우('피부' → 피부미용). 여러 선택지에 걸리면('미용') 고르지 않는다.
     if 2 <= len(m) <= 8:
         hits = [o for o in options if m in re.sub(r'\s+', '', o)]
@@ -852,6 +1091,67 @@ CRISIS_REPLY = (
     '혹시 지금 마음이 많이 무거우시면 자살예방 상담전화 109(24시간)에서 사람과 바로 이야기하실 수 있어요.\n\n'
     '괜찮으시면, 요즘 관심 있는 일이나 해보고 싶은 것부터 편하게 말씀해 주세요.'
 )
+
+#  ★★ 위기 2층 — 대상 구분 (2026-08-05) ─────────────────────────────
+#  왜: 낱말 목록(1층)은 **누구 얘긴지 모른다.**
+#      「죽고 싶어요」(본인) · 「삼촌이 자살하려 해요」(제3자) · 「자살을 막고 싶어요」(예방)
+#      가 같은 낱말로 걸려서 전부 본인 위기처럼 응대했다.
+#  실무 근거(조사): 효과적인 안전 시스템은 **최소 3층**이다 —
+#      ① 임상 키워드 트리거 ② 문맥 분류기 ③ 감정 궤적 추적.
+#      「키워드만으로는 불충분」이 공통 결론이고, 분류기가 키워드 매칭보다 확실히 낫다
+#      (LSTM-RNN+BERT 학습 92.13% / 신규 데이터 97%).
+#      우리는 분류기를 학습시킬 수 없으니 **걸렸을 때만 LLM 1회**로 2층을 흉내낸다.
+#  ⚠ 비용: 상용 챗봇 주간 대화의 약 0.15% 에만 자살 계획 징후가 있다(연구 인용).
+#      1,000턴에 1~2번 발동이므로 비용·지연이 사실상 안 늘어난다.
+#  ⚠ 원칙 세 가지는 그대로 지킨다 —
+#      ① **대화를 끊지 않는다**(kind='ask'). 과보호 가드레일이 상담전화만 던지고 끊는 것은
+#        위기개입 원칙과 충돌한다는 게 연구의 지적이다(sustained engagement).
+#      ② **놓치는 것(FN)이 헛짚는 것(FP)보다 나쁘다.** 판정이 실패하면 본인 위기로 본다.
+#      ③ **단정하지 않는다.** 문구는 여전히 「혹시 …라면」 조로 둔다.
+CRISIS_TRIAGE_SCHEMA = {
+    'type': 'OBJECT',
+    'properties': {
+        '대상': {'type': 'STRING', 'enum': ['본인', '제3자', '예방·직업관심', '불명']},
+        '근거': {'type': 'STRING'},
+    },
+    'required': ['대상', '근거'],
+}
+
+#  대상별 응답 — 전부 **코드가 쓴다.** 모델이 위기 상황에서 문장을 짓게 두지 않는다.
+CRISIS_REPLY_OTHER = (
+    '가까운 분이 그런 상태라면 지켜보는 마음도 많이 무거우실 것 같아요.\n'
+    '자살예방 상담전화 109(24시간)는 **본인이 아니어도** 상담받을 수 있어요. '
+    '어떻게 도와야 할지 함께 이야기해 주실 거예요.\n\n'
+    '저는 진로 쪽을 도와드리는 곳이라, 필요하시면 그 이야기도 편하게 이어가 주세요.'
+)
+
+
+#  ── 남용 카운터 (2026-08-05) ─────────────────────────────────────
+#  왜: 트롤이 100번 보내면 그만큼 돈이 나간다. 명백한 남용은 세서 끊는다.
+#  ⚠⚠ **자해 신호(SELFHARM)는 절대 세지 않는다.**
+#    「죽고 싶어요」를 다섯 번 말한 사람을 잠그는 것은, 그게 진짜 위기일 때
+#    할 수 있는 가장 나쁜 조치다. 위기개입 원칙(sustained engagement)과 정면으로 어긋난다.
+#    세는 것은 **의도가 분명한 것만** — 인젝션(탈옥 시도) · 타해/욕설 · 주제이탈.
+#  ⚠ 한계: 세션 단위라 새 세션을 열면 초기화된다. 진짜 비용 방어는 사용자·IP 단위
+#    호출 상한이어야 하고 그건 별도 작업이다. 여기서는 **같은 자리에서 반복하는** 트롤만 막는다.
+ABUSE_WARN = 3        # 이 횟수부터 경고 문구를 덧붙인다
+ABUSE_STOP = 6        # 이 횟수부터 세션을 닫고 문의로 안내한다
+ABUSE_NOTE = (
+    '\n\n(안내) 진로 상담과 관계없는 요청이 여러 번 이어지고 있어요. '
+    '계속되면 이 대화를 잠시 닫을 수 있어요.')
+ABUSE_STOP_REPLY = (
+    '진로 상담과 관계없는 요청이 반복되어 이 대화를 잠시 닫았어요.\n'
+    '오해가 있었다면 문의하기로 알려주시면 바로 풀어드릴게요.\n\n'
+    '· 문의하기 → /inquiry')
+
+
+def bump_abuse(profile, why):
+    """남용 1회 기록 → 현재 횟수. (SELFHARM 은 여기 오지 않는다)"""
+    n = int((profile or {}).get('_abuse') or 0) + 1
+    profile['_abuse'] = n
+    profile['_abuse_why'] = why
+    print(f'[itda] 남용 {n}회 ({why})')
+    return n
 
 
 def pre_check(msg):
@@ -950,10 +1250,28 @@ def _eun_neun(word):
     return '은'
 
 
+#  ★ 2026-08-05 (코드감사) — 「어떤 일이 좋을까요?」가 **거부로 잡혀 카드가 안 나갔다.**
+#    _ASK_MEANING 에 '어떤일'·'무슨일'이 있는데, 그건 「[가구제작]이 어떤 일이에요?」처럼
+#    **이름을 두고 뜻을 묻는** 경우를 잡으려던 것이다. 그런데 이름 없이 던지는
+#    「어떤 일이 좋을까요?」까지 걸려서 → rejects_or_questions=True →
+#      ① ASK→SEARCH 승격 차단  ② 「다 아니다」 재검색 차단  ③ DIRECT 확정 차단
+#    슬롯이 2축 다 찼는데도 되묻기만 한 턴 더 돌았다.
+#    **이 서비스에 가장 핵심적인 질문을 한 사람이 답을 제일 늦게 받는다.**
+#    ⇒ 뜻풀이 분기(_step 안)는 _named_entity 로 이름을 확인하므로 그대로 두고,
+#      여기(확정 차단용)에서만 그 둘을 뺀다.
+_MEANING_NEEDS_NAME = ('어떤일', '무슨일')
+
+
 def rejects_or_questions(msg):
     """이름을 말했더라도 그것을 거부·되묻는 발화면 True → 코드가 DIRECT 로 확정하지 않는다."""
     m = (msg or '').replace(' ', '')
-    return any(t in m for t in _REJECT) or asks_meaning(msg)
+    if any(t in m for t in _REJECT):
+        return True
+    if not asks_meaning(msg):
+        return False
+    #  '어떤 일/무슨 일' **만** 걸린 경우는 뜻풀이가 아니라 일반 질문으로 본다.
+    _hit = [t for t in _ASK_MEANING if t in m]
+    return not all(t in _MEANING_NEEDS_NAME for t in _hit)
 
 
 # ── 가짜자격 주장 탐지(2026-07-30) — no_card/복창금지 강제 ──
@@ -1093,6 +1411,18 @@ class ItdaEngine:
           그러면 캐시가 붙잡을 '고정 구간'이 요청 안에 명시되지 않는다.
           ⇒ 고정부는 systemInstruction, 변하는 부분만 contents 로 보낸다.
           ※ 이건 구조적으로도 맞다 — 지시문과 데이터를 섞어 보내던 것을 나눈 것이다.
+
+        ⚠️ 2026-08-05 — **이 분리를 하고도 캐시는 여전히 0이다. 구조 문제가 아니다.**
+          Google 공식 문서(ai.google.dev/gemini-api/docs/caching)의 암묵적 캐싱
+          **최소 토큰 표에 gemini-3.1-flash-lite 가 아예 없다**
+          (표에 있는 것: 3.5 Flash 4096 · 3.1 Pro Preview 4096 · 2.5 Flash 2048 · 2.5 Pro 2048).
+          즉 우리 모델의 최소치는 문서상 **확인 불가**이고, 지원 자체가 안 될 수 있다.
+          우리 시스템 프롬프트는 3,400 토큰이라 4096 문턱이면 애초에 못 넘는다.
+          문서가 준 권고 두 가지는 이미 지키고 있다 —
+            "Try putting large and common contents at the beginning of your prompt"
+            "Try to send requests with similar prefix in a short amount of time"
+          ⇒ **캐시 0을 코드에서 더 쫓지 마라.** 모델을 바꾸거나(2.5 Flash 등)
+            프롬프트를 문턱 위로 올리는 것 말고는 우리가 할 수 있는 게 없다.
         """
         cfg = {'responseMimeType': 'application/json',
                'responseSchema': schema, 'temperature': temp}
@@ -1232,7 +1562,21 @@ class ItdaEngine:
         #    따라 뜻이 달라지기 때문이다(「어르신 쪽이 편해요」가 무엇의 '쪽'인지).
         #    안 넣으면 다른 맥락에서 만든 답을 그대로 재사용해 오히려 정보를 잃는다.
         ask = re.sub(r'\s+', '', ((profile or {}).get('_last_ask') or ''))[:80]
-        return json.dumps([sorted(slots.items(), key=lambda x: x[0]), norm, ask],
+        #  ★★ 2026-08-05 (코드감사) — **대화 이력을 키에 넣는다. 개인정보 문제였다.**
+        #    _TURN_CACHE 는 프로세스 전역이고 세션 구분이 없다. 그런데 키에서 '_' 접두
+        #    상태를 전부 빼면서 **프롬프트에 실제로 들어가는 _summary·_history 가 빠졌다**
+        #    (HISTORY_MODE='full' 이 그 둘을 프롬프트에 넣는다).
+        #    ⇒ 슬롯·직전질문·발화가 같으면 **다른 사용자의 이력으로 만든 답이 그대로 나간다.**
+        #      「잘 모르겠어요」처럼 흔한 발화에서 충돌할 수 있고, 답변에 앞사람 대화 내용이
+        #      섞여 있으면 그대로 노출된다. 심사장에서 나오면 끝이다.
+        #    해시로 넣는 이유 — 키가 프롬프트만큼 커지면 캐시 자체가 메모리를 먹는다.
+        _ctx = ''
+        if ItdaEngine.HISTORY_MODE != 'none':
+            _h = json.dumps([(profile or {}).get('_summary') or '',
+                             (profile or {}).get('_history') or []],
+                            ensure_ascii=False, default=str)
+            _ctx = hashlib.sha1(_h.encode('utf-8')).hexdigest()[:16]
+        return json.dumps([sorted(slots.items(), key=lambda x: x[0]), norm, ask, _ctx],
                           ensure_ascii=False, sort_keys=True, default=str)
 
     # ── 착지 직전 '생각' 한 번 (2026-08-04) ─────────────────────────
@@ -1303,6 +1647,42 @@ class ItdaEngine:
             print(f'[itda] think 실패(작은 모델 질의로 진행): {type(e).__name__}: {str(e)[:90]}')
             return None
 
+    #  ★★ 위기 2층 — 대상 판정 (2026-08-05). 근거는 CRISIS_TRIAGE_SCHEMA 주석.
+    #    1층(낱말)이 걸렸을 때**만** 부른다. 상용 챗봇 기준 주간 대화의 0.15% 수준이라
+    #    비용·지연이 사실상 안 는다.
+    #    ⚠ 실패하면 '본인'으로 본다 — 놓치는 것(FN)이 헛짚는 것(FP)보다 나쁘다.
+    CRISIS_TRIAGE = (ENV.get('ITDA_CRISIS_TRIAGE') or '1').lower() in ('1', 'true', 'on')
+
+    async def crisis_who(self, user_msg, profile=None):
+        """자해 낱말이 걸린 발화가 **누구 이야기인가** → '본인'|'제3자'|'예방·직업관심'|'불명'.
+
+        판정에 실패하면 '본인'(가장 보수적)을 돌려준다.
+        """
+        if not self.CRISIS_TRIAGE:
+            return '본인'
+        hist = (profile or {}).get('_history') or []
+        lines = '\n'.join(f"{'사용자' if h.get('r') == 'u' else '나'}: {h.get('t','')}"
+                          for h in hist[-4:])
+        prompt = (
+            '아래 발화가 **누구에 관한 이야기인지**만 판정해라. 조언하거나 위로하지 마라.\n\n'
+            '  본인        말하는 사람 자신의 위험 신호\n'
+            '  제3자        가족·친구 등 **다른 사람**의 위험을 걱정하거나 알리는 말\n'
+            '  예방·직업관심  자살예방·생명존중을 **일·자격증·진로**로 이야기하는 말\n'
+            '  불명         셋 중 어느 것인지 확실하지 않다\n\n'
+            '★ 확실하지 않으면 반드시 「불명」을 골라라. 억지로 정하지 마라.\n'
+            '★ 근거는 발화에서 그대로 인용해라.\n\n'
+            f'[앞선 대화]\n{lines or "(없음)"}\n\n[발화]\n{user_msg}')
+        try:
+            r = await self.gemini(prompt, CRISIS_TRIAGE_SCHEMA, 0.0)
+        except Exception as e:                              # noqa: BLE001
+            print(f'[itda] 위기 대상판정 실패(본인으로 처리): {type(e).__name__}: {str(e)[:80]}')
+            return '본인'
+        who = (r or {}).get('대상')
+        if who not in ('본인', '제3자', '예방·직업관심', '불명'):
+            return '본인'
+        print(f'[itda] 위기 대상판정: {who} / 근거 {str((r or {}).get("근거"))[:60]}')
+        return who
+
     #  ★★ 최종 선택을 LLM 이 한다 (2026-08-04) — ITDA_LLM_PICK
     #
     #  왜 — **최종 선택에 대화가 안 들어가고 있었다.**
@@ -1321,18 +1701,81 @@ class ItdaEngine:
     LLM_PICK = (ENV.get('ITDA_LLM_PICK') or '1').lower() in ('1', 'true', 'on')
     LLM_PICK_N = 3            # 몇 개까지 좁혀서 보여줄까
     LLM_PICK_DESC = 220       # 후보 설명을 몇 자까지 (전부 넣으면 프롬프트가 커진다)
+    PICK_PROBE_MAX = 60       # 생성된 되물음의 길이 상한 (길면 안 쓴다)
+
+    @staticmethod
+    def _answered_already(last_u, names):
+        """사용자가 **후보를 가르는 말**을 이미 했나 (2026-08-05).
+
+        후보가 둘 이상일 때, 어느 한 후보에만 있는 글자를 사용자가 말했으면
+        그 사람은 이미 고른 것이다 — 더 물을 게 없다.
+          [제빵 · 떡제조] 에서 제빵에만 있는 글자 = {빵}. 「빵 같은 거요」 → True
+          [요양지원 · 진로지원] 에서 갈리는 글자 = {요,양,진,로}. 「돌봄이요」 → False
+        ※ 되물음을 버리는 데만 쓴다 — 틀려도 카드가 나갈 뿐이라 안전한 방향이다.
+        ※ 오탐 둘을 막느라 조건이 두 겹이다(실측):
+            「돌봄이**요**」 의 '요' → [**요**양지원]   ⇒ 조사·어미는 제외
+            「**사**람 만나는」 의 '사' → [가**사**지원] ⇒ 한 글자는 **홀로 선 낱말**일 때만
+          두 글자 이상이면 그냥 포함 여부로 본다(「차 정비」의 '정비' 같은 것).
+        """
+        u = _clean(last_u or '')
+        if not u or len(names) < 2:
+            return False
+        toks = {t for t in (last_u or '').split() if t}
+        clean = [_clean(n) for n in names]
+        for i, name in enumerate(clean):
+            others = ''.join(t for j, t in enumerate(clean) if j != i)
+            #  두 글자 조각 — 이 후보에만 있는 것이 사용자 말에 그대로 나왔나
+            if any(name[k:k + 2] not in others and name[k:k + 2] in u
+                   for k in range(len(name) - 1)):
+                return True
+            #  한 글자 — 조사가 아니고, 사용자가 **낱말 하나로** 말했을 때만
+            only = (set(name) - set(others)) - ItdaEngine._PARTICLES
+            if only & toks:
+                return True
+        return False
+
+    #  한 글자로 갈랐을 때 조사·어미에 걸리는 것들. 직업명 안에 들어 있어도
+    #  사용자가 그 글자를 썼다는 게 '그 직업을 골랐다'는 뜻이 못 된다.
+    _PARTICLES = set('요이가은는을를에서도고만의와과로나지다게야죠네데든면니까라며')
 
     async def llm_pick(self, profile, cands):
-        """후보 몇 개 중 **대화에 비춰** 하나를 고른다. 반환 (직업dict, 이유) 또는 (None, None).
+        """후보 몇 개 중 **대화에 비춰** 하나를 고른다.
+
+        반환 (직업dict, 이유, 정보충분, 되물을질문) — 실패하면 (None, None, True, '').
 
         cands 는 이미 좁혀진 목록이다(리랭커 통과분 상위 N).
+
+        ── 「정보가 충분한가」를 왜 여기서 묻나 (2026-08-05) ────────────────────
+        SOCbot(Sturgis et al., LSE Working Paper 13, 2026) 시스템 프롬프트는 네 단계다:
+          1. k개 중 맞을 수 있는 코드 **3개를 shortlist**
+          2. 그 셋 중 정하기에 **정보가 충분한지 판단**
+          3. 부족해도 **일단 가장 그럴듯한 하나를 고른다**
+             ("regardless of whether it needs more information")
+          4. 왜 골랐는지 설명
+        우리는 1·4만 하고 있었다. 2가 중요한 이유 —
+          can_land 는 **슬롯 개수**를 세지만, 여기서는 **후보를 실제로 본 뒤** 판단한다.
+          「돕기·돌봄 + 사람」 2축이 찼어도 후보가 [요양지원·병원안내·사회복지]로
+          갈리면 아직 못 정하는 것이고, 그건 슬롯을 세서는 알 수 없다.
+        3이 중요한 이유 — 부족하다고 답을 안 주면 **막다른 답**이 된다. 항상 하나는 고른다.
+
+        되물음은 고정 ASK_ORDER 가 아니라 **이 후보들이 갈리는 지점**에서 나온다.
+        SOCbot 실측에서도 되묻는 횟수는 사람마다 달랐다(0회 23% · 1회 50% · 2회 20% · 3회 5%).
+
+        ⚠ 후보가 **하나뿐일 때도 부른다**(2026-08-05 실측 사고).
+          예전엔 len<2 면 건너뛰었다. 그런데 리랭커가 하나만 남기는 경우가
+          「음식 쪽도 괜찮고요」 → [축산식품가공] 처럼 **제일 위험한 자리**였고,
+          하필 거기서 검사를 통째로 건너뛰고 있었다.
+          후보가 하나면 '고르기'는 뜻이 없지만 '충분한가'는 여전히 뜻이 있다.
         """
-        if len(cands) < 2:
-            return None, None
+        if not cands:
+            return None, None, True, ''
         summ = (profile or {}).get('_summary') or ''
         hist = (profile or {}).get('_history') or []
         lines = '\n'.join(f"{'사용자' if h.get('r') == 'u' else '나'}: {h.get('t','')}"
                           for h in hist[-8:])
+        #  이번 턴 발화가 우선 — _history 는 이번 발화가 아직 안 들어와 있다(_now_msg 주석 참고).
+        last_u = ((profile or {}).get('_now_msg')
+                  or next((h.get('t', '') for h in reversed(hist) if h.get('r') == 'u'), ''))
         names = [c['job_name'] for c in cands]
         body = '\n'.join(
             f"{i+1}. {c['job_name']} ({c.get('group') or ''})\n"
@@ -1340,9 +1783,55 @@ class ItdaEngine:
             for i, c in enumerate(cands))
         schema = {'type': 'OBJECT', 'properties': {
             '고른직업': {'type': 'STRING', 'enum': names},
-            '이유': {'type': 'STRING'}}, 'required': ['고른직업', '이유']}
+            #  ★ 순서가 곧 생각의 순서다 — 고르기 **전에** 충분한지 먼저 적게 한다.
+            #    (갇힌 출력은 위에서부터 채워지므로, 뒤에 두면 이미 고른 걸 정당화한다)
+            '정보충분': {'type': 'BOOLEAN'},
+            '확인할것': {'type': 'STRING'},
+            '이유': {'type': 'STRING'}},
+            'required': ['고른직업', '정보충분', '이유']}
+        #  후보가 하나면 '고르기'가 아니라 '이걸로 정해도 되나'를 묻는 자리가 된다.
+        steps = (
+            '【순서대로 한다】\n'
+            '  1) 이 후보가 **어떤 일인지** 본다\n'
+            '  2) 이 일로 정할 만한 말을 사용자가 했는가 → 「정보충분」에 적는다\n'
+            '     ★ 후보가 하나뿐이라는 건 근거가 충분하다는 뜻이 **아니다**.\n'
+            '       사용자가 한 말이 스쳐가듯 한 마디였다면 false 다.\n'
+            '  3) 충분하지 않더라도 이 후보를 「고른직업」에 그대로 적는다\n'
+            '  4) 왜 이 일인지 「이유」에 적는다\n\n'
+        ) if len(cands) == 1 else (
+            '【순서대로 한다】\n'
+            '  1) 후보들이 **서로 무엇이 다른지** 본다\n'
+            '  2) 그 차이를 가를 만한 말을 사용자가 했는가 → 「정보충분」에 적는다\n'
+            '  3) ★ 충분하지 않더라도 **반드시 하나를 고른다**. 고르지 않는 선택지는 없다.\n'
+            '  4) 왜 골랐는지 「이유」에 적는다\n\n'
+        )
         prompt = (
             '아래 대화를 나눈 사람에게 **가장 잘 맞는 일 하나**를 후보 중에서 골라라.\n\n'
+            + steps +
+            '★★【이미 답한 것을 다시 묻지 마라】 — 이게 제일 중요하다.\n'
+            '  후보를 가르는 말이 대화에 **이미 있으면** 정보충분=true 다. 망설이지 마라.\n'
+            '  특히 사용자의 **마지막 발화**를 먼저 본다. 거기에 답이 있으면 그걸로 끝이다.\n'
+            '  실패 예 — 사용자가 "빵 같은 거요" 라고 했는데 후보가 [제빵·떡제조] 일 때\n'
+            '    ✗ 정보충분=false, "빵과 떡 중 어떤 것에 흥미가 있으신가요?"\n'
+            '       → 사용자는 이미 "빵"이라고 말했다. 답한 것을 다시 물었다.\n'
+            '    ○ 정보충분=true, [제빵] 선택\n\n'
+            '「확인할것」 — 정보충분=false 일 때만. 후보를 가를 **딱 한 가지**를 묻는 질문 한 문장.\n'
+            '  · 반드시 물음표로 끝낸다. 30자 안팎. 두 가지를 한꺼번에 묻지 마라.\n'
+            '  · 물어도 되는 것: 무엇을 다루고 싶은지 · 사람을 상대하는지 · 만드는지 고치는지 돌보는지\n'
+            '    · 어떤 걸 해봤는지 · 어디서 일하고 싶은지\n'
+            '  · 묻지 마라: 자격증 · 학력 · 돈 · 시간 (그건 「어떻게 도달하나」지 「무엇이 맞나」가 아니다)\n'
+            '  · 후보 이름을 그대로 읽어주는 질문도 안 된다 — 사용자는 그 말을 모른다.\n'
+            '  ✗ "어떤 분야에 관심이 있으세요?"        (후보를 못 가른다 — 이미 물어본 것)\n'
+            '  ○ "사람을 직접 대하는 쪽이 좋으세요, 혼자 집중하는 쪽이 좋으세요?"\n\n'
+            #  ★ 혼동쌍 (2026-08-05) — SOCbot 은 시스템 프롬프트에
+            #    "비슷하게 들리는데 다른 코드인 예시 5개"를 넣는다. 이름이 비슷하면 LLM 이
+            #    구분 축을 안 보고 고른다. 구체 직업명을 지어내지 않고 **축**으로 적는다.
+            '【이름이 비슷해도 하는 일이 다르다】 헷갈리는 자리에서는 이 축을 본다\n'
+            '  · 만드나 / 파나          — 만들고 싶다 했나, 팔고 싶다 했나\n'
+            '  · 몸으로 돌보나 / 상담·연계하나 — 같은 「돌봄」이라도 완전히 다른 일이다\n'
+            '  · 고치나 / 조작·운전하나\n'
+            '  · 사람을 상대하나 / 사물을 상대하나\n'
+            '  사용자가 그 축에 대해 말한 적이 없으면, 그게 바로 「확인할것」이다.\n\n'
             '고르는 기준 — 이 순서대로 본다\n'
             '  1) 사용자가 **직접 말한 것**(좋다·싫다·해봤다)과 맞는가\n'
             '  2) 사용자가 **하지 않겠다고 한 것**을 피했는가\n'
@@ -1357,6 +1846,9 @@ class ItdaEngine:
             '★ 「이유」는 **사용자에게 그대로 보여줄 한 문장**이다.\n'
             '  대화에서 사용자가 한 말을 근거로 삼아 쓴다. 40자 안팎.\n'
             '  ✗ "관련도가 가장 높습니다"   ○ "손으로 만드는 걸 좋아한다고 하셔서 골랐어요"\n\n'
+            #  ★ 마지막 발화를 따로 짚는다(2026-08-05) — 「빵 같은 거요」가 대화 8줄에
+            #    묻혀서 「빵이냐 떡이냐」를 되묻던 것. 제약을 따로 짚는 것과 같은 이유다.
+            f'[사용자가 방금 한 말]\n{last_u or "(없음)"}\n\n'
             f'[앞선 대화 요약]\n{summ or "(없음)"}\n\n'
             #  ★ 제약을 따로 짚어준다(2026-08-04) — 대화에 묻혀 지나치는 걸 막는다.
             #    검색어에는 안 넣는 값이라(직업을 안 가름) **여기서만** 쓰인다.
@@ -1367,14 +1859,38 @@ class ItdaEngine:
             r = await self.gemini(prompt, schema, 0.1)
         except Exception as e:                              # noqa: BLE001
             print(f'[itda] 최종선택 실패(RRF 순서로 진행): {type(e).__name__}: {str(e)[:90]}')
-            return None, None
+            return None, None, True, ''
         pick = (r or {}).get('고른직업')
         got = next((c for c in cands if c['job_name'] == pick), None)
         if not got:
-            return None, None
+            return None, None, True, ''
         why = re.sub(r'\s+', ' ', ((r or {}).get('이유') or '')).strip()[:120]
-        print(f'[itda] 최종선택: {pick} (후보 {names})')
-        return got, (why or None)
+        #  ★ 충분판단 — 모델이 안 냈으면 **충분한 것으로 본다**(되묻는 쪽이 기본이 되면 안 된다).
+        sure = (r or {}).get('정보충분')
+        sure = True if sure is None else bool(sure)
+        probe = re.sub(r'\s+', ' ', ((r or {}).get('확인할것') or '')).strip()
+        #  쓸 수 있는 되물음인지 코드가 검사한다 — 모델의 자기보고를 그대로 믿지 않는다.
+        #  질문이 아니거나 · 너무 길거나 · 숫자를 지어냈으면 버리고 충분한 것으로 처리한다.
+        if probe and (not probe.endswith('?') or len(probe) > self.PICK_PROBE_MAX
+                      or re.search(r'\d{2,}', probe)):
+            print(f'[itda] 되물음 버림(형식): {probe[:40]}')
+            probe = ''
+        #  ★ 「이미 답한 것을 다시 묻는」 되물음은 코드가 버린다 (2026-08-05).
+        #    프롬프트로 두 번 조였는데도 안 잡혔다 — 실측:
+        #      사용자 「빵 같은 거요」 · 후보 [제빵 · 떡제조]
+        #      → 모델이 계속 「빵과 떡 중 어느 쪽이세요?」를 냈다.
+        #    이 파일의 원칙 그대로다: **모델의 자기보고를 믿지 않고 코드가 검증한다.**
+        #    판정 — 후보를 **가르는 글자**(후보 하나에만 있는 글자)를 사용자가 이미 말했나.
+        #      제빵 ∖ 떡제조 = {빵}  ← 사용자가 「빵」을 말했다 → 답은 이미 나와 있다.
+        #    한쪽으로만 틀린다: 되물음을 **버리는** 쪽이라 최악이어도 카드가 나간다.
+        if probe and self._answered_already(last_u, names):
+            print(f'[itda] 되물음 버림(이미 답함): {probe[:40]}')
+            probe = ''
+        if not probe:
+            sure = True                      # 물을 말이 없으면 되물을 수 없다 → 그냥 준다
+        print(f'[itda] 최종선택: {pick} (후보 {names}) 충분={sure}'
+              + (f' 확인할것={probe}' if not sure else ''))
+        return got, (why or None), sure, probe
 
     #  요약 스키마 — 자유 문장 하나. 갇힌 출력을 쓰는 이유는 다른 곳과 같다(파싱 실패 방지).
     SUMMARY_SCHEMA = {'type': 'OBJECT',
@@ -1483,7 +1999,9 @@ class ItdaEngine:
     #      제빵기능사   0.693 컴퓨터활용능력 1급 ← 1위가 이것. 무관  ★ K-MOOC 에 제빵 강좌가 없다
     #  "제빵기능사 준비하려면 컴퓨터활용능력 1급을 들으세요" 가 나가면 거기서 신뢰가 끝난다.
     #  강좌가 0개면 카드가 국민내일배움카드 안내로 대체되므로, 걸러도 사용자는 갈 곳이 있다.
-    #  ※ 2026-07-30 부터 이 값은 **리랭크 실패 시 폴백 전용**이다. 평시 선별은 크로스인코더가 한다.
+    #  ⚠ 2026-08-05 (코드감사) — **지금은 아무 데서도 안 읽는다(죽은 상수).**
+    #    실제 폴백은 `ranked = pool[:3]` 이고 후보 수집은 match_courses(min_score=0.0) 다.
+    #    강좌가 0개인 문제를 이 값에서 찾지 마라 — 여기 걸린 게 아니다.
     #    절대 임계의 한계 실측(2026-07-30): 가구제작 0.598 · 요양지원 0.696 · 내선공사 0.651 → 0개 통과
     #    (사용자 화면에서 '1단계 무료강의'가 통째로 사라짐). 반대로 제빵은 0.713+ 로 무관 강좌가 통과.
     COURSE_MIN_SCORE = 0.70
@@ -1514,7 +2032,17 @@ class ItdaEngine:
     #      「돌봄+만들기」(연결어 범벅)   1위 0.641 · 8위 0.633 · 간격 0.008  ← 아무것도 구별 못 함
     #  간격이 이 값보다 좁으면 **벡터가 판별에 실패한 것**으로 보고 카드를 내지 않는다.
     #  (되물을 슬롯이 남아 있을 때만 적용 — 무한 되물음을 막는다. low_score 와 같은 조건)
-    FLAT_SPREAD = 0.02
+    #  ★ 2026-08-05 재보정 (n=52 대표질의, calib2.py)
+    #    RRF 상위5 간격 분포: min 0.005 · p25 0.027 · med 0.055 · p75 0.083 · max 0.162
+    #    0.02 → 평탄 판정 15% · 0.025 → 20%.
+    #    SOCAssign 은 전체의 45%를 '검토 강화'로 보낸다(S1<0.2 또는 S1-S2<0.2).
+    #    우리는 좁히기가 곧 **질문 한 번 더**라 그만큼 못 보낸다 — SOCbot 실측에서
+    #    73%가 되묻기 1회 이하로 끝났다. 15%는 너무 보수적이고 45%는 과하다. 20%로 둔다.
+    FLAT_SPREAD = 0.025
+    #  상위 몇 개 안에서 간격을 볼까 — range 는 극단값 2개에만 의존해 불안정하다.
+    #  IR 실무의 QPP(질의성능예측)는 상위 k 점수의 **표준편차**를 쓰고 보통 k=100 이지만,
+    #  우리 후보 풀은 8개라 k 를 작게 잡는다. 5개면 꼬리의 잡음을 덜 탄다.
+    FLAT_TOP_K = 5
     #  좁히기 칩에 남길 폭 — 1위와 벡터 점수가 이 안에 있는 후보만 보여준다(고정 4개 폐기).
     #  실측 근거: 「빵」은 제빵0.759·제과0.747·떡0.711 이 붙어 있고 5위(양식조리 0.634)부터
     #  뚝 떨어진다. 0.03 이면 앞 3~4개만 남고 억지 후보가 잘린다.
@@ -1522,7 +2050,17 @@ class ItdaEngine:
 
     #  ★ 좁히기 판정 방식(2026-08-04) — 'gap'(지금까지) / 'entropy'(후보 분포 전체)
     #    기본은 'gap'. 바꾸기 전에 골든셋으로 재야 한다. 자세한 근거는 _is_spread 주석 참고.
-    SPREAD_MODE = ENV.get('ITDA_SPREAD_MODE') or 'gap'
+    #  ★★ 2026-08-05 — 기본값을 'entropy' 로 켠다(ITDA_SPREAD_MODE=gap 으로 되돌릴 수 있다).
+    #    ⚠ 다만 **측정 결과를 정직하게 적어둔다** — 켤 값어치가 크지 않다.
+    #      n=52 대표질의에서 gap 판정과 entropy 판정이 잡는 질의를 비교했다:
+    #        T=0.02 H=0.95 :  둘 다 8건 · gap만 0건 · entropy만 1건
+    #        T=0.05 H=0.99 :  둘 다 8건 · gap만 0건 · entropy만 1건
+    #      entropy 는 gap 이 잡는 것을 **전부 포함하고 1건을 더** 잡는다(상위집합).
+    #      즉 동작이 거의 같다. 이득은 52건 중 1건(2%)이고, 대신 조정할 파라미터가
+    #      하나(FLAT_SPREAD)에서 둘(SPREAD_T·SPREAD_H)로 늘어난다.
+    #    ⇒ 켜도 위험은 낮다(상위집합이라 덜 잡히는 경우가 없다). 그래서 켠다.
+    #      되돌릴 때는 ITDA_SPREAD_MODE=gap 한 줄이면 된다.
+    SPREAD_MODE = ENV.get('ITDA_SPREAD_MODE') or 'entropy'
 
     #  ★ 강제 승격 끄기(2026-08-04) — 기본은 꺼짐(= 예전대로 강제 승격을 **한다**).
     #    지금 동작: 슬롯 2축이 차면(can_land) 모델이 ASK 를 내도 코드가 SEARCH 로 올려 카드를 낸다.
@@ -1554,12 +2092,43 @@ class ItdaEngine:
     #    ⚠ 표본이 작고 여유가 0.032 뿐이다. 그리고 처음 만든 '없음' 목록에 수의사·파일럿을
     #      넣었다가 뺐다 — NCS 에 수의서비스·사업용항공기조종이 실제로 있었다(설계 실수).
     #    ⇒ 0.05. 더 큰 표본으로 다시 볼 것.
+    #  ★★ 2026-08-05 재보정 시도 — **결론: 바꾸지 않는다. 그리고 이 게이트를 과신하면 안 된다.**
+    #    n=13 → n=52(NCS에 있는 방향 32 · 없다고 본 것 20)로 늘려 다시 쟀다.
+    #      IN  최고점  min -0.008 · p25 +0.135 · med +0.194 · p75 +0.333 · max +0.586
+    #      OUT 최고점  min -0.067 · p25 -0.006 · med +0.037 · p75 +0.167 · max +0.274
+    #    n=13 에서는 깨끗이 갈렸는데(여유 +0.032) **n=52 에서는 분포가 통째로 겹친다.**
+    #    최적 임계를 다 훑어도 0.041 에서 40/52(77%)가 최선이고, 현재 0.05 는 39/52(75%)다.
+    #    1건 차이라 바꿀 이유가 없다.
+    #    ⚠ 더 중요한 것 — **내 'NCS에 없다' 목록이 또 틀렸다.** 소방관(+0.224)·경찰관(+0.117)이
+    #      높게 나온 건 리랭커가 틀린 게 아니라 NCS 에 소방안전관리·구조구급이 실제로 있어서다.
+    #      2026-08-04 에 수의사·파일럿으로 같은 실수를 했다고 적어놓고 또 했다.
+    #    ⇒ 이 값은 '관련 있음'의 약한 신호일 뿐이다. not_found 를 이것 하나로 판정하지 마라.
     RR_MIN = 0.05
+    #  ★★ 저확신 판정의 **코드측 문턱** (2026-08-05)
+    #    왜 필요한가 — 「정보가 충분한가」를 모델 자기보고에만 맡겼더니 실측에서
+    #      5회 중 1회만 false 였다(사실상 안 뜬다). 이건 예상된 일이다:
+    #      CLAMBER 는 CoT·few-shot 이 오히려 과신을 키운다고 하고,
+    #      COARSE(Kononykhina 2026)는 사람도 모델도 '적당히 괜찮은' 답을 수용한다고 한다.
+    #      이 파일의 다른 곳에도 같은 원칙이 적혀 있다 — **모델의 자기보고를 믿지 않는다.**
+    #    무엇으로 대신 재나 — 리랭커 최고점의 **절대 크기**.
+    #      근거: SOCcer v2(Russ et al. 2023) — "The score is interpreted as an estimate of
+    #      the probability that an expert coder would have assigned that SOC code"
+    #      그리고 "v2 scores of 0.50 and 0.75 predicting 51% and 70% agreement".
+    #      점수가 낮으면 전문가 일치율도 낮다 — 우리도 낮으면 「확실하진 않다」고 말해야 한다.
+    #    값의 출처: n=52 실측에서 NCS 에 있는 질의의 **p25 = +0.135**.
+    #      즉 이 아래면 '제대로 걸린 질의들의 하위 4분의 1'보다도 약하다는 뜻이다.
+    RR_LOW_CONF = 0.13
     RR_PICK_MIN = 2     # 되묻기 선택지 최소 개수
     RR_PICK_MAX = 5     # 최대 (COARSE·SOCcer 실무 범위 4~6)
     SPREAD_K = 6        # 엔트로피를 볼 상위 후보 수
-    SPREAD_T = 0.05     # softmax 온도 — 코사인 차가 작아서(0.0x) 낮게 잡아야 분포가 생긴다
-    SPREAD_H = 0.85     # 정규화 엔트로피가 이보다 크면 '흩어졌다'. 미측정 초기값
+    #  ★ 2026-08-05 재보정 — 0.05 는 **쓸 수 없는 값**이었다(n=52 실측).
+    #    온도별 정규화 엔트로피 중앙값:
+    #      T=0.005 → 0.139 · T=0.01 → 0.450 · T=0.02 → 0.712 · T=0.05 → 0.954 · T=0.1 → 0.988
+    #    T=0.05 이면 거의 모든 질의가 1.0 근처로 뭉쳐서, H=0.85 로는 **80%가 '흩어졌다'**가 된다.
+    #    (점수 차가 0.0x 인데 온도가 0.05 라 softmax 가 사실상 균등분포를 만든다)
+    SPREAD_T = 0.02     # softmax 온도 — 점수 간격(0.005~0.16)과 같은 자릿수여야 분포가 생긴다
+    #  T=0.02 에서 p80 = 0.927 · max = 0.997. H=0.95 로 두면 gap 판정과 거의 같아진다(아래).
+    SPREAD_H = 0.95     # 정규화 엔트로피가 이보다 크면 '흩어졌다' (2026-08-05 실측)
 
     #  ★ 검색어 캐싱(2026-07-30) — 같은 상태·같은 말이면 **LLM 을 다시 부르지 않고** 저장된 검색어를 쓴다.
     #    근거(실측): 같은 검색어로 6회 검색 → 결과 6/6 완전 동일. 즉 이 파이프라인에서
@@ -1597,7 +2166,11 @@ class ItdaEngine:
     #    매 표본마다 달라 벡터 점수가 JOB_MIN_SCORE 를 넘나든다. action 다수결로는 안 잡힌다.
     #    → 제대로 하려면 '표본별 query 로 각각 검색해 리랭커 점수가 가장 높은 결과를 채택'
     #      (best-of-N at search) 이어야 한다. 그때 이 값을 3 으로 올리면 재료가 준비된다.
-    #  N>1 로 올리면 즉시 활성화된다(코드는 검증돼 있고 되돌리기도 값 하나다).
+    #  ⚠ 2026-08-05 (코드감사) — **N>1 로 올리면 지금은 크래시한다.** 예전 주석은
+    #    「코드는 검증돼 있다」고 했는데 그건 2026-08-04 다중값 슬롯 전환 **이전** 이야기다.
+    #    _vote 는 슬롯 값이 {'값','근거'} dict 라는 전제로 짜여 있는데 관심분야·활동유형·
+    #    다루는대상·제약은 이제 list 다 → `(... or {}).get('값')` 에서 AttributeError.
+    #    켜려면 _vote 의 집계를 as_list() 기반으로 먼저 고쳐야 한다.
     SELF_CONSISTENCY = 1
 
     #  (2026-07-28) _named_pick(자격증 이름 지목) 제거 — 직업-먼저에선 _named_job(직업 이름 지목)이 대신한다.
@@ -1712,20 +2285,29 @@ class ItdaEngine:
         #    한국보다 9시간 느리다 → 밤에는 '오늘'이 하루 전이 되어 접수 마감 판정이 틀린다.
         #    설정(파라미터 그룹 time_zone)에 기대지 않고 코드가 정하면 어디에 올려도 같게 동작한다.
         today = kst_today()
-        for cond, order in (
+        _i = 0
+        for _i, (cond, order) in enumerate((
             (" AND doc_reg_end >= :today", " ORDER BY doc_reg_end"),
             (" AND (doc_exam_start >= :today OR prac_exam_start >= :today)",
              " ORDER BY COALESCE(doc_exam_start, prac_exam_start)"),
             ("", " ORDER BY COALESCE(doc_exam_start, prac_exam_start) DESC"),
-        ):
+        )):
             row = (await db.execute(text(SEL + cond + order + " LIMIT 1"),
                                     {"cid": cert_id, "today": today})).fetchone()
             if row:
                 break
         if not row:
             return None
+        #  ★ '올해가 끝났다'를 표시한다 (2026-08-05) — ③번 폴백은 **남은 일정이 하나도 없어서**
+        #    가장 최근(=이미 지난) 회차를 꺼낸 것이다. 그런데 화면엔 그게
+        #      「제2회 · 접수 ~2026-05-04 (마감) · 필기 2026-05-09 …」
+        #    로 나갔다. 지난 날짜를 늘어놓는 셈이라 사용자는 무슨 뜻인지 읽어내야 한다.
+        #    실측(데모 A) — 「뭐라도 빨리 시작할 수 있는 거요」라고 한 사용자의 카드에
+        #    자격증 2개가 붙었는데 **둘 다 이 상태**였다. 시작할 수 있는 게 하나도 없었다.
+        #    ※ 우리 Q-Net API 는 **당해년도 일정만** 준다. 그러니 「올해는 끝」이 정확한 말이다.
+        #      ②번(접수는 지났지만 시험일은 남음)은 그대로 둔다 — 아직 볼 일정이 있다.
         return {'seq': row[0], 'doc': row[1], 'prac': row[2], 'pass': row[3],
-                'reg_start': row[4], 'reg_end': row[5]}
+                'reg_start': row[4], 'reg_end': row[5], 'past': (_i == 2)}
 
     async def _course_covered(self, db, job_code) -> bool:
         """K-MOOC 이 이 직무를 실제로 덮는가 — scripts/build_course_coverage.py 가 채운 표를 본다.
@@ -1927,6 +2509,14 @@ class ItdaEngine:
         #    예전엔 돌려놓고 결과를 '대안 2개' 문자열에만 썼다 — 임베딩 1회 + Pinecone 1회 + DB 2회를
         #    가장 많이 쓰는 경로("전기기능사 따고 싶어요")에서 매번 낭비했다.
         #    대안은 같은 중분류의 형제 직업으로 대체한다(DB 한 번, 의미도 더 자연스럽다).
+        #  ★★ 물린 후보를 뺄 **자리를 미리 만든다** (2026-08-05).
+        #    후보 풀은 8개인데 칩 5개를 걸러내면 3개만 남는다. 그러면 좁히기 비교(_is_spread)도
+        #    평탄 판정(FLAT_TOP_K=5)도 재료가 모자라 판단이 통째로 흔들린다.
+        #    ⇒ **뺄 개수만큼 더 받아서** 거른 뒤 8개로 자른다.
+        #      추가 비용은 Pinecone top_k 뿐이다(임베딩·LLM 호출은 그대로).
+        _ex = set((profile or {}).get('_exclude') or [])          # 카드 거부 — 하드 배제
+        _dem = set((profile or {}).get('_demote') or []) - _ex    # 칩 거부 — 순위 강등
+        _pool = self.JOB_CAND_POOL + len(_ex) + len(_dem)
         if forced:
             jobs = []
         else:
@@ -1945,19 +2535,36 @@ class ItdaEngine:
             if not q:
                 jobs = []
             elif lcls and self.LCLS_FILTER:
-                wide = await m.match_jobs(db, qs, top_k=self.JOB_CAND_POOL * 6)
+                wide = await m.match_jobs(db, qs, top_k=_pool * 6)
                 keep = await self._codes_in_lcls(db, [j['job_code'] for j in wide], lcls)
-                picked = [j for j in wide if j['job_code'] in keep][:self.JOB_CAND_POOL]
-                jobs = picked or wide[:self.JOB_CAND_POOL]
+                picked = [j for j in wide if j['job_code'] in keep][:_pool]
+                jobs = picked or wide[:_pool]
             else:
-                jobs = await m.match_jobs(db, qs, top_k=self.JOB_CAND_POOL)
+                jobs = await m.match_jobs(db, qs, top_k=_pool)
         #  ★ 사용자가 물린 직업은 뺀다(2026-08-04) — step() 이 '그거 말고' 를 잡아 넣어둔 목록.
         #    전부 빠져 하나도 안 남으면 거르지 않는다(빈 화면보다 낫다).
-        _ex = set((profile or {}).get('_exclude') or [])
         if _ex and jobs:
             _kept = [j for j in jobs if j['job_code'] not in _ex]
             if _kept:
                 jobs = _kept
+        #  ★★ 칩 거부는 **강등**이다 (2026-08-05, 버그B).
+        #    카드 거부(_exclude)와 세기를 다르게 둔다. 카드는 우리가 「이겁니다」라고 내놓은
+        #    하나라 물리면 뜻이 분명하다. 칩은 **그냥 보여준 목록**이라 「그거 말고」가
+        #    반드시 「그 직업들이 싫다」는 뜻은 아니다 — 문헌 경고 그대로다
+        #    (제시된 속성을 거부한다고 그 속성을 싫어한다는 뜻은 아니다).
+        #    ⇒ 지우지 않고 뒤로 민다. 새 후보가 둘 이상 남을 때만 민다 —
+        #      하나뿐이면 비교가 안 되어 좁히기도 평탄판정도 못 한다.
+        #      새 후보가 모자라면 강등한 것이 그대로 살아난다(빈 화면보다 낫다).
+        #    ※ 사용자가 나중에 그 직업을 **이름으로 부르면** forced 경로라 이 목록을
+        #      아예 안 지난다 — 강등이 길을 막지는 않는다는 뜻이다.
+        if _dem and jobs:
+            _fresh = [j for j in jobs if j['job_code'] not in _dem]
+            if len(_fresh) >= 2:
+                for j in jobs:
+                    if j['job_code'] in _dem:
+                        j['demoted'] = True         # 좁히기 칩에서도 뒤로 밀리게 표시
+                jobs = _fresh + [j for j in jobs if j['job_code'] in _dem]
+        jobs = jobs[:self.JOB_CAND_POOL]            # 넓게 받은 걸 원래 폭으로 되돌린다
 
         if not jobs and not forced:
             return None
@@ -2038,18 +2645,36 @@ class ItdaEngine:
             #        칩 [병원안내 · 병원행정 · 요양지원 · **건강운동관리**]
             #        넷째는 4칸을 채우려고 끌려온 것이다. 사용자는 그걸 후보로 읽는다.
             #    ⇒ 1위와 벡터 점수가 NARROW_BAND 안에 있는 것만 남긴다(최소 2, 최대 5).
-            _t = jobs[0].get('score') or 0.0
-            picks = [j for j in jobs if (j.get('score') or 0.0) >= _t - self.NARROW_BAND]
-            picks = (picks or jobs)[:5]
+            #  ⚠ 벡터 0(키워드로만 걸린 후보)은 이 비교에서 뺀다 — 안 그러면 1위와의 간격이
+            #    무조건 커서 전부 잘려나간다. FLAT_SPREAD 와 같은 함정(2026-08-05).
+            #  ⚠ 강등된 후보는 칩에서도 뺀다(2026-08-05, 버그B). 여기 기준은 **점수**라,
+            #    목록 뒤로 밀어놓기만 하면 점수가 높은 강등 후보가 다시 칩으로 올라온다
+            #    (사용자가 「그거 말고」라고 한 바로 그 목록이 다시 나가는 것). 실측된 증상이다.
+            #    남는 게 둘 미만이면 되살린다 — 위 강등 블록과 같은 원칙(빈 화면보다 낫다).
+            _live = [j for j in jobs if not j.get('demoted')]
+            if len(_live) < 2:
+                _live = jobs
+            _pos = [j for j in _live if (j.get('score') or 0) > 0]
+            _t = (_pos[0].get('score') if _pos else 0.0) or 0.0
+            picks = [j for j in _pos if (j.get('score') or 0.0) >= _t - self.NARROW_BAND]
+            #  키워드로만 걸린 후보는 이름을 정확히 집은 것이라 버리지 않고 뒤에 붙인다.
+            picks = (picks + [j for j in _live if (j.get('score') or 0) <= 0] or _live)[:5]
             if len(picks) < 2:
-                picks = jobs[:2]          # 하나만 남으면 비교가 안 된다 — 최소 둘은 보인다
+                picks = _live[:2]         # 하나만 남으면 비교가 안 된다 — 최소 둘은 보인다
             if rr_done:                   # 리랭커가 돌았으면 그 판정을 우선한다
-                ok = self._rr_ok(jobs)
+                ok = [j for j in self._rr_ok(jobs) if not j.get('demoted')]
                 if len(ok) >= self.RR_PICK_MIN:
                     picks = ok[:self.RR_PICK_MAX]
                 #  양수가 1개 이하면 '흩어진 게 아니라 하나뿐'이므로 위에서 정한 폭을 유지한다
+            #  ★ 대분류 분배 — _spread_lcls 주석 참고. 사용자가 지목한 계열이면 그대로 둔다.
+            #    hint 에는 이번 턴 질의를 넣는다(사용자 원문이 여기 들어 있다).
+            picks = await self._spread_lcls(db, picks, q)
             return {'narrow': True, 'query': q,
                     'options': [j['job_name'] for j in picks],
+                    #  ★ 코드도 함께 돌려준다(2026-08-05) — 이름만으로는 나중에 「그거 말고」가
+                    #    왔을 때 무엇을 배제할지 모른다(_exclude 는 job_code 목록이다).
+                    #    step() 이 이 값을 _narrow_codes 로 기억한다.
+                    'option_codes': [j['job_code'] for j in picks],
                     'option_notes': [re.sub(r'\s+', ' ', (j.get('description') or ''))[:60].strip()
                                      for j in picks]}
 
@@ -2065,13 +2690,27 @@ class ItdaEngine:
         #    벡터가 후보를 전혀 구별하지 못한 질의에는 카드를 내지 않는다.
         if (not forced and not named and len(jobs) >= 3 and not self._kw_winner(jobs)
                 and missing_slots(profile)):
-            _sc = [j.get('score') or 0.0 for j in jobs]
-            _gap = max(_sc) - min(_sc)
-            if _gap < self.FLAT_SPREAD:
-                print(f'[itda] 벡터 평탄({_gap:.3f} < {self.FLAT_SPREAD}): 카드 대신 되묻기 {q[:40]!r}')
-                return {'low_score': True, 'query': q}
+            #  ⚠⚠ 벡터 점수가 **0인 후보를 반드시 빼야 한다**(2026-08-05 버그 수정).
+            #    match.py 는 키워드(FULLTEXT)로만 걸린 후보의 score 를 0.0 으로 둔다.
+            #    그걸 섞어 max−min 을 재면 하이브리드 후보가 하나만 있어도 간격이 0.5 를 넘어
+            #    **이 가드가 영원히 발동하지 않는다.**
+            #    같은 버그를 _is_spread 가 2026-07-28 에 이미 겪고 `> 0` 필터로 고쳤는데
+            #    (그 주석의 실측: score=[0.554, 0.0, 0.510, 0.507, 0.506]),
+            #    오늘 이 코드를 새로 쓰면서 그 교훈을 안 옮겨왔다.
+            #  ★ 그리고 상위 몇 개만 본다 — range(max−min)는 극단값 2개에만 의존해
+            #    가장 불안정한 통계량이다. 상위 K 안에서 재야 후보 수에 덜 흔들린다.
+            _sc = sorted((j['score'] for j in jobs if (j.get('score') or 0) > 0), reverse=True)
+            _sc = _sc[:self.FLAT_TOP_K]
+            if len(_sc) >= 3:
+                _gap = _sc[0] - _sc[-1]
+                if _gap < self.FLAT_SPREAD:
+                    print(f'[itda] 벡터 평탄(상위{len(_sc)} 간격 {_gap:.3f} < {self.FLAT_SPREAD}): '
+                          f'카드 대신 되묻기 {q[:40]!r}')
+                    return {'low_score': True, 'query': q}
 
         # ② 직업 1개 선택 — 코드확정(forced)이면 코드, 지목이면 코드, 키워드 확정승자면 코드, 아니면 모델
+        #    _judged — 아래 「충분판단」을 이미 했나(llm_pick 을 두 번 부르지 않으려고)
+        _sure, _probe, _judged = True, '', False
         if forced:
             chosen, job_reason = forced, '말씀하신 걸 바로 찾아봤어요.'
         elif named:
@@ -2135,11 +2774,87 @@ class ItdaEngine:
                 _cand = (_pool or jobs)[:self.LLM_PICK_N]
                 if chosen not in _cand:      # 지금까지의 1위는 반드시 후보에 남긴다
                     _cand = ([chosen] + [c for c in _cand if c is not chosen])[:self.LLM_PICK_N]
-                _pick, _why = await self.llm_pick(profile, _cand)
+                _pick, _why, _sure, _probe = await self.llm_pick(profile, _cand)
+                _judged = True
                 if _pick:
                     chosen = _pick
                     if _why:
                         job_reason = _why      # 카드의 「AI 추천 이유」로 그대로 나간다
+
+        #  ★★ 충분판단은 **뽑기와 별개다** (2026-08-05) ─────────────────────────
+        #    실측 사고 — 「손으로 뭐 만드는 거 좋아해요」 「음식 쪽도 괜찮고요」
+        #      → 키워드('음식')가 1위를 확실히 집어 _kw_winner 로 빠졌고,
+        #        그 경로는 llm_pick 을 통째로 건너뛴다 → **아무도 「충분한가」를 안 물었다.**
+        #      뽑기는 맞았다. 근거가 얇았을 뿐이다. 그 둘은 다른 질문이다.
+        #    ⇒ 지목(forced·named)이 아닌 모든 경로에서 충분판단을 한다.
+        #      _kw_winner 의 1위는 **흔들지 않는다** — 고르는 게 아니라 묻기만 한다.
+        if self.LLM_PICK and not _judged and not forced and not named:
+            _, _kw_why, _sure, _probe = await self.llm_pick(profile, [chosen])
+            #  이왕 부른 김에 **이유**도 받아 쓴다 — 고르는 건 그대로 키워드 1위다.
+            #  이 경로의 기본 문구는 「말씀하신 것과 가장 맞닿은 일이에요」라는 캔 문장이었다.
+            #  카드의 「AI 추천 이유」는 사용자가 한 말을 근거로 삼아야 한다(llm_pick 프롬프트).
+            if _kw_why:
+                job_reason = _kw_why
+
+        #  ★★ 코드가 한 번 더 본다 (2026-08-05) — 모델이 「충분하다」고 해도
+        #    리랭커 점수가 낮으면 **그건 확신할 자리가 아니다**(RR_LOW_CONF 주석 참고).
+        #    실측: 모델 자기보고만으로는 5회 중 1회만 false 였다 = 사실상 안 뜬다.
+        #    한쪽으로만 틀린다 — 「확실하진 않다」고 말할 뿐 카드는 그대로 나간다.
+        if _sure and not forced and not named:
+            _rr = (chosen or {}).get('rr')
+            if _rr is not None and _rr < self.RR_LOW_CONF:
+                print(f'[itda] 코드측 저확신: {chosen.get("job_name")} rr={_rr:+.4f}'
+                      f' < {self.RR_LOW_CONF}')
+                _sure = False
+
+        #  ★★ 적응적 종료 (2026-08-05) — 후보를 본 뒤에 「아직 못 정하겠다」면
+        #    카드를 밀지 않고 **그 후보들이 갈리는 지점**을 한 번 되묻는다.
+        #    고정 ASK_ORDER 와 다른 점: 질문이 슬롯 목록이 아니라 **후보에서** 나온다.
+        #    SOCbot 실측에서도 되묻는 횟수는 사람마다 달랐다(0회 23%~3회 5%).
+        #
+        #    ⚠ 네 가지 경우엔 절대 되묻지 않는다 — 되묻기가 길을 막으면 안 된다.
+        #      · direct   : 사용자가 직업을 콕 집었다. 그건 바로 찾아준다.
+        #      · no_narrow: 「그냥 추천해줘」로 왔다. 끝낼 시점은 사용자가 정한다.
+        #      · _probed  : 세션당 한 번뿐. 반복하면 그게 곧 3주간의 그 버그다.
+        #      · _landed  : 이미 카드를 준 뒤엔 되묻기로 돌아가지 않는다.
+        if (not _sure and _probe and not direct and not no_narrow
+                and not (profile or {}).get('_probed')
+                and not (profile or {}).get('_landed')):
+            print(f'[itda] 적응적 되물음 발동: {_probe}')
+            return {'need_probe': True, 'question': _probe, 'query': q}
+
+        #  ⑥ 되물을 수 없는데 확신도 없으면 — **카드는 주되 정직하게 말한다**.
+        #    계층 백오프(중분류 카드)로 물러서지 않는 이유: 「보건복지 쪽입니다」는
+        #    「요양보호사 · 응시제한 없음 · 다음 시험 8월 27일」보다 덜 쓸모있다.
+        #    구체성은 지키고, 확신의 정도만 말로 낮춘다.
+        #  ★★ 계층 백오프 (2026-08-05) — 확신이 없으면 **한 층 위에서 답한다**.
+        #
+        #  근거 — SOCcer v2 검증(Russ et al. 2023): 같은 사람·같은 응답인데
+        #    6자리(세밀) 일치율 50%  ·  2자리(큰 범주) 일치율 73%
+        #    안 좁히면 23%p 더 맞는다. **틀린 잎사귀를 확신에 차서 주느니 맞는 가지를 준다.**
+        #
+        #  왜 직업을 안 버리나 — 「보건복지 쪽입니다」는 「제빵기능사 · 응시제한 없음 ·
+        #    다음 시험 8월 27일」보다 쓸모가 없다. 우리 카드의 무기는 구체성이다.
+        #    ⇒ 잎사귀를 지우는 게 아니라 **위에 한 줄을 얹는다**:
+        #         주장은 가지에 걸고(제과·제빵·떡제조 쪽), 잎사귀는 입구로 준다(그중 제빵).
+        #    자격증·시험일·강좌·국비링크는 하나도 안 깎인다.
+        #
+        #  ⚠ _sure 일 때는 **아무것도 바뀌지 않는다**. 확신 있는 카드는 예전 그대로다.
+        if not _sure:
+            #  ★ 키 이름 주의 (2026-08-05 코드감사) — 처음엔 '_unsure' 로 썼는데
+            #    그건 **「모르겠다」 사다리의 카운터(int)** 가 이미 쓰고 있는 키였다.
+            #    True 로 덮어쓰면 int(True)==1 이라 3단까지 올라간 사다리가 2단으로 되감겼다.
+            #    (실측: 3회 회피 → _unsure=3 → 저확신 카드 → True → 다음 회피에 2단으로 후퇴)
+            #    「세는 것과 답하는 것을 분리한다」는 원칙이 여기서 또 깨졌다. 키를 나눈다.
+            profile['_low_conf'] = True     # 계측용 — 저확신 카드 비율
+            _grp = (chosen.get('group') or '').strip()
+            if _grp:
+                job_reason = (f'지금까지 얘기로는 「{_grp}」 쪽이 가까워 보여요. '
+                              f'그중에 지금 바로 시작할 수 있는 게 {chosen["job_name"]}이에요. '
+                              + job_reason)
+            else:
+                #  중분류가 비어 있으면(데이터 누락) 예전처럼 강도만 낮춘다.
+                job_reason = '아직 얘기가 짧아서 확실하진 않지만 — ' + job_reason
 
         # ③ 그 직업의 자격증 (cert_job 역방향, ≤3) — 「지금 바로」 우선. 없으면 빈 리스트.
         #    ★ 시간·비용 부담을 말한 사용자에게는 **회차가 많은 자격증을 먼저**(_certs_for hurry).
@@ -2185,7 +2900,26 @@ class ItdaEngine:
                 #  rerank() 는 실패해도 예외를 안 내고 [] 를 준다(실패 로그는 match.py 가 찍는다).
                 order = await m.rerank(cq, docs, top_n=3)
                 if order:
-                    ranked = [pool[i] for i, _ in order[:3]]
+                    #  ★ 리랭커가 스스로 '무관'이라 한 것은 버린다 (2026-08-05)
+                    #  왜 — 예전엔 order[:3] 을 점수와 무관하게 그대로 썼다. 그래서 후보 12개 중
+                    #    **덜 나쁜** 3개가 무조건 카드에 실렸다. 실측(제빵) —
+                    #        식품재료학 +0.0353 · 식품위생학 +0.0216 · 식물공장 **-0.0461**
+                    #    「식물공장」은 스마트팜 강의다. 리랭커는 음수로 '아니다'라고 말했는데
+                    #    코드가 그 말을 안 듣고 3번째 칸을 채우려고 집어넣은 것이다.
+                    #  이건 우리가 폐기한 '절대 임계'가 아니다 — 그때 버린 건 0.02 같은
+                    #    **양수 문턱**이었다(표본만 바뀌면 뒤집힌다, build_course_coverage.py 참고).
+                    #    부호는 우리가 고른 값이 아니라 크로스인코더가 그은 선이다.
+                    #    (코사인은 '무관'의 기준점이 없어 이렇게 못 했다. 그래서 표가 필요했다.)
+                    #  실측 검증(2026-08-05, 덮음 판정 직업 14종 무작위):
+                    #    양수만 남겨도 13/14 가 강좌 ≥1개 — 좋은 강좌가 잘려나가지 않는다.
+                    #        회계·감사 +0.3346/+0.1800/+0.1438 (셋 다 유지)
+                    #        플랜트기계설비시공 … 식물공장 -0.0206 (여기서도 같은 잡음이 잘린다)
+                    #  ★ 최소 1개는 남긴다 — '강좌 0개' 판단은 커버리지 표의 몫이다.
+                    #    표가 '덮음'이라 한 직업에서 화면의 「1 · 무료 강의」가 통째로 사라지는 것은
+                    #    이미 더 나쁘다고 결론난 문제다(아래 폴백 주석과 같은 이유).
+                    top = order[:3]
+                    keep = [x for x in top if x[1] > 0] or top[:1]
+                    ranked = [pool[i] for i, _ in keep]
                 else:
                     #  ★ 폴백을 '절대임계'로 두면 안 된다(2026-07-30) — 실측상 COURSE_MIN_SCORE=0.70 은
                     #    가구제작·요양지원·내선공사에서 0개를 통과시킨다. 리랭커가 잠깐 죽었을 때
@@ -2198,6 +2932,13 @@ class ItdaEngine:
 
         # ⑤ 국비 실전훈련 — 고용24(HRD-Net) 훈련검색 딥링크(핸드오프, 2026-07-29).
         #   카탈로그 API 는 게이트라 못 당김 → '이 직무로 검색된 화면' 링크로 넘긴다(PC 차단·모바일만).
+        #  다른 관심사 살리기 — 카드를 조립하기 전에 한 번 찾는다(_other_interest 주석).
+        try:
+            _other_alt = await self._other_interest(db, profile, chosen)
+        except Exception as e:                          # noqa: BLE001
+            print(f'[itda] 다른 관심사 실패(생략): {type(e).__name__}: {e}')
+            _other_alt = []
+
         hire_url = ('https://m.work24.go.kr/hr/a/a/1100/trnnCrsInf.do?'
                     f"keyword={urllib.parse.quote(chosen['job_name'])}&searchYn=Y")
         return {
@@ -2216,10 +2957,86 @@ class ItdaEngine:
                      'url': hire_url,
                      'note': '국민내일배움카드로 훈련비 지원 · 고용24(HRD-Net)에서 검색'},
             #  forced 경로는 jobs 가 비어 있으므로 같은 중분류의 형제 직업을 대안으로 쓴다.
-            'alternatives': ([j['job_name'] for j in jobs
-                              if j['job_name'] != chosen['job_name']][:2] if jobs
-                             else await self._siblings(db, chosen)),
+            #  ★ 계층 백오프(2026-08-05) — **확신이 없을 때도** 형제를 쓴다.
+            #    평소 대안은 RRF 2·3위, 즉 「검색이 비슷하다고 본 것」이라 가지가 다를 수 있다.
+            #    그런데 위에서 「{중분류} 쪽이 가까워 보여요」라고 말했으면
+            #    보여줄 대안도 **그 가지 안**이어야 말이 맞는다. (_siblings 는 같은 중분류에서
+            #    같은 소분류를 먼저 뽑는다 — 먼 형제가 무작위로 잡히던 것을 7/30 에 고쳐뒀다)
+            #  ★ 2026-08-05 — 사용자가 말한 **다른 관심사**를 맨 앞에 얹는다(_other_interest).
+            #    멀티인텐트 52%(NAACL 2019) — 카드 하나로는 절반을 버린다.
+            'alternatives': (_other_alt + [x for x in (
+                await self._siblings(db, chosen) if (not _sure or not jobs)
+                else [j['job_name'] for j in jobs
+                      if j['job_name'] != chosen['job_name']][:2]
+            ) if x not in _other_alt])[:3],
         }
+
+    @staticmethod
+    async def _lcls_of(db, codes):
+        """직업코드 → NCS 대분류 이름 사전. 좁히기 후보를 대분류로 묶을 때 쓴다."""
+        if not codes:
+            return {}
+        rows = (await db.execute(
+            text("SELECT job_code, job_lcls_name FROM job_catalog "
+                 "WHERE job_code IN :cs").bindparams(bindparam('cs', expanding=True)),
+            {'cs': [str(c) for c in codes]})).fetchall()
+        return {str(r[0]): (r[1] or '') for r in rows}
+
+    #  ── 대분류 강제 분배 (2026-08-05) ────────────────────────────────
+    #  왜: 좁히기 칩 4~5개가 **전부 같은 대분류**로 나오는 일이 잦았다.
+    #      실측 — [병원안내 · 병원행정 · 요양지원 · 건강운동관리]  전부 「보건·의료」
+    #  근거(원문 확인):
+    #    COARSE (Kononykhina, J. of Official Statistics 2026)
+    #      「나쁜 제안을 거부하는 대신 응답자는 종종 '충분히 좋은' 답에 만족한다」
+    #      「알고리즘이 실패할 때 응답자는 데이터 품질을 신뢰성 있게 보호하지 못한다」
+    #      → 비슷한 것만 늘어놓으면 사용자가 **구별을 포기하고 아무거나 고른다.**
+    #    SOCcer v2 (Russ et al. 2023, Fig.4)
+    #      「Agreement based on assigned SOC code consistently improved with
+    #        increasing score distance」
+    #      → 후보 간 변별력이 클수록 사용자가 옳게 고른다. 다양성이 정확도를 해치지 않는다.
+    #  ⚠ 사용자가 **직접 말한 낱말**을 후보들이 공유하면 분배하지 않는다.
+    #    「용접 이런거?」 → [로봇용접·CO₂용접·저항용접] 이 전부 용접인 건 **맞는 결과**다.
+    #    COARSE 가 지적한 건 「사용자가 구별할 수 없을 때」이지 「지목했을 때」가 아니다.
+    LCLS_MAX = 2          # 한 대분류에서 최대 몇 개까지 칩에 넣을까
+
+    @staticmethod
+    def _shares_word(picks, hint):
+        """후보 이름들이 사용자가 말한 낱말을 공유하나 — 후보 과반이 공유하면 지목으로 본다."""
+        h = _clean(hint)
+        if len(h) < 2 or not picks:
+            return False
+        names = [_clean(j['job_name']) for j in picks]
+        for n in (4, 3, 2):
+            for i in range(len(h) - n + 1):
+                frag = h[i:i + n]
+                if sum(1 for nm in names if frag in nm) * 2 > len(names):
+                    return True
+        return False
+
+    async def _spread_lcls(self, db, picks, hint=''):
+        """칩 후보를 대분류로 분산 — 같은 대분류는 LCLS_MAX 개까지. 점수 순서는 유지."""
+        if len(picks) <= self.LCLS_MAX or self._shares_word(picks, hint):
+            return picks
+        try:
+            lm = await self._lcls_of(db, [j['job_code'] for j in picks])
+        except Exception as e:                    # noqa: BLE001
+            print(f'[itda] 대분류 조회 실패(분배 생략): {type(e).__name__}: {e}')
+            return picks
+        if len(set(lm.values())) <= 1:            # 한 대분류뿐이면 분배할 게 없다
+            return picks
+        kept, spill, cnt = [], [], {}
+        for j in picks:
+            g = lm.get(str(j['job_code']), '')
+            if cnt.get(g, 0) < self.LCLS_MAX:
+                cnt[g] = cnt.get(g, 0) + 1
+                kept.append(j)
+            else:
+                spill.append(j)
+        out = (kept + spill)[:len(picks)]
+        if [x['job_name'] for x in out] != [x['job_name'] for x in picks]:
+            print(f'[itda] 대분류 분배: {[x["job_name"] for x in picks]} -> '
+                  f'{[x["job_name"] for x in out]}')
+        return out
 
     @staticmethod
     async def _codes_in_lcls(db, codes, lcls):
@@ -2232,6 +3049,40 @@ class ItdaEngine:
                      bindparam("codes", expanding=True), bindparam("lcls", expanding=True)),
             {"codes": [str(c) for c in codes], "lcls": list(lcls)})).fetchall()
         return {str(r[0]) for r in rows}
+
+    async def _other_interest(self, db, profile, chosen):
+        """사용자가 말한 **다른 관심사**의 대표 직업 ≤1 (2026-08-05).
+
+        왜 — 카드는 직업을 하나만 준다. 그런데 사용자는 여러 개를 말한다.
+          실측 근거: Gangadharaiah & Narayanaswamy (NAACL 2019, Amazon 내부 데이터)
+            "about 52% of examples are multi-intent" · 발화당 평균 인텐트 1.6개
+            싱글인텐트 모델 57.27 vs 멀티라벨 89.41 (문장수준 정확도) — 32점 차이
+          슬롯은 이미 여러 값을 누적한다(MULTI_SLOTS). 잃는 건 **출력**이다:
+          「빵도 좋고 사람 돌보는 것도 좋아요」 → 카드 제빵 + 대안 [제과·떡제조]
+          → 돌봄이 통째로 사라진다. 사용자가 분명히 말했는데.
+        무엇을 하나 — 고른 직업에 안 담긴 관심사 값으로 한 번 더 찾아 1개를 얹는다.
+          Bing 실운영에서 7.30%가 선택지를 여러 개 눌렀다는 것과 같은 얘기다 —
+          사람은 하나만 고르지 않는다.
+        ※ 실패해도 조용히 넘어간다. 대안은 있으면 좋은 것이지 필수가 아니다.
+        """
+        vals = [v for v in as_list((profile or {}).get('관심분야')) if v]
+        if len(vals) < 2:
+            return []
+        blob = _clean(f"{chosen.get('job_name','')} {chosen.get('description') or ''}")
+        #  고른 직업이 이미 담고 있는 관심사는 뺀다 — 남은 것이 '버려진 신호'다.
+        rest = [v for v in vals if _clean(v) and _clean(v)[:2] not in blob]
+        if not rest:
+            return []
+        try:
+            jobs = await _match_mod().match_jobs(db, [rest[0]], top_k=3)
+        except Exception as e:                          # noqa: BLE001
+            print(f'[itda] 다른 관심사 검색 실패(생략): {type(e).__name__}: {e}')
+            return []
+        out = [j['job_name'] for j in (jobs or [])
+               if j['job_name'] != chosen.get('job_name')][:1]
+        if out:
+            print(f'[itda] 다른 관심사 살림: {rest[0]} -> {out[0]}')
+        return out
 
     async def _siblings(self, db, job, k=2):
         """같은 중분류의 다른 직업 이름 ≤k — forced 경로의 '다른 방향' 후보(2026-07-30)."""
@@ -2262,8 +3113,46 @@ class ItdaEngine:
         #    좁히기·위기·차단처럼 **코드가 쓴 문구**는 건드리지 않는다(원래 정해진 말이다).
         if isinstance(out, dict) and _prev and out.get('kind') not in ('blocked', 'redirect'):
             _r = out.get('reply') or ''
-            if _r and _r != narrow_reply(None) and _r != CRISIS_REPLY:
+            if _r and not out.get('_code_written') and _r != narrow_reply(None):
                 out['reply'] = drop_echo(_r, _prev)
+
+        #  ★★ 출력 가드레일 (2026-08-05) — 나가는 말에서 지어낸 사실을 뗀다.
+        #    근거는 scrub_output 주석. 여기가 **모든 답변이 지나가는 유일한 출구**다.
+        #    코드가 쓴 문구(위기·좁히기·차단·시험일정)는 이미 DB 값이므로 건드리지 않는다.
+        #  ★ 2026-08-05 (코드감사) — 예외를 **문자열 비교로 세던 것**이 사고를 냈다.
+        #    주석엔 「위기·좁히기·차단·**시험일정**」이라 적어놓고 목록엔 시험일정이 빠져 있었다.
+        #    게다가 그 턴은 card=None 이라 대조 근거가 빈 문자열이 되어
+        #    **2자리 이상 숫자가 전부 '카드에 없는 숫자'로 판정**됐다. 실측 재현:
+        #      「시험이 언제예요?」 → exam_reply 가 만든
+        #        「· 제빵기능사 — 접수 마감 2026-08-14 (D-9) · 필기 2026-08-27 …」이 통째로 삭제
+        #      → 화면엔 「말씀하신 자격증의 다음 일정이에요.」만 남았다.
+        #        **일정이라고 해놓고 일정이 하나도 없다.**
+        #    ⇒ 문자열 목록을 버리고 **플래그**로 표시한다. 문구가 하나 늘 때마다
+        #      같은 사고가 반복되는 구조였다. 코드가 쓴 말은 DB 값이라 검사할 이유가 없다.
+        if (isinstance(out, dict) and out.get('kind') not in ('blocked', 'redirect')
+                and (out.get('reply') or '')):
+            _r = out['reply']
+            if not out.get('_code_written') and _r not in (
+                    CRISIS_REPLY, CRISIS_REPLY_OTHER, ABUSE_STOP_REPLY,
+                    narrow_reply(None)):
+                _clean_r, _dropped = scrub_output(_r, card_all_text(out.get('card')))
+                #  ★ 2026-08-05 (코드감사) — 카드의 「AI 추천 이유」도 태운다.
+                #    주석엔 「여기가 모든 답변이 지나가는 유일한 출구」라 적어놓고
+                #    실제로는 out['reply'] 하나만 검사했다. job_reason 은 llm_pick 이
+                #    자유문장으로 쓴 값(120자)인데 무검사로 화면에 나갔다 —
+                #    「응시 제한 없이 누구나 딸 수 있어서 골랐어요」 같은 문장이 나오면
+                #    _ENTRY_CLAIM('제한없이')에 정확히 걸리는데도 통과한다.
+                #    ⚠ 대조 근거에 job_reason 자신을 넣으면 자기 자신을 근거로 삼게 되므로
+                #      card_all_text(=카드의 나머지 값)만 근거로 쓴다.
+                _card = out.get('card')
+                if isinstance(_card, dict) and (_card.get('job_reason') or ''):
+                    _jr, _jd = scrub_output(_card['job_reason'], card_all_text(_card))
+                    if _jd:
+                        print(f'[itda] 추천이유 정리: {_jd[:1]}')
+                        _card['job_reason'] = _jr
+                if _dropped:
+                    print(f'[itda] 출력가드: {len(_dropped)}문장 제거 — {_dropped[0][:70]}')
+                    out['reply'] = _clean_r
         return self._add_policy(out, user_msg)
 
     #  정책 안내를 붙이지 않는 응답 — 위기·차단·이탈은 지금 할 이야기가 아니다.
@@ -2284,14 +3173,19 @@ class ItdaEngine:
         #    **호출자가 그걸 새 프로필로 받아 슬롯이 통째로 날아간다.** 있을 때만 표시한다.
         prof = out.get('profile')
         if (out.get('kind') in ItdaEngine._NO_POLICY_KIND
-                or out.get('reply') == CRISIS_REPLY
+                or out.get('_crisis')          # 위기 응답 — 본인·제3자 모두(플래그)
                 or (prof or {}).get('_policy_declined')
                 or (need == 'signal' and (prof or {}).get('_policy_offered'))):
             return out
         out['reply'] = (out.get('reply') or '').rstrip() + '\n\n' + POLICY_NUDGE[need]
         out['handoff'] = dict(POLICY_HANDOFF)
         if isinstance(prof, dict):
-            prof['_policy_offered'] = True
+            #  ★ 2026-08-05 (코드감사) — **언제 건넸는지**를 함께 남긴다.
+            #    declines_policy 는 「우리가 건넨 직후에만 본다」고 주석에 적혀 있는데,
+            #    _policy_offered 가 한 번 켜지면 안 꺼져서 실제로는 「그 이후 영원히」였다.
+            #    3턴에 안내를 받은 사람이 8턴에 「괜찮아요, 그럼 그쪽으로 볼게요」라고만 해도
+            #    _policy_declined 가 박혀서, 나중에 지원금을 **직접 물어도** 안내가 안 나갔다.
+            prof['_policy_offered'] = int(prof.get('_turns') or 0) or True
         return out
 
     async def _step(self, db, profile, user_msg):
@@ -2304,22 +3198,51 @@ class ItdaEngine:
         #    _history 로 대신 알 수도 있지만 그건 호출자(controllers·시험 하네스)가 채우는 값이라,
         #    엔진의 판단이 호출자 구현에 묶인다. 이탈 게이트가 이 값을 본다(아래).
         profile['_turns'] = int(profile.get('_turns') or 0) + 1
+        #  ★ 이번 발화 (2026-08-05) — llm_pick 이 「사용자가 방금 한 말」로 쓴다.
+        #    _history 로는 못 쓴다: 그건 **턴이 끝난 뒤** 호출자(controllers)가 채우므로
+        #    지금 시점엔 직전 발화까지만 들어 있다. 그것 때문에 「빵 같은 거요」라고
+        #    말한 턴에 「빵이냐 떡이냐」를 되묻는 일이 났다.
+        profile['_now_msg'] = str(user_msg or '')[:300]
 
         #  ★ 거부·번복 (2026-08-04) — 「그것만 하긴 좀」 「그거 말고」 같은 말이 오면
         #    **직전에 준 직업을 배제 목록에 넣고, 그 직업을 만든 슬롯을 비운다.**
         #    안 그러면 같은 카드가 계속 나간다(실측: 같은 직업 3턴 연속).
         #    되묻기 잠금(_narrowed)과 착지 표시(_landed)도 푼다 — 다시 좁힐 기회를 줘야 한다.
-        if rejects_last_card(user_msg) and profile.get('_last_job'):
+        #  ★★ 2026-08-05 (버그B) — **칩으로 보여준 후보도 거부 대상이다.**
+        #    예전 조건은 `profile.get('_last_job')` 하나였는데, _last_job 은 **카드가 나갔을 때만**
+        #    채워진다. 그래서 좁히기 칩이 나간 뒤의 거부는 **배제할 대상이 없어 아무 일도 안 했다.**
+        #    실측(HTTP) — 2턴 칩 [요양지원·가사지원·취업알선·진로지원·자원봉사관리]
+        #      3턴 「근데 계속 그것만 하긴 좀」 → [카드 **진로지원**]  ← 방금 그 칩 중 하나
+        #    거부를 듣고 같은 목록에서 하나를 꺼내 준 셈이다.
+        #  ⚠ 세기를 다르게 둔다 — 카드는 하드 배제(_exclude), 칩은 강등(_demote).
+        #    근거는 search() 의 _dem 블록 주석 참고(문헌 경고).
+        #  ★ 2026-08-05 — 「다 아니다」도 같은 처리를 받는다(none_of_these 주석 참고).
+        #    기계는 이미 다 있었다. **말이 안 걸려서** 강등이 안 돌던 것뿐이다.
+        _all_no = none_of_these(user_msg)
+        _rejected = rejects_last_card(user_msg) or _all_no
+        if _all_no:
+            print(f'[itda] 목록 전체 거부: {str(user_msg)[:30]}')
+        if _rejected and (profile.get('_last_job') or profile.get('_narrow_codes')):
             profile = dict(profile)
-            ex = list(profile.get('_exclude') or [])
-            if profile['_last_job'] not in ex:
-                ex.append(profile['_last_job'])
-            profile['_exclude'] = ex[-8:]           # 무한정 쌓이지 않게
+            if profile.get('_last_job'):
+                ex = list(profile.get('_exclude') or [])
+                if profile['_last_job'] not in ex:
+                    ex.append(profile['_last_job'])
+                profile['_exclude'] = ex[-8:]       # 무한정 쌓이지 않게
+            #  칩은 목록째로 강등한다. 상한은 _exclude 와 같은 8 —
+            #  더 쌓으면 후보 풀(8)보다 커져 '남는 게 없어 되살리기'만 반복된다.
+            dem = list(profile.get('_demote') or [])
+            for c in (profile.get('_narrow_codes') or []):
+                if c and c not in dem:
+                    dem.append(c)
+            if dem:
+                profile['_demote'] = dem[-8:]
             #  세부관심만 비운다 — 관심분야·활동유형까지 지우면 대화를 처음부터 다시 하게 된다.
             #  사용자는 '방향'을 거부한 게 아니라 '그 직업'을 거부한 것이다.
             profile.pop('세부관심', None)
             profile.pop('_narrowed', None)
             profile.pop('_narrow_opts', None)
+            profile.pop('_narrow_codes', None)
             profile.pop('_landed', None)
 
         #  ★ 정책 안내를 물렸나 (2026-08-04) — 「됐어요」·「이미 받고 있어요」·「알아봤어요」.
@@ -2328,8 +3251,23 @@ class ItdaEngine:
         #    ⚠ 이 표시는 profile 에 있다 = **세션 안에서만** 확실하다. 「후일에도」가 완전히
         #      성립하려면 profile 이 DB 에 남아야 한다(지금은 지도를 저장할 때만 남는다 —
         #      itda_map.profile_json). 세션을 넘는 영속은 별도 작업이다.
-        if profile.get('_policy_offered') and declines_policy(user_msg):
-            profile['_policy_declined'] = True
+        #  ★ 2026-08-05 — 「직후」를 실제로 직후로 만든다(_policy_offered 주석 참고).
+        #    건넨 턴과 이번 턴의 차이가 1 이하일 때만 거절로 본다.
+        #    (옛 세션은 _policy_offered 가 True(=1)라 int() 로 안전하게 떨어진다)
+        _off = profile.get('_policy_offered')
+        if _off and declines_policy(user_msg):
+            try:
+                _gap = int(profile.get('_turns') or 0) - int(_off)
+            except (TypeError, ValueError):
+                _gap = 0
+            if _gap <= 1:
+                profile['_policy_declined'] = True
+
+        #  ★ 남용으로 이미 닫힌 세션이면 더 진행하지 않는다(bump_abuse 주석 참고).
+        #    여기서 끊으므로 LLM 호출이 0이다 — 트롤이 계속 보내도 비용이 안 는다.
+        if int(profile.get('_abuse') or 0) >= ABUSE_STOP:
+            return {'kind': 'blocked', 'profile': profile, 'reply': ABUSE_STOP_REPLY,
+                    'missing': missing_slots(profile), 'can_land': can_land(profile), 'card': None}
 
         pc = pre_check(user_msg)
         if pc == 'VAGUE':
@@ -2339,17 +3277,41 @@ class ItdaEngine:
         #  자기 위해 신호 — 차단하지 않는다. 상담 연락처를 건네고 대화를 열어 둔다(kind='ask').
         #  LLM 을 부르지 않으므로 모델이 위험한 말을 생성할 여지도 없고 비용도 0이다.
         if pc == 'SELFHARM':
-            return {'kind': 'ask', 'profile': profile, 'reply': CRISIS_REPLY,
-                    'missing': missing_slots(profile), 'can_land': can_land(profile), 'card': None}
+            #  ★ 2층 — 누구 이야기인지 한 번 판정한다(crisis_who 주석). 낱말만으로는
+            #    「죽고 싶어요」(본인)와 「삼촌이 자살하려 해요」(제3자)를 못 가른다.
+            #    ⚠ 어느 쪽이든 **대화를 닫지 않는다**(kind='ask'). 문구는 코드가 쓴다.
+            _who = await self.crisis_who(user_msg, profile)
+            if _who == '예방·직업관심':
+                pass                         # 진로 발화다 — 아래 정상 경로로 흘려보낸다
+            else:
+                _rep = CRISIS_REPLY_OTHER if _who == '제3자' else CRISIS_REPLY
+                #  ★ 2026-08-05 (코드감사) — **표시를 남긴다. 문자열 비교로는 새어나갔다.**
+                #    아래 세 곳이 「위기 응답인가」를 `reply == CRISIS_REPLY` 로 판정했는데,
+                #    같은 날 추가한 CRISIS_REPLY_OTHER(제3자)는 그 비교에 안 걸렸다.
+                #    실제 결과: 「동생이 죽고 싶다는데 저희가 받을 수 있는 지원 없나요」에
+                #    위기 안내 뒤로 「지원 제도는 「덜다」에서…」와 덜다 딱지가 붙었다.
+                #    문구가 하나 늘 때마다 세 곳을 다 고쳐야 하는 구조라 또 샌다. 플래그로 바꾼다.
+                return {'kind': 'ask', 'profile': profile, 'reply': _rep,
+                        'missing': missing_slots(profile), 'can_land': can_land(profile),
+                        'card': None, '_crisis': True, '_code_written': True}
         if pc == 'UNSAFE':
+            _n = bump_abuse(profile, 'unsafe')      # 타해·욕설은 센다 (자해는 안 센다)
             return {'kind': 'blocked', 'profile': profile,
-                    'reply': '그런 이야기는 도와드리기 어려워요. 되고 싶은 모습이나 관심 있는 걸 들려주세요.',
+                    'reply': ('그런 이야기는 도와드리기 어려워요. 되고 싶은 모습이나 관심 있는 걸 들려주세요.'
+                              + (ABUSE_NOTE if _n >= ABUSE_WARN else '')),
                     'missing': missing_slots(profile), 'can_land': can_land(profile), 'card': None}
 
         # ★ 좁히기 답변 수신(2026-07-30) — 직전 턴에 선택지를 보여줬다면, 사용자가 이름으로든
         #   '첫 번째요'·'2번' 같은 순서로든 고른 걸 받아들인다. 예전엔 근거가 없어 슬롯이 버려지고
         #   같은 질문이 다시 나갔다(무한 되물음). LLM 을 부르지 않으므로 이 턴은 비용이 0이다.
         picked = pick_from_options(user_msg, profile.get('_narrow_opts'))
+        #  ★ 2026-08-05 — 여러 개를 고를 수 있다(pick_from_options 주석: Bing 7.30%).
+        #    「요양지원이랑 아이돌봄이요」 → ['요양지원','아이돌봄'].
+        #    첫 번째로 카드를 만들되 **나머지를 버리지 않고** _narrow_rest 에 남긴다.
+        #    (세부관심 슬롯은 스칼라라 값 자체는 하나로 둔다 — 검색어가 뭉개지면 안 된다)
+        _multi = []
+        if isinstance(picked, list):
+            _multi, picked = picked[1:], picked[0]
         if picked:
             profile = dict(profile)
             profile['세부관심'] = picked
@@ -2363,9 +3325,16 @@ class ItdaEngine:
             #    대신 나머지를 _narrow_rest 로 옮겨 둔다 — 되돌릴 재료다.
             _opts = list(profile.get('_narrow_opts') or [])
             profile.pop('_narrow_opts', None)       # 같은 선택지를 다시 쓰지 않는다
-            _rest = [o for o in _opts if o != picked]
+            #  코드 기억도 같이 지운다 — 골랐다는 건 그 목록을 물린 게 아니다.
+            #  남겨두면 다음 턴의 「그거 말고」가 **방금 고른 것까지** 강등해 버린다.
+            profile.pop('_narrow_codes', None)
+            #  함께 고른 것들을 **앞에** 둔다 — 「다 아니다」나 「그거 말고」로 돌아왔을 때
+            #  사용자가 실제로 지목했던 것부터 다시 보여줘야 한다.
+            _rest = _multi + [o for o in _opts if o != picked and o not in _multi]
             if _rest:
                 profile['_narrow_rest'] = _rest
+            if _multi:
+                print(f'[itda] 복수 선택: {picked} + {_multi}')
             code = await self._named_entity(db, picked)
             card = None
             if code:
@@ -2386,8 +3355,10 @@ class ItdaEngine:
         # ★ 인젝션/탈옥 코드 게이트(2026-07-29) — LLM 부르기 전에 코드가 확정 차단(no_card 강제).
         #   문구는 코드가 쓴다 → 시스템 프롬프트·지시가 유출될 여지 자체가 없다. LLM 콜도 아낀다.
         if is_injection(user_msg):
+            _n = bump_abuse(profile, 'injection')   # 탈옥 시도는 의도가 분명하다 → 센다
             return {'kind': 'redirect', 'profile': profile,
-                    'reply': '진로 상담에 집중할게요 — 요즘 어떤 일이나 활동에 마음이 가는지 편하게 들려주세요.',
+                    'reply': ('진로 상담에 집중할게요 — 요즘 어떤 일이나 활동에 마음이 가는지 편하게 들려주세요.'
+                              + (ABUSE_NOTE if _n >= ABUSE_WARN else '')),
                     'missing': missing_slots(profile), 'can_land': can_land(profile), 'card': None}
 
         # ★ 이탈 주제 게이트(2026-07-29) — 진로 무관 요청(레시피·날씨·잡담)에 카드가 나가는 걸 막는다.
@@ -2415,9 +3386,13 @@ class ItdaEngine:
         if (not has_interest(profile) and int(profile.get('_turns') or 0) <= 1
                 and not is_uncertain(user_msg) and not tells_situation(user_msg)
                 and not is_meta(user_msg) and not await self._on_topic(user_msg)):
+            #  ⚠ 이탈은 **첫 턴에만** 걸리므로 세션당 최대 1회다. 그래도 세는 이유는
+            #    다른 남용과 합산해서 「계속 딴 얘기만 하는」 패턴을 잡기 위해서다.
+            _n = bump_abuse(profile, 'offtopic')
             return {'kind': 'redirect', 'profile': profile,
-                    'reply': '저는 진로·적성 상담을 도와드려요 — 요즘 어떤 일이나 활동에 마음이 가는지 '
-                             '들려주시면 잘 맞는 길을 함께 찾아볼게요.',
+                    'reply': ('저는 진로·적성 상담을 도와드려요 — 요즘 어떤 일이나 활동에 마음이 가는지 '
+                              '들려주시면 잘 맞는 길을 함께 찾아볼게요.'
+                              + (ABUSE_NOTE if _n >= ABUSE_WARN else '')),
                     'missing': missing_slots(profile), 'can_land': can_land(profile), 'card': None}
 
         # ★ 가짜자격 복창 가드(2026-07-30) — 실재하지 않는 자격 보유 주장은 코드가 확정 문구로 되받는다.
@@ -2443,9 +3418,12 @@ class ItdaEngine:
         if asks_exam(user_msg) and profile.get('_last_certs'):
             _er = exam_reply(profile['_last_certs'])
             if _er:
+                #  ★ _code_written — 이 문구는 **코드가 DB 값으로 직접 쓴 것**이다.
+                #    출력 가드레일(scrub_output)을 태우면 안 된다: 그 턴은 card=None 이라
+                #    대조 근거가 비고, 시험 날짜(2026-08-14 …)가 통째로 지워진다(실측 재현).
                 return {'kind': 'ask', 'profile': profile, 'card': None,
                         'reply': _er, 'missing': missing_slots(profile),
-                        'can_land': can_land(profile)}
+                        'can_land': can_land(profile), '_code_written': True}
 
         if asks_meaning(user_msg) and len(re.sub(r'\s+', '', user_msg or '')) <= 24:
             code = await self._named_entity(db, user_msg)
@@ -2493,8 +3471,18 @@ class ItdaEngine:
         if _filled:
             print(f'[itda] 다루는대상 코드보완: {_filled}')
         profile = note_slot_turns(profile)      # 축이 '몇 턴째에' 찼는지 — one_shot_land 용
-        if new_slots:
-            profile.pop('_unsure', None)        # 실제 정보를 주면 '모르겠다' 카운터 초기화
+        #  ★ '모르겠다' 카운터 초기화 (2026-08-05 좁힘) — 예전엔 `if new_slots:` 였다.
+        #    슬롯이 **하나라도** 들어오면 사다리가 1단으로 돌아갔는데, 그중엔
+        #    「시간이 없어서요」(제약) · 「꼼꼼한 편이에요」(강점성향) 처럼
+        #    **못 정하겠다는 상태를 전혀 바꾸지 않는 슬롯**이 섞여 있다.
+        #    그걸로 초기화하면 못 정하는 사람일수록 사다리가 계속 처음으로 되돌아간다.
+        #  ⇒ 방향을 실제로 가리키는 축(ASK_ORDER + 세부관심)이 찼을 때만 초기화한다.
+        #    즉 **진짜로 정보를 준 턴은 그대로 초기화된다**(사다리를 올리지 않는다).
+        #  ※ 실측으로는 순수 '모르겠다' 턴에서 모델이 슬롯을 뱉는 일은 거의 없었다
+        #    (verify_slots 가 근거 없는 슬롯을 이미 버린다 — 12턴 프로브에서 0건).
+        #    그래도 조건을 좁혀 둔다. 이 초기화는 **되돌릴 수 없는 손실**이라서다.
+        if any(k in new_slots for k in (*ASK_ORDER, '세부관심')):
+            profile.pop('_unsure', None)
         act = t.get('action', 'ASK')
 
         # ★ 코드 DIRECT 탐지(2026-07-29) — 발화가 DB 실재 직업/자격증 이름을 통째로 담으면
@@ -2514,6 +3502,13 @@ class ItdaEngine:
         if (act != 'META' and is_meta(user_msg) and not wants_land(user_msg)
                 and act not in ('REDIRECT', 'OFFRAMP')):
             act = 'META'        # 코드 안전망 — 모델이 놓친 짧고 명백한 메타 발화를 코드가 확정
+        #  ★ 반대 방향 안전망 (2026-08-05) — 모델이 '모르겠다'를 META 로 **잘못** 분류하면
+        #    바로 아래에서 조기 return 되어 사다리(_unsure)를 통째로 건너뛴다.
+        #    실측(프로브 12턴): 3단 상태에서 「잘 모르겠어요」→ action=META 가 1회 나왔다.
+        #    「모르겠어요」는 대화에 대한 말이 아니라 **우리 질문에 대한 답**이다.
+        #    is_meta 가 아니라고 하는데 모델만 META 라고 하면 코드를 믿는다(위 줄과 짝).
+        if act == 'META' and is_uncertain(user_msg) and not is_meta(user_msg):
+            act = 'ASK'
         if act == 'META':
             known = {k: v for k, v in profile.items() if v and not k.startswith('_')}
             if asks_understanding(user_msg) and known:
@@ -2566,6 +3561,18 @@ class ItdaEngine:
               and not profile.get('_landed')):
             act = 'SEARCH'
 
+        #  ★★ 「다 아니다」는 **이번 턴에 새 후보를 내야 한다** (2026-08-05).
+        #    위 승격은 rejects_or_questions 에서 막힌다 — _REJECT 에 '아니'가 있어
+        #    「다 아닌 것 같은데요」가 통째로 걸린다. 그 가드는 「가구제작은 무슨 소리야?」
+        #    같은 **되묻는** 턴을 확정으로 만들지 않으려고 둔 것인데, 이 말은 반대다:
+        #    사용자는 **다른 걸 달라고** 하고 있다. 막으면 강등만 하고 아무것도 안 준다.
+        #    (실측 그대로 — 강등은 됐는데 모델이 즉흥으로 딴 동네 얘기를 했다)
+        #    ⚠ 뜻을 묻는 말이 섞이면 양보한다 — 그건 설명으로 답할 자리다.
+        if (_all_no and act == 'ASK' and can_land(profile)
+                and not asks_meaning(user_msg)):
+            print('[itda] 목록 전체 거부 -> 같은 슬롯으로 재검색')
+            act = 'SEARCH'
+
         # ★ 착지 요청(2026-08-04) — 사용자가 「그냥 추천해줘」라고 하면 **슬롯과 무관하게** 찾는다.
         #   can_land 를 통과하지 못해도 여기서 올린다. 끝낼 시점은 사용자가 정한다(wants_land 주석).
         #   ※ 단, 슬롯이 하나도 없으면 검색할 재료가 없다 — 그때만 한 가지를 묻고 끝낸다.
@@ -2611,26 +3618,33 @@ class ItdaEngine:
         if guided:
             act = 'ASK'
 
+        #  ★★ 세는 것과 답하는 것을 분리한다 (2026-08-05).
+        #    예전엔 사다리 분기 **안에서** 셌다(else-if 사슬의 두 번째 가지).
+        #    그래서 같은 '모르겠다'라도 guided 로 빠진 턴(guide_reply)은 세지 않았고,
+        #    다음 '모르겠다'가 또 1단으로 나갔다 — 각도를 바꾸라고 만든 장치인데
+        #    **각도를 바꿀 때마다 카운터를 잃었다.**
+        #    「몇 번째로 못 정했나」는 우리가 어떤 문구로 답했는지와 무관한 사실이다.
+        #  ★ 사정을 이야기한 턴이나 긴 발화는 세지 않는다(2026-07-30 사고 수정 유지).
+        #    "모르겠어 … 어머니가 아프셔서 돌봐드리느라" 같은 발화에서 모델의 공감 답변을
+        #    통조림 슬롯 질문으로 갈아치우던 문제. 짧고 순수한 '모르겠다'에만 적용한다.
+        pure_unsure = (act == 'ASK' and is_uncertain(user_msg)
+                       and not tells_situation(user_msg)
+                       and len(re.sub(r'\s+', '', user_msg or '')) <= 20)
+        if pure_unsure:
+            profile['_unsure'] = int(profile.get('_unsure') or 0) + 1
+
         out = {'kind': act.lower(), 'reply': t.get('reply', ''), 'profile': profile,
                'missing': missing_slots(profile), 'can_land': can_land(profile),
                'dropped': dropped, 'card': None, 'near': None}
         if guided:
             out['reply'] = guide_reply(profile)
-        elif (act == 'ASK' and is_uncertain(user_msg)
-              #  ★ 사정을 이야기한 턴이나 긴 발화는 코드가 덮어쓰지 않는다(2026-07-30 사고 수정).
-              #    "모르겠어 … 어머니가 아프셔서 돌봐드리느라" 같은 발화에서 모델의 공감 답변을
-              #    통조림 슬롯 질문으로 갈아치우던 문제. 짧고 순수한 '모르겠다'에만 적용한다.
-              and not tells_situation(user_msg)
-              and len(re.sub(r'\s+', '', user_msg or '')) <= 20):
+        elif pure_unsure:
             #  ★ '모르겠다/생각 안 해봤다'에는 **열린 질문을 또 던지지 않는다**(2026-07-30).
             #    실사용 로그: 두 턴 연속 "생각 안 해봤다"인데 모델이 계속 열린 질문을 냈고,
             #    슬롯명(다루는대상='일의 주 재료')을 풀어쓰다 "어떤 대상을 만지거나 다루는" 같은
             #    어색한 문장이 나갔다. 코드가 쓴 **보기 있는 질문**으로 바꾼다.
             #    또 같은 질문을 글자 그대로 반복하지 않도록 횟수를 세서 각도를 바꾼다.
-            n = int(profile.get('_unsure') or 0) + 1
-            profile['_unsure'] = n
-            out['profile'] = profile
-            out['reply'] = unsure_reply(profile, n)
+            out['reply'] = unsure_reply(profile, int(profile.get('_unsure') or 1))
         elif act == 'ASK' and '?' not in (out['reply'] or ''):
             out['reply'] = ask_reply(profile)   # ASK인데 질문 없이 '찾아볼게요' 류로 끝냄 → 진짜 질문으로(막다른 답변 방지)
 
@@ -2668,7 +3682,15 @@ class ItdaEngine:
             #    벡터는 무슨 문장이든 8개를 돌려주므로 그 잡음이 그대로 결과가 된다.
             #    실측: 슬롯이 돕기·돌봄+사람인데 [굴착기운전] 카드가 나갔다.
             #    ⇒ 이 턴은 **지금까지 모은 슬롯만으로** 찾는다(_search_query 가 슬롯을 이어붙인다).
-            q = '' if asked_land else user_msg
+            #  ★ 2026-08-05 — 맞장구도 검색어가 아니다(is_thin_ack 주석 참고).
+            #    「그냥 추천해줘」와 같은 이유다: 진로 내용이 0인 문장으로 벡터를 돌리면
+            #    그 잡음이 그대로 결과가 된다. 그 턴은 지금까지 모은 슬롯으로 찾는다.
+            #  ★ 되물음에 대한 답이 쓸모없으면 그것도 검색어가 아니다(useless_answer 주석).
+            #    _probed 가 서 있다 = 직전 턴에 우리가 후보를 가르는 질문을 했다는 뜻이다.
+            _bad_ans = bool(profile.get('_probed')) and useless_answer(user_msg)
+            if _bad_ans:
+                print(f'[itda] 되물음 답변이 비었다 -> 슬롯으로 검색: {str(user_msg)[:20]}')
+            q = '' if (asked_land or is_thin_ack(user_msg) or _bad_ans) else user_msg
             #  ★ 검색 실패를 흡수한다(2026-07-30) — 예전엔 여기서 예외가 그대로 올라가
             #    controllers 가 턴 전체를 blocked/error 로 만들었고, **병합된 슬롯도 버려졌다**.
             #    Pinecone 쿼터·네트워크가 한 번 흔들리면 착지 가능한 사용자는 매 턴 같은 오류만 보고
@@ -2780,9 +3802,21 @@ class ItdaEngine:
                 #  좁혔다는 사실과 보여준 선택지를 기억한다 → 다음 턴에 순서로 답해도 받고, 두 번 좁히지 않는다.
                 profile['_narrowed'] = True
                 profile['_narrow_opts'] = list(card['options'] or [])
+                #  ★ 2026-08-05 (버그B) — 이름과 함께 **직업코드**도 기억한다.
+                #    「그거 말고」가 왔을 때 배제·강등할 대상이 코드이기 때문이다.
+                #    이름만 갖고 있던 게 버그의 직접 원인이었다(_exclude 는 코드 목록).
+                profile['_narrow_codes'] = list(card.get('option_codes') or [])
                 out['profile'] = profile
                 out['options'] = list(card['options'] or [])          # 프론트 chip 용
                 out['option_notes'] = list(card.get('option_notes') or [])
+            elif card and card.get('need_probe'):
+                #  ★ 적응적 되물음(2026-08-05) — 후보는 뽑혔는데 **그중 하나로 정할 근거**가
+                #    모자란다. 슬롯이 몇 개 찼느냐와 무관하다(can_land 로는 못 잡는 자리).
+                #    질문은 후보들이 갈리는 지점에서 LLM 이 만들었다. 세션당 한 번만.
+                out['kind'] = 'ask'
+                out['reply'] = card['question']
+                profile['_probed'] = True
+                out['profile'] = profile
             elif card and card.get('low_score'):
                 #  후보가 다 약하다 → 억지로 카드를 내지 않고 남은 슬롯을 묻는다(2026-07-30).
                 out['kind'] = 'ask'
@@ -2809,6 +3843,9 @@ class ItdaEngine:
                 #  엉뚱한 옛 후보로 튄다(위 '_landed' 가드와 짝).
                 profile.pop('_narrow_opts', None)
                 profile.pop('_narrow_rest', None)
+                #  코드 기억도 같은 수명이다 — 카드가 나갔으면 이제 거부 대상은 _last_job 이다.
+                #  남겨두면 「그거 말고」 한 마디에 카드 1개 + 옛 칩 5개가 한꺼번에 빠진다.
+                profile.pop('_narrow_codes', None)
                 # 카드를 내놓으면 되물으면 안 된다 — ASK→SEARCH 승격 시 모델 답이 질문일 수 있다.
                 #  (2026-07-30) endswith('?') 만 보면 "맞을까요? 아래에서 확인해 보세요." 처럼
                 #  물음표가 문말이 아닌 답변이 카드와 함께 나갔다 → 문장 안에 물음표가 있으면 교체한다.
