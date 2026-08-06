@@ -43,9 +43,9 @@ async def sync_single_policy(
 
     result = await db.execute(statement)
 
-    existing_policy = (result.scalar_one_or_none())     # Policy 객체 하나 꺼냄
+    existing_policy = (result.scalar_one_or_none())                     # Policy 객체 하나 꺼냄
 
-    new_hash = (policy_data.create_content_hash())      # 새로 수집한 정책 내용으로 해시값 생성
+    new_hash = (policy_data.create_content_hash())                      # 새로 수집한 정책 내용으로 해시값 생성
 
     # 기존 정책이 없으면 신규 등록
     if existing_policy is None:

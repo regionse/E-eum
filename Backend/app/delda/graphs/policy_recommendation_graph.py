@@ -120,9 +120,6 @@ def route_agent_result(
     "invalid_input",
     "urgent_support",
 ]:
-    """
-    Agent가 반환한 status에 따라 다음 노드를 선택한다.
-    """
 
     return state["agent_output"].status
 

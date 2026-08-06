@@ -620,7 +620,7 @@ async def retrieve_relevant_policies(
 
     regions = _get_search_regions(context.region)           # 검색 지역 생성 (list)
 
-    fulltext_ids, vector_ids = (        # 두 검색 동시 실행
+    fulltext_ids, vector_ids = (                            # 두 검색 동시 실행
         await asyncio.gather(
             _search_fulltext(
                 db=db,
