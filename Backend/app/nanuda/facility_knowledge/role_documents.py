@@ -12,7 +12,7 @@ FACILITY_ROLE_DOCUMENTS = [
     },
     {
         "_id": "youth-safety-school-dropout",
-        "content": (
+        "content": (    
             "학교에 가지 않거나 결석이 반복되고 학업을 중단하려는 표현, "
             "학교 부적응, 진로 고민, 교우 관계 문제 등 학업 중단 위험이 "
             "감지된 청소년은 청소년안전망 센터에 상담과 지원 연계를 "

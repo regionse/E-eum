@@ -77,8 +77,13 @@ class Handoff(BaseModel):
 class MessageResponse(BaseModel):
     type: str                       # "ask" | "result" | "blocked"
     reply: str                      # 사용자에게 보여줄 말
-    turn: int = 0
-    max_turn: int = 3
+    #  ★★ 2026-08-06 — `turn` · `max_turn` 을 **지웠다.**
+    #    초기 설계(CRS 논의 이전)의 잔재다. max_turn=3 은 「3턴이면 끝난다」는 전제인데,
+    #    그 전제는 이미 폐기됐고 프론트도 이 필드를 **한 번도 쓴 적이 없다**
+    #    (LearnChat.jsx 가 쓰는 것: reply·type·goal·options·option_notes·alternatives·handoff).
+    #    ⚠ 다시 넣지 말 것 — 우리 사용자는 자기가 뭘 원하는지 모르는 상태로 시작한다.
+    #      대화가 20~30턴, 길면 100턴까지 갈 수 있다고 «전제하고» 설계해야 한다.
+    #      「3/3」 진행도는 그 사용자에게 «너는 늦었다»고 말하는 것과 같다.
     understanding: str = ""         # LLM이 이해한 요약 (디버깅·투명성용)
     mode: str = "gemini"            # "gemini" | "error"  ← 턴 실패 여부(stub 폴백은 없다)
     goal: Goal | None = None        # type=result일 때만

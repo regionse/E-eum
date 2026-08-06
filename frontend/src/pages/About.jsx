@@ -22,7 +22,7 @@ const AXES = [
 
 // ④ 자료 출처
 const SOURCES = [
-  '보건복지부 · 한국사회보장정보원(복지로) — 복지 지원제도',
+  '보건복지부 · 한국사회보장정보원(복지로) — 정책 지원제도',
   '온통청년 · 고용24(HRD-Net) — 청년정책 · 국비 훈련',
   '한국산업인력공단 — NCS 직무 · 국가기술자격(Q-Net)',
   '국가평생교육진흥원(K-MOOC) — 무료 온라인 강좌',
@@ -41,7 +41,7 @@ export default function About() {
         <span className="eyebrow">About · 이음 소개</span>
         <h1 className="section-title" style={{ fontSize: 32, margin: '8px 0 12px' }}>이음이 하는 일, 하지 않는 일</h1>
         <p className="muted" style={{ fontSize: 17, lineHeight: 1.75 }}>
-          흩어진 복지·교육·돌봄 정보를, 가족을 돌보는 청년이 닿을 수 있는 언어로.<br />
+          흩어진 정책 지원·교육·돌봄 정보를, 가족을 돌보는 청년이 닿을 수 있는 언어로.<br />
           이음이 대신 읽고 이어드려요.
         </p>
       </div>
@@ -52,7 +52,7 @@ export default function About() {
         <h2 className="section-title" style={{ margin: '10px 0 8px' }}>이음이란?</h2>
         <p className="muted" style={{ fontSize: 15.5, maxWidth: 760, lineHeight: 1.8 }}>
           가족을 돌보느라 정작 자신을 돌보기 어려운 청년을 위한 <b>통합 돌봄 파트너</b>예요.
-          복지·배움·돌봄이 여러 기관에 흩어져 찾기 어려운 것들을, 한곳에 모아 이어드려요.
+          정책 지원·배움·돌봄이 여러 기관에 흩어져 찾기 어려운 것들을, 한곳에 모아 이어드려요.
         </p>
         <div className="principle" style={{ marginTop: 'var(--sp-5)' }}>
           <div style={{ fontWeight: 800, color: 'var(--teal-800)', marginBottom: 8 }}>이음이 하는 일</div>

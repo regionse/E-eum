@@ -269,7 +269,7 @@ export function getCurrentPosition() {
         )
       },
       {
-        enableHighAccuracy: false,
+        enableHighAccuracy: true,
         timeout: 10000,
         maximumAge: 300000,
       },

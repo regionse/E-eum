@@ -1,5 +1,5 @@
 import os
-from asyncio import to_thread
+from asyncio import Semaphore, gather, to_thread
 from difflib import SequenceMatcher
 
 import requests
@@ -46,17 +46,28 @@ def get_current_region(
     latitude: float,
     longitude: float,
 ) -> dict:
-    response = requests.get(
-        KAKAO_REGION_URL,
-        headers=get_kakao_headers(),
-        params={
-            "x": longitude,
-            "y": latitude,
-        },
-        timeout=10,
-    )
+    try:
+        response = requests.get(
+            KAKAO_REGION_URL,
+            headers=get_kakao_headers(),
+            params={
+                "x": longitude,
+                "y": latitude,
+            },
+            timeout=(3, 5),
+        )
 
-    response.raise_for_status()
+        response.raise_for_status()
+
+    except requests.Timeout as error:
+        raise RuntimeError(
+            "현재 위치 확인 시간이 초과되었습니다."
+        ) from error
+
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "현재 위치 확인에 실패했습니다."
+        ) from error
 
     documents = response.json().get(
         "documents",
@@ -130,20 +141,36 @@ def search_facility_on_kakao(
     documents = []
 
     for query in dict.fromkeys(queries):
-        response = requests.get(
-            KAKAO_KEYWORD_URL,
-            headers=get_kakao_headers(),
-            params={
-                "query": query,
-                "x": longitude,
-                "y": latitude,
-                "sort": "distance",
-                "size": 10,
-            },
-            timeout=10,
-        )
+        try:
+            response = requests.get(
+                KAKAO_KEYWORD_URL,
+                headers=get_kakao_headers(),
+                params={
+                    "query": query,
+                    "x": longitude,
+                    "y": latitude,
+                    "sort": "distance",
+                    "size": 5,
+                },
+                timeout=(3, 5),
+            )
 
-        response.raise_for_status()
+            response.raise_for_status()
+
+        except requests.Timeout:
+            print(
+                "카카오 기관 검색 시간 초과:",
+                facility_name,
+            )
+            return None
+
+        except requests.RequestException as error:
+            print(
+                "카카오 기관 검색 실패:",
+                facility_name,
+                error,
+            )
+            return None
 
         documents = response.json().get(
             "documents",
@@ -245,6 +272,7 @@ async def recommend_nearest_facility(
         .order_by(
             support_facilities.facility_name.asc()
         )
+        .limit(5)
     )
     facilities = list(result.scalars().all())
 
@@ -271,6 +299,10 @@ async def recommend_nearest_facility(
                     region_1depth
                 ),
             )
+            .order_by(
+                support_facilities.facility_name.asc()
+            )
+            .limit(5)
         )
 
         result = await db.execute(statement)
@@ -283,14 +315,24 @@ async def recommend_nearest_facility(
 
     recommendations = []
 
-    for facility in facilities:
-        place = await to_thread(
-            search_facility_on_kakao,
-            facility_name=facility.facility_name,
-            address=facility.address or "",
-            latitude=latitude,
-            longitude=longitude,
-        )
+    # 카카오 요청을 무제한으로 동시에 보내지 않도록 제한한다.
+    semaphore = Semaphore(5)
+
+    async def search_one(facility):
+        async with semaphore:
+            return await to_thread(
+                search_facility_on_kakao,
+                facility_name=facility.facility_name,
+                address=facility.address or "",
+                latitude=latitude,
+                longitude=longitude,
+            )
+
+    places = await gather(
+        *(search_one(facility) for facility in facilities)
+    )
+
+    for facility, place in zip(facilities, places):
 
         if place is None:
             continue

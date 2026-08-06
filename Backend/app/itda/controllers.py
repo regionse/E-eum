@@ -4,9 +4,11 @@
 
 역할은 '번역'뿐. 판단 로직은 전부 itda_core 에 있다(CLI 와 같은 코드를 쓴다).
   itda_core.step()  →  {kind, reply, profile, missing, can_land, card}
-  프론트가 기대      →  {type, reply, turn, max_turn, understanding, mode, goal, alternatives}
+  프론트가 기대      →  {type, reply, understanding, mode, goal, alternatives, options, handoff}
+                       (turn·max_turn 은 2026-08-06 에 제거 — schemas.MessageResponse 주석)
 
-· 세션에는 slot(profile) 만 보관한다. 대화 로그를 쌓지 않는다.
+· 세션에는 slot(profile) 을 중심으로 보관한다.
+  (⚠ _history·_summary 도 함께 담긴다 — session.get 도크스트링 참고. 2026-08-06 정정)
 · itda_core 는 async 다(2026-07-24). db 세션은 라우터가 Depends(get_db)로 주입한다.
 """
 import asyncio
@@ -127,18 +129,36 @@ def _to_goal(card) -> Goal:
     )
 
 
-def _progress(profile):
-    """슬롯이 얼마나 찼는지를 진행도로 보여준다."""
-    total = len(ASK_ORDER)
-    return total - len(missing_slots(profile)), total
+#  ★★ 2026-08-06 — _progress() 를 지우고 이것만 남겼다.
+#    예전 _progress 는 (찬 슬롯 수, 3) 을 돌려 **응답의 진행도**로 나갔다.
+#    「슬롯이 차는 것」과 「대화가 끝나가는 것」은 다른 일이고,
+#    우리 사용자는 20~30턴, 길면 100턴까지 갈 수 있다(schemas.MessageResponse 주석).
+#    ⇒ 응답에서는 뺐다. 다만 itda_map.progress_step 컬럼은 그대로 쓰므로 이 값만 남긴다.
+def _filled_axes(profile) -> int:
+    """itda_map.progress_step 에 넣을 값 — 방향 축 3개 중 몇 개가 찼나.
+
+    ⚠ 이건 **저장용 메타데이터**지 사용자에게 보여줄 진행도가 아니다.
+      응답(MessageResponse)에 다시 넣지 말 것.
+    """
+    return len(ASK_ORDER) - len(missing_slots(profile))
 
 
 # ── 한 턴 ───────────────────────────────────────────────────────────
 #  db 는 라우터가 Depends(get_db) 로 요청마다 주입하는 async 세션.
 #  예전엔 run_in_threadpool 로 동기 step 을 스레드에 던졌는데, 그 스레드들이
 #  전역 pymysql 커넥션을 공유해 깨졌다(코드리뷰 HIGH). 이제 step 이 async 라 그냥 await.
-async def handle_message(db, session_id: str, message: str) -> MessageResponse:
-    st = session.get(session_id)
+async def handle_message(db, session_id: str, message: str,
+                         user_id: int | None = None) -> MessageResponse:
+    #  ★ 2026-08-06 — 메모리에 없으면 DB 에서 되살린다(서버 재시작 생존).
+    #    ITDA_SESSION_DB=0(기본)이면 예전과 완전히 같다 — session.load 도크스트링 참고.
+    st = await session.load(db, session_id)
+    #  ★ 2026-08-06 — **대화 자체를 소유자 확인한다.**
+    #    예전엔 저장(save_map)·이어서하기(resume_map)에만 검증이 있었다. 그런데 정작
+    #    보호하려던 값(제약 슬롯 — 학력부담·체력부담·비용부담)은 이 엔드포인트가
+    #    understanding=_public_profile(profile) 로 **매 턴 그대로 돌려주고** 있었다.
+    #    남의 session_id 를 아는 사람이 /itda/message 한 번이면 슬롯을 받아갔다.
+    if user_id is not None:
+        _claim_session(st, user_id)
     profile = st.get("profile") or {}
 
     try:
@@ -149,11 +169,9 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
         r = await eng.step(db, profile, message)
     except Exception as e:
         print(f"[itda] step 실패: {type(e).__name__}: {e}")   # 서버 로그에만 남긴다
-        done, total = _progress(profile)
         return MessageResponse(
             type="blocked",
             reply="지금 잠시 연결이 원활하지 않아요. 잠시 후 다시 말씀해 주실래요?",
-            turn=done, max_turn=total,
             understanding=_public_profile(profile),
             mode="error",
         )
@@ -175,17 +193,25 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
     #  ★ 최근 창을 넘긴 앞부분은 버리지 않고 요약해 이어 붙인다(2026-08-04).
     #    요약은 **응답을 보낸 뒤 백그라운드로** 돌린다 — 다음 턴에나 필요한 값이라
     #    지금 기다릴 이유가 없다. 사용자는 답을 바로 받는다.
-    keep = eng.HISTORY_TURNS * 2
-    if len(hist) > eng.SUMMARIZE_AFTER * 2:
+    #  ⚠ 설정이 뒤집히면(SUMMARIZE_AFTER ≤ HISTORY_TURNS) 접기 주기가 0 이 되어
+    #    매 턴 요약을 부른다. .env 오타 하나로 100턴에 100번 부르는 사고가 되므로
+    #    여기서 **넘길 조각이 실제로 있을 때만** 부른다(SUMMARIZE_AFTER 위 주석 참고).
+    keep = max(2, eng.HISTORY_TURNS * 2)
+    if len(hist) > max(eng.SUMMARIZE_AFTER, eng.HISTORY_TURNS + 2) * 2:
         overflow, hist = hist[:-keep], hist[-keep:]
 
-        async def _fold(sid, old, chunk):
-            new = await eng.summarize(old, chunk)
+        #  ★ 계층 요약(2026-08-06) — 「사실」은 코드가 누적하고 「요약」만 다시 쓴다.
+        #    왜 이렇게 나눴는지는 itda_core.summarize() 위 주석 참고.
+        async def _fold(sid, old, old_facts, chunk):
+            new, facts = await eng.summarize(old, chunk, old_facts)
             s = session.get(sid)                     # 그 사이 바뀌었을 수 있어 다시 읽는다
             if s.get("profile") is not None:
                 s["profile"]["_summary"] = new
+                s["profile"]["_facts"] = facts
 
-        asyncio.create_task(_fold(session_id, profile.get("_summary") or "", overflow))
+        if overflow:
+            asyncio.create_task(_fold(session_id, profile.get("_summary") or "",
+                                      list(profile.get("_facts") or []), overflow))
 
     #  ★ 분야(관심대분류) 갱신도 백그라운드로 (2026-08-04).
     #    step() 이 '_think_stale' 을 남기면 여기서 큰 모델을 돌려 **다음 턴**에 반영한다.
@@ -208,7 +234,6 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
 
     profile["_history"] = hist
     st["profile"] = profile
-    done, total = _progress(profile)
 
     kind = r["kind"]
     #  notfound = 사용자가 콕 집어 말한 목표가 우리 613종에 없는 경우.
@@ -220,7 +245,13 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
     #    예전엔 문장 한 줄만 덧붙이고 아무 데도 안 보냈다(2026-08-04 이전).
     handoff = r.get("handoff")
     if kind == "offramp":
-        reply += "\n\n지금은 자격증보다 돌봄 지원이나 바로 해볼 수 있는 일부터 보는 것도 좋아요."
+        #  ★ 2026-08-06 — 「지금은 자격증**보다** 돌봄 지원…**부터** 보는 것도 좋아요」였다.
+        #    ① 사용자가 돌봄을 한 번도 말하지 않아도 무조건 붙는다(발화 검사가 없다).
+        #       프롬프트 [하지 말 것] — 말하지 않은 사정을 단정하지 마라.
+        #    ② 사실상 「당신은 아직 진로를 볼 때가 아니다」로 읽힌다. 프롬프트가 급여 규칙에서
+        #       경계한 자리와 같은 종류다 — 한 마디로 꿈을 접게 하는 자리.
+        #    핸드오프 버튼이 이미 붙으므로 문장이 상황을 규정할 필요가 없다.
+        reply += "\n\n지금 상황에서 도움이 될 만한 지원이 있는지도 같이 볼 수 있어요."
         handoff = handoff or dict(POLICY_HANDOFF)
 
     card = r.get("card")
@@ -241,11 +272,15 @@ async def handle_message(db, session_id: str, message: str) -> MessageResponse:
         except Exception as e:
             print(f"[itda] 카드→goal 변환 실패: {type(e).__name__}: {e}")
             msg_type = "ask"
+    #  ★ 2026-08-06 — 이 턴의 상태를 DB 에 남긴다. **응답을 만들기 직전**이 맞다:
+    #    여기까지 왔으면 st["profile"]·st["last_card"] 가 다 갱신된 상태다.
+    #    실패해도 예외를 안 올린다(session.save 도크스트링) — 저장 때문에 답이 죽으면 안 된다.
+    #  ⚠ 위 백그라운드 작업(_fold·_rethink)은 이 시점 뒤에 끝난다. 그 결과는
+    #    **다음 턴의 save()** 에 실린다. 그 한 사이클 손실은 받아들인다(session.py 참고).
+    await session.save(db, session_id, st)
     return MessageResponse(
         type=msg_type,
         reply=reply,
-        turn=done,
-        max_turn=total,
         understanding=_public_profile(profile),
         mode="gemini",
         goal=goal,
@@ -310,9 +345,43 @@ async def _saved_goal(db, map_id: int) -> Goal:
     )
 
 
+def _claim_session(st: dict, user_id: int) -> None:
+    """이 세션이 이 사용자의 것인지 확인하고, 처음이면 소유자로 표시한다 (2026-08-05).
+
+    왜 필요한가 — `session_id` 는 **프론트가 만들어 보내는 값**이다.
+    그래서 예전엔 로그인한 A 가 B 의 session_id 를 넘기면 **B 의 카드와 B 의 profile_json 이
+    A 의 지도로 저장**됐고, 그대로 A 가 조회할 수 있었다.
+    새어나가는 값이 가볍지 않다 — 제약 슬롯에는 학력부담·체력부담·비용부담이 들어 있다.
+    ⚠ 실제 악용에는 B 의 session_id(무작위 11자)를 알아야 하므로 무차별 대입은 비현실적이다.
+      그래도 **인증 경계에 검증이 없다는 것 자체가 문제**라 막는다.
+
+    ★ 2026-08-06 — 「비로그인 대화도 허용해야 한다」는 옛 주석을 지웠다. **그런 경로는 없다.**
+      덜다·잇다·나누다 모두 로그인이 필요하다(이음이 없는 것은 로그인이 아니라 *본인확인*이다).
+      그래서 이제 /itda/message · /itda/reset 도 이 검증을 지난다.
+      '처음 만지는 로그인 사용자'가 소유자가 되는 규칙은 그대로 둔다 —
+      세션이 메모리라 서버가 재시작되면 소유자 표시도 함께 사라지기 때문이다.
+    """
+    owner = st.get("owner")
+    if owner is not None and owner != user_id:
+        raise HTTPException(status_code=403, detail="이 대화의 결과가 아니에요.")
+    st["owner"] = user_id
+
+
+def claim_session(session_id: str, user_id: int) -> None:
+    """세션 소유자 확인만 한다 (2026-08-06). /itda/reset 처럼 st 를 안 만지는 자리에서 쓴다.
+
+    reset 도 막아야 하는 이유 — 남의 session_id 를 알면 **진행 중인 대화를 지울 수 있다.**
+    """
+    _claim_session(session.get(session_id), user_id)
+
+
 async def save_map(db, user_id: int, session_id: str) -> dict:
     """세션에 캐시된 마지막 카드를 미래설계지도로 저장 (로그인 사용자 소유)."""
-    st = session.get(session_id)
+    #  ★ 2026-08-06 — get 이 아니라 load 다. 서버가 재시작된 뒤 사용자가 «저장»부터
+    #    누르면 get() 은 빈 세션을 새로 만들어 「아직 저장할 결과가 없어요」가 나갔다.
+    #    카드는 DB 에 살아 있는데 못 찾는 것 — 대화 40턴을 날리는 것과 같은 체감이다.
+    st = await session.load(db, session_id)
+    _claim_session(st, user_id)
     card = st.get("last_card") or {}
     job_code = (card.get("job") or {}).get("code")
 
@@ -348,6 +417,25 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     #    시험일정이 있는 자격증이 붙은 카드(=거의 모든 카드)를 받은 뒤 「저장」하면 터졌다.
     #    위 주석의 원칙 그대로다 — 지도는 **결론**을 담는다. 이건 과정이므로 뺀다.
     profile.pop("_last_certs", None)
+    #  ★★ 2026-08-06 — **원칙이 절반만 지켜지고 있었다.** 위 주석은 「옛 대화가 프롬프트에
+    #    섞이지 않게」인데, _summary(대화 요약 최대 800자)가 그대로 저장되고 있었다.
+    #    요약은 정의상 「사용자가 자기에 대해 말한 사실」이라 **제일 민감한 부분이 남는 쪽**이고,
+    #    resume_map 이 통째로 복원해 [앞선 대화 요약]으로 프롬프트에 다시 넣는다.
+    #    그리고 과정 플래그도 함께 살아남아 기능이 죽었다:
+    #      _landed=True  → 좁히기 게이트와 ASK→SEARCH 승격이 **영구히 막힌다.**
+    #                      이어서하기로 들어온 사용자는 칩 되묻기를 다시 못 받는다.
+    #      _abuse        → 옛 세션의 남용 누적치를 새 세션이 물려받는다.
+    #    ⚠ _facts(2026-08-06 추가)도 같이 뺀다. _summary 를 빼는 이유가 그대로 적용된다 —
+    #      오히려 더 날것이다(「할머니 간병하느라 학교를 못 다녔다」가 문장 그대로 남는다).
+    for _k in ("_summary", "_facts", "_landed", "_abuse", "_probed", "_narrowed",
+               "_narrow_opts", "_narrow_rest", "_ask_n", "_unsure", "_turns",
+               "_slot_turn", "_slot_src", "_policy_offered", "_policy_declined",
+               "_think_sig"):
+        profile.pop(_k, None)
+    #  ⚠ 「대상세부」(누구를)는 «남긴다» — 코드가 채우지만 결론에 해당하는 정보다.
+    #    (2026-08-06 신설. fill_obj_detail 주석 참고)
+    #  ⚠ 남기는 것: 슬롯(관심분야·활동유형·다루는대상·대상세부·세부관심·강점성향·제약)과
+    #    _exclude·_demote(「그건 아니다」라고 한 것). 그건 **결론**이다.
     #  그리고 같은 사고가 다시 나지 않게 직렬화에 안전망을 둔다(날짜가 또 섞여 들어와도
     #  저장이 죽지는 않는다). 위 pop 이 1차 방어, 이것이 2차다.
     _dump = lambda p: json.dumps(p, ensure_ascii=False, default=str)   # noqa: E731
@@ -364,7 +452,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         "ORDER BY created_at DESC LIMIT 1"), {"uid": user_id, "jc": job_code})).fetchone()
     if dup:
         map_id = dup[0]
-        done, _ = _progress(profile)
+        done = _filled_axes(profile)
         await db.execute(text(
             "UPDATE itda_map SET progress_step = :ps, profile_json = :pj WHERE map_id = :mid"),
             {"ps": done, "pj": _dump(profile), "mid": map_id})
@@ -376,7 +464,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         return {"ok": True, "map_id": map_id,
                 "job": (card.get("job") or {}).get("name") or "", "already": True}
 
-    done, _ = _progress(profile)
+    done = _filled_axes(profile)
     res = await db.execute(text(
         "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
         "VALUES (:uid, :jc, '진행중', :ps, :pj, :now)"),
@@ -447,9 +535,14 @@ async def resume_map(db, user_id: int, map_id: int, session_id: str) -> dict:
                   f"{type(e).__name__}: {e}")
             profile = {}
     st = session.get(session_id)
+    #  ★ 여기도 남의 세션을 덮어쓸 수 있다 — 데이터가 새지는 않지만 남의 대화가 망가진다.
+    _claim_session(st, user_id)
     st["profile"] = profile                       # 세션에 슬롯 복원 → 대화 이어감
     st["last_card"] = None
     st["resumed_map_id"] = map_id                 # 저장 버튼이 '이미 저장됨'을 알 수 있게(save_map 참고)
+    #  ★ 2026-08-06 — 복원한 세션도 DB 에 남긴다. 안 그러면 이어서하기 직후 서버가
+    #    재시작될 때 «복원했다는 사실»만 사라져 사용자가 같은 지도를 또 이어야 한다.
+    await session.save(db, session_id, st)
     goal = await _saved_goal(db, map_id)
     return {"ok": True, "session_id": session_id, "profile": profile,
             "goal": goal.model_dump()}
