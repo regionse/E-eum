@@ -31,7 +31,15 @@ export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 //  배포: vite 개발서버가 없으므로 프록시도 없다. 그대로 두면 프론트가 백엔드를 못 찾아 전부 실패한다.
 //        빌드할 때 VITE_API_BASE 를 주면 그 주소로 부른다.
 //          예) VITE_API_BASE=https://api.우리도메인.com  npm run build
-const API_BASE = (import.meta.env?.VITE_API_BASE || '/api').replace(/\/$/, '')
+//  ★★ 2026-08-06 — **export 한다. 백엔드 주소를 정하는 곳은 여기 하나뿐이다.**
+//    왜: api/share.js·mypage.js 와 pages/share/ResourceMap.jsx 가 각자
+//      `import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'`
+//    을 갖고 있었다. **환경변수 이름이 여기(VITE_API_BASE)와 달랐고**, 기본값도
+//    프록시(/api)가 아니라 8000 직결이었다.
+//    개발 중에는 둘 다 우연히 동작해서 안 드러난다 — 배포 빌드에서 한쪽만
+//    설정하면 **화면 절반이 죽는다.** 이름이 둘이면 반드시 하나를 빠뜨린다.
+//    ⇒ 상수를 내보내고, 쓰는 쪽은 전부 이걸 import 한다.
+export const API_BASE = (import.meta.env?.VITE_API_BASE || '/api').replace(/\/$/, '')
 
 // 진짜 백엔드(FastAPI) fetch 래퍼.
 // 토큰이 있으면 Bearer 로 싣고,

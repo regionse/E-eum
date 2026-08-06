@@ -1,11 +1,10 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ??
-  'http://127.0.0.1:8000'
+//  ★ 2026-08-06 — 주소와 토큰은 client.js 하나에서 가져온다(share.js 와 같은 이유).
+import { API_BASE, getToken } from './client.js'
 
 async function request(path, options = {}) {
-  const token = localStorage.getItem('eum_token')
+  const token = getToken()
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',

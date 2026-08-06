@@ -1,12 +1,23 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ??
-  'http://127.0.0.1:8000'
+//  ★ 2026-08-06 — 주소와 토큰은 client.js 하나에서 가져온다.
+//    (예전엔 이 파일이 VITE_API_BASE_URL 과 localStorage 를 «따로» 읽었다 —
+//     client.js 와 환경변수 이름이 달라 배포 때 갈라지는 구조였다)
+import { API_BASE, getToken } from './client.js'
 
+//  ★ 2026-08-06 — **로그인 토큰을 실어 보낸다.**
+//    왜 필요한가: 백엔드 나누다 라우터가 가족방·가족편지·초대코드·주간분석에
+//    Depends(get_current_user) 를 걸었다(router.py 의 get_verified_user_id 주석).
+//    그 주석은 「프론트(api/client.js)는 이미 Bearer 토큰을 싣고 있으므로 화면 수정
+//    없이 막힌다」고 적었는데, **나누다 화면은 client.js 를 안 썼다.**
+//    이 파일이 자체 request 를 갖고 있고 여기엔 Authorization 이 없었다
+//    → 그날부터 가족편지가 전부 401 이 됐다.
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const token = getToken()
+
+  const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
   })

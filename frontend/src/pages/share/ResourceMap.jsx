@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { PageHead } from '../../components/ui/index.jsx'
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ??
-  'http://127.0.0.1:8000'
+//  ★ 2026-08-06 — 백엔드 주소는 client.js 하나에서 가져온다.
+//    (예전엔 이 화면이 VITE_API_BASE_URL 로 8000 을 직접 때렸다 — 이름도 기본값도
+//     client.js 와 달라서, 배포하면 여기만 조용히 죽는 구조였다)
+import { API_BASE } from '../../api/client.js'
 
 async function getDrivingRoute({
   originLatitude,
@@ -20,7 +20,7 @@ async function getDrivingRoute({
   })
 
   const response = await fetch(
-    `${API_BASE_URL}/support-facilities/route?${params}`,
+    `${API_BASE}/support-facilities/route?${params}`,
   )
   const data = await response.json().catch(() => null)
 
