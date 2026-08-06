@@ -4,7 +4,8 @@
 
 역할은 '번역'뿐. 판단 로직은 전부 itda_core 에 있다(CLI 와 같은 코드를 쓴다).
   itda_core.step()  →  {kind, reply, profile, missing, can_land, card}
-  프론트가 기대      →  {type, reply, turn, max_turn, understanding, mode, goal, alternatives}
+  프론트가 기대      →  {type, reply, understanding, mode, goal, alternatives, options, handoff}
+                       (turn·max_turn 은 2026-08-06 에 제거 — schemas.MessageResponse 주석)
 
 · 세션에는 slot(profile) 을 중심으로 보관한다.
   (⚠ _history·_summary 도 함께 담긴다 — session.get 도크스트링 참고. 2026-08-06 정정)
@@ -128,10 +129,18 @@ def _to_goal(card) -> Goal:
     )
 
 
-def _progress(profile):
-    """슬롯이 얼마나 찼는지를 진행도로 보여준다."""
-    total = len(ASK_ORDER)
-    return total - len(missing_slots(profile)), total
+#  ★★ 2026-08-06 — _progress() 를 지우고 이것만 남겼다.
+#    예전 _progress 는 (찬 슬롯 수, 3) 을 돌려 **응답의 진행도**로 나갔다.
+#    「슬롯이 차는 것」과 「대화가 끝나가는 것」은 다른 일이고,
+#    우리 사용자는 20~30턴, 길면 100턴까지 갈 수 있다(schemas.MessageResponse 주석).
+#    ⇒ 응답에서는 뺐다. 다만 itda_map.progress_step 컬럼은 그대로 쓰므로 이 값만 남긴다.
+def _filled_axes(profile) -> int:
+    """itda_map.progress_step 에 넣을 값 — 방향 축 3개 중 몇 개가 찼나.
+
+    ⚠ 이건 **저장용 메타데이터**지 사용자에게 보여줄 진행도가 아니다.
+      응답(MessageResponse)에 다시 넣지 말 것.
+    """
+    return len(ASK_ORDER) - len(missing_slots(profile))
 
 
 # ── 한 턴 ───────────────────────────────────────────────────────────
@@ -140,7 +149,9 @@ def _progress(profile):
 #  전역 pymysql 커넥션을 공유해 깨졌다(코드리뷰 HIGH). 이제 step 이 async 라 그냥 await.
 async def handle_message(db, session_id: str, message: str,
                          user_id: int | None = None) -> MessageResponse:
-    st = session.get(session_id)
+    #  ★ 2026-08-06 — 메모리에 없으면 DB 에서 되살린다(서버 재시작 생존).
+    #    ITDA_SESSION_DB=0(기본)이면 예전과 완전히 같다 — session.load 도크스트링 참고.
+    st = await session.load(db, session_id)
     #  ★ 2026-08-06 — **대화 자체를 소유자 확인한다.**
     #    예전엔 저장(save_map)·이어서하기(resume_map)에만 검증이 있었다. 그런데 정작
     #    보호하려던 값(제약 슬롯 — 학력부담·체력부담·비용부담)은 이 엔드포인트가
@@ -158,11 +169,9 @@ async def handle_message(db, session_id: str, message: str,
         r = await eng.step(db, profile, message)
     except Exception as e:
         print(f"[itda] step 실패: {type(e).__name__}: {e}")   # 서버 로그에만 남긴다
-        done, total = _progress(profile)
         return MessageResponse(
             type="blocked",
             reply="지금 잠시 연결이 원활하지 않아요. 잠시 후 다시 말씀해 주실래요?",
-            turn=done, max_turn=total,
             understanding=_public_profile(profile),
             mode="error",
         )
@@ -184,17 +193,25 @@ async def handle_message(db, session_id: str, message: str,
     #  ★ 최근 창을 넘긴 앞부분은 버리지 않고 요약해 이어 붙인다(2026-08-04).
     #    요약은 **응답을 보낸 뒤 백그라운드로** 돌린다 — 다음 턴에나 필요한 값이라
     #    지금 기다릴 이유가 없다. 사용자는 답을 바로 받는다.
-    keep = eng.HISTORY_TURNS * 2
-    if len(hist) > eng.SUMMARIZE_AFTER * 2:
+    #  ⚠ 설정이 뒤집히면(SUMMARIZE_AFTER ≤ HISTORY_TURNS) 접기 주기가 0 이 되어
+    #    매 턴 요약을 부른다. .env 오타 하나로 100턴에 100번 부르는 사고가 되므로
+    #    여기서 **넘길 조각이 실제로 있을 때만** 부른다(SUMMARIZE_AFTER 위 주석 참고).
+    keep = max(2, eng.HISTORY_TURNS * 2)
+    if len(hist) > max(eng.SUMMARIZE_AFTER, eng.HISTORY_TURNS + 2) * 2:
         overflow, hist = hist[:-keep], hist[-keep:]
 
-        async def _fold(sid, old, chunk):
-            new = await eng.summarize(old, chunk)
+        #  ★ 계층 요약(2026-08-06) — 「사실」은 코드가 누적하고 「요약」만 다시 쓴다.
+        #    왜 이렇게 나눴는지는 itda_core.summarize() 위 주석 참고.
+        async def _fold(sid, old, old_facts, chunk):
+            new, facts = await eng.summarize(old, chunk, old_facts)
             s = session.get(sid)                     # 그 사이 바뀌었을 수 있어 다시 읽는다
             if s.get("profile") is not None:
                 s["profile"]["_summary"] = new
+                s["profile"]["_facts"] = facts
 
-        asyncio.create_task(_fold(session_id, profile.get("_summary") or "", overflow))
+        if overflow:
+            asyncio.create_task(_fold(session_id, profile.get("_summary") or "",
+                                      list(profile.get("_facts") or []), overflow))
 
     #  ★ 분야(관심대분류) 갱신도 백그라운드로 (2026-08-04).
     #    step() 이 '_think_stale' 을 남기면 여기서 큰 모델을 돌려 **다음 턴**에 반영한다.
@@ -217,7 +234,6 @@ async def handle_message(db, session_id: str, message: str,
 
     profile["_history"] = hist
     st["profile"] = profile
-    done, total = _progress(profile)
 
     kind = r["kind"]
     #  notfound = 사용자가 콕 집어 말한 목표가 우리 613종에 없는 경우.
@@ -256,11 +272,15 @@ async def handle_message(db, session_id: str, message: str,
         except Exception as e:
             print(f"[itda] 카드→goal 변환 실패: {type(e).__name__}: {e}")
             msg_type = "ask"
+    #  ★ 2026-08-06 — 이 턴의 상태를 DB 에 남긴다. **응답을 만들기 직전**이 맞다:
+    #    여기까지 왔으면 st["profile"]·st["last_card"] 가 다 갱신된 상태다.
+    #    실패해도 예외를 안 올린다(session.save 도크스트링) — 저장 때문에 답이 죽으면 안 된다.
+    #  ⚠ 위 백그라운드 작업(_fold·_rethink)은 이 시점 뒤에 끝난다. 그 결과는
+    #    **다음 턴의 save()** 에 실린다. 그 한 사이클 손실은 받아들인다(session.py 참고).
+    await session.save(db, session_id, st)
     return MessageResponse(
         type=msg_type,
         reply=reply,
-        turn=done,
-        max_turn=total,
         understanding=_public_profile(profile),
         mode="gemini",
         goal=goal,
@@ -357,7 +377,10 @@ def claim_session(session_id: str, user_id: int) -> None:
 
 async def save_map(db, user_id: int, session_id: str) -> dict:
     """세션에 캐시된 마지막 카드를 미래설계지도로 저장 (로그인 사용자 소유)."""
-    st = session.get(session_id)
+    #  ★ 2026-08-06 — get 이 아니라 load 다. 서버가 재시작된 뒤 사용자가 «저장»부터
+    #    누르면 get() 은 빈 세션을 새로 만들어 「아직 저장할 결과가 없어요」가 나갔다.
+    #    카드는 DB 에 살아 있는데 못 찾는 것 — 대화 40턴을 날리는 것과 같은 체감이다.
+    st = await session.load(db, session_id)
     _claim_session(st, user_id)
     card = st.get("last_card") or {}
     job_code = (card.get("job") or {}).get("code")
@@ -402,9 +425,12 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     #      _landed=True  → 좁히기 게이트와 ASK→SEARCH 승격이 **영구히 막힌다.**
     #                      이어서하기로 들어온 사용자는 칩 되묻기를 다시 못 받는다.
     #      _abuse        → 옛 세션의 남용 누적치를 새 세션이 물려받는다.
-    for _k in ("_summary", "_landed", "_abuse", "_probed", "_narrowed",
+    #    ⚠ _facts(2026-08-06 추가)도 같이 뺀다. _summary 를 빼는 이유가 그대로 적용된다 —
+    #      오히려 더 날것이다(「할머니 간병하느라 학교를 못 다녔다」가 문장 그대로 남는다).
+    for _k in ("_summary", "_facts", "_landed", "_abuse", "_probed", "_narrowed",
                "_narrow_opts", "_narrow_rest", "_ask_n", "_unsure", "_turns",
-               "_slot_turn", "_policy_offered", "_policy_declined", "_think_sig"):
+               "_slot_turn", "_slot_src", "_policy_offered", "_policy_declined",
+               "_think_sig"):
         profile.pop(_k, None)
     #  ⚠ 남기는 것: 슬롯(관심분야·활동유형·다루는대상·세부관심·강점성향·제약)과
     #    _exclude·_demote(「그건 아니다」라고 한 것). 그건 **결론**이다.
@@ -424,7 +450,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         "ORDER BY created_at DESC LIMIT 1"), {"uid": user_id, "jc": job_code})).fetchone()
     if dup:
         map_id = dup[0]
-        done, _ = _progress(profile)
+        done = _filled_axes(profile)
         await db.execute(text(
             "UPDATE itda_map SET progress_step = :ps, profile_json = :pj WHERE map_id = :mid"),
             {"ps": done, "pj": _dump(profile), "mid": map_id})
@@ -436,7 +462,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
         return {"ok": True, "map_id": map_id,
                 "job": (card.get("job") or {}).get("name") or "", "already": True}
 
-    done, _ = _progress(profile)
+    done = _filled_axes(profile)
     res = await db.execute(text(
         "INSERT INTO itda_map (user_id, job_code, status, progress_step, profile_json, created_at) "
         "VALUES (:uid, :jc, '진행중', :ps, :pj, :now)"),
@@ -512,6 +538,9 @@ async def resume_map(db, user_id: int, map_id: int, session_id: str) -> dict:
     st["profile"] = profile                       # 세션에 슬롯 복원 → 대화 이어감
     st["last_card"] = None
     st["resumed_map_id"] = map_id                 # 저장 버튼이 '이미 저장됨'을 알 수 있게(save_map 참고)
+    #  ★ 2026-08-06 — 복원한 세션도 DB 에 남긴다. 안 그러면 이어서하기 직후 서버가
+    #    재시작될 때 «복원했다는 사실»만 사라져 사용자가 같은 지도를 또 이어야 한다.
+    await session.save(db, session_id, st)
     goal = await _saved_goal(db, map_id)
     return {"ok": True, "session_id": session_id, "profile": profile,
             "goal": goal.model_dump()}

@@ -99,10 +99,13 @@ async def message(request: MessageRequest,
 
 @router.post("/reset", summary="세션 초기화")
 async def reset(request: ResetRequest,
+                #  ★ 2026-08-06 — db 를 받는다. 세션이 DB 에도 저장되므로(session.py)
+                #    메모리만 지우면 **다음 턴에 DB 에서 되살아난다** — 초기화가 안 된다.
+                db: AsyncSession = Depends(get_db),
                 user: User = Depends(get_current_user)):
     #  남의 session_id 로 **진행 중인 대화를 지우는** 것을 막는다.
     controllers.claim_session(request.session_id, user.user_id)
-    session.reset(request.session_id)
+    await session.reset(db, request.session_id)
     return {"ok": True}
 
 
