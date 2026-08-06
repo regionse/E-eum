@@ -343,22 +343,10 @@ def normalize_welfare_policy(list_item: dict[str, str | None], detail_item: dict
             detail_item.get("wlfareInfoOutlCn")
             or list_item.get("servDgst")
         ),
-        target_detail=detail_item.get(
-            "tgtrDtlCn"
-        ),
-        selection_criteria=detail_item.get(     # 지원 기준
-            "slctCritCn"
-        ),
-        support_content=detail_item.get(        # 지원 내용
-            "alwServCn"
-        ),
-        application_method=detail_item.get(
-            "application_method"
-        ),
-        detail_url=list_item.get(
-            "servDtlLink"
-        ),
-        guide_pdf_url=detail_item.get(
-            "guide_pdf_url"
-        ),
+        target_detail=detail_item.get("tgtrDtlCn"),
+        selection_criteria=detail_item.get("slctCritCn"),       # 지원 기준
+        support_content=detail_item.get("alwServCn"),           # 지원 내용
+        application_method=detail_item.get("application_method"),
+        detail_url=list_item.get("servDtlLink"),
+        guide_pdf_url=detail_item.get("guide_pdf_url"),
     )
