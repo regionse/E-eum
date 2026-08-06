@@ -432,7 +432,9 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
                "_slot_turn", "_slot_src", "_policy_offered", "_policy_declined",
                "_think_sig"):
         profile.pop(_k, None)
-    #  ⚠ 남기는 것: 슬롯(관심분야·활동유형·다루는대상·세부관심·강점성향·제약)과
+    #  ⚠ 「대상세부」(누구를)는 «남긴다» — 코드가 채우지만 결론에 해당하는 정보다.
+    #    (2026-08-06 신설. fill_obj_detail 주석 참고)
+    #  ⚠ 남기는 것: 슬롯(관심분야·활동유형·다루는대상·대상세부·세부관심·강점성향·제약)과
     #    _exclude·_demote(「그건 아니다」라고 한 것). 그건 **결론**이다.
     #  그리고 같은 사고가 다시 나지 않게 직렬화에 안전망을 둔다(날짜가 또 섞여 들어와도
     #  저장이 죽지는 않는다). 위 pop 이 1차 방어, 이것이 2차다.

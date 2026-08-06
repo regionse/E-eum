@@ -296,7 +296,7 @@ async def main():
               f'({[r["q"] for r in gated if r["want"]=="CHIP" and abs((r["sig"].get("C") or 0)-hi)<1e-9]})')
         print(f'  ⇒ **임계값을 {lo:.3f} ~ {hi:.3f} 사이 어디에 둬도 같은 결과** '
               f'(폭 {hi-lo:.3f})')
-        print(f'     지금 값 CLUSTER_H={E.CLUSTER_H} — 이 구간 안이면 안전.')
+        print(f'     지금 값 CTOP_H={E.CTOP_H} · SPREAD_H={E.SPREAD_H}  (2단 판정으로 바뀜)')
         print(f'     ⚠ 낮게 둘수록 «착지에 보수적»이다: 정말 한 동네일 때만 착지한다.')
     print('\n  (참고) 게이트 없이 C 단독으로 볼 때의 마진:')
     a = sorted(r['sig'].get('C') for r in rows if r['want'] == 'LAND' and r['sig'].get('C') is not None)

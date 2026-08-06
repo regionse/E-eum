@@ -1338,6 +1338,59 @@ _OBJ_MARK = (
 #    '사람'이 있다고 채우면 오늘 고친 그 버그를 코드가 다시 만드는 꼴이다.
 _NEG_MARK = ('아니', '말고', '싫', '힘들', '부담', '별로', '못하', '안맞', '빼고', '어려')
 
+
+#  ★★ 2026-08-06 — **「누구를」 축을 코드가 채운다.**
+#  위 _OBJ_MARK 을 보면 '사람' 표지에 어르신·아이·환자·손님·학생이 **이미 다 들어 있다.**
+#  즉 코드가 그 구별을 «보고 있으면서» 결과를 '사람' 하나로 뭉개 버리고 있었다.
+#  180행 주석이 이 손실을 이미 기록해 뒀다 —
+#      「어르신 쪽이 편해요」 → {다루는대상: 사람} 만 남고 '어르신'이 통째로 사라짐.
+#      **대화에서 제일 값진 정보가 버려지고 있었다.**
+#
+#  왜 이제 담을 데가 생겼나 — 2026-08-06 에 job_attr.obj_detail 축을 만들었다(109개 태깅).
+#    실측(checks/axis_split.py): 이 축이 없을 때 우리 사용자군의 핵심 질의가 안 갈렸다.
+#        「할머니 돌보는 일을 해왔어요」  활동유형 H=0.30 · 다루는대상 H=0.20
+#                                      → **누구를 H=0.62**  (아동·청소년 0.68 / 고객·손님 0.16 / 어르신 0.11)
+#        「어르신 요양 돌보는 일」        H=0.17 · 0.08  →  **0.33**
+#      그 전에는 NCS 중분류(보건/보육/청소)로만 갈렸는데, 그건
+#      「사회복지 / 경비·청소 / 보건 중 어디요?」라 **사용자가 답할 수 없는 질문**이다.
+#
+#  ⚠ 스키마(PROFILE_SCHEMA)는 안 건드린다. LLM 에게 부탁하지 않고 코드가 채운다 —
+#    fill_object_slot 과 같은 원칙이고, 골든셋 위험도 그만큼 작다.
+#  ⚠ 순서가 곧 우선순위다. 겹칠 때 위엣것이 이긴다(태깅 프롬프트와 같은 순서).
+#    「요양보호사」는 어르신이자 환자지만 → 어르신. 사용자는 그렇게 말한다.
+_OBJ_DETAIL_MARK = (
+    ('어르신', ('어르신', '노인', '할머니', '할아버지', '조부모', '치매', '요양', '간병',
+                '노년', '고령', '실버')),
+    ('아동·청소년', ('아이', '아동', '유아', '아기', '영유아', '어린이', '청소년', '보육',
+                     '초등', '중학생', '고등학생', '학생들', '조카', '동생')),
+    ('환자·장애인', ('환자', '장애인', '장애아', '재활', '투석', '병원', '입원', '와상',
+                     '거동이불편', '몸이불편')),
+    ('학습자', ('수강생', '교육생', '훈련생', '연수생')),
+    ('직원·동료', ('직원', '동료', '사원', '팀원', '신입', '부하')),
+    ('고객·손님', ('손님', '고객', '내담자', '이용객', '방문객')),
+)
+
+
+def fill_obj_detail(p, user_msg):
+    """발화에서 「누구를 대하는가」를 코드가 채운다 → (프로필, 채운 값 또는 None).
+
+    ⚠ 이미 있으면 안 건드린다. 부정이 섞인 턴도 건너뛴다(fill_object_slot 과 같은 이유 —
+      「어르신 돌보는 건 힘들어요」는 «그 대상을 원한다»는 말이 아니다).
+    """
+    p = p or {}
+    if p.get('대상세부'):
+        return p, None
+    m = re.sub(r'\s+', '', user_msg or '')
+    if any(n in m for n in _NEG_MARK):
+        return p, None
+    for label, marks in _OBJ_DETAIL_MARK:
+        if any(w in m for w in marks):
+            p['대상세부'] = label
+            return p, label
+    return p, None
+
+
+
 #  ── 관심분야가 될 수 없는 말 (2026-08-04) — 이것도 프롬프트 대신 코드로 ──
 #    「알바는 해봤어요」 → 관심분야="알바" 가 들어가면 검색이 아무것도 못 찾는다.
 #    고용형태·상태는 '무슨 일을 좋아하나'가 아니다. 무슨 알바였는지를 물어야 한다.
@@ -1611,8 +1664,18 @@ def pick_from_options(msg, options):
 #    우리 사용자는 가족 돌봄으로 학업·진로를 놓은 청년이다. 이 서비스가 받을 수 있는 가장 위험한 입력에
 #    가장 나쁜 응답을 하고 있었던 셈이다. → 자기 위해 신호를 **분리**하고, 차단이 아니라 **연결**한다.
 #    (대화를 닫지 않는다: kind='ask' 로 돌려보내 이야기를 이어갈 수 있게 둔다.)
+#  ★★★ 2026-08-06 (3차) — **활용형이 빠져 있었다.** 실측 미탐지:
+#      「그만 살고 싶어요」 · 「이제 그만 살래요」 · 「죽을까 생각해요」 · 「사라져버리고 싶다」
+#    기존 목록은 '살기싫'·'살고싶지않'·'사라지고싶' 처럼 **한 가지 활용형**만 갖고 있었다.
+#    한국어는 같은 뜻이 어미로 여러 꼴이 된다. 낱말을 «생각나는 대로» 적으면 반드시 빈다.
+#    ⇒ 아래는 어간별로 «세 꼴»(-고싶 / -래 / -까)을 맞춰 넣은 것이다. 떠오른 걸 더한 게 아니다.
+#  ⚠ 어절 정렬 예외 — 3자 이상은 어절 중간도 인정한다(FUSE_CRISIS). 「정말죽고싶어」를 살리려는 것.
 SELF_HARM = ('자살', '죽고싶', '죽어버리', '죽고싶다', '살기싫', '살고싶지않', '사라지고싶',
-             '없어지고싶', '자해', '손목', '끝내고싶', '죽는게', '죽어야', '살아갈이유')
+             '없어지고싶', '자해', '손목', '끝내고싶', '죽는게', '죽어야', '살아갈이유',
+             #  ─ 활용형 보강(2026-08-06) ─
+             '그만살고싶', '그만살래', '그만살래요', '안살래', '살고싶지가않',
+             '죽을까', '죽어버릴', '죽어버릴까', '죽는수밖에',
+             '사라져버리', '없어져버리', '끝내버리고싶', '끝내버릴')
 
 #  ★ 2026-08-04 — «자살예방 상담사가 되고 싶어요» 가 위기 안내로 빠지던 것을 고친다.
 #    '자살' 이 SELF_HARM 에 있어 **직업명 안에 들어간 경우까지** 걸렸다. 우리 사용자(가족돌봄청년)
@@ -1637,7 +1700,17 @@ def _is_career_not_crisis(flat):
     """위기 낱말이 **직업 이야기** 안에 들어간 경우인가 — 둘 다 있어야 True(보수적)."""
     return (any(w in flat for w in _SH_SAFE_WORD)
             and any(c in flat for c in _SH_CAREER_CTX))
-HARM_OTHERS = ('죽여', '죽이', '때려', '패버', '강간', '성폭')
+#  ★★★ 2026-08-06 (3차) — 여기도 활용형이 하나뿐이었다. 실측 미탐지:
+#      「아빠가 엄마를 때립니다」 · 「아빠가 엄마를 때렸어요」 · 「형이 저를 팹니다」
+#    '때려' 하나로는 「때립니다」·「때렸어요」를 못 잡는다. 한국어 어간 「때리-」의 세 꼴
+#    (때리- / 때려- / 때렸-)을 다 넣는다. 「패-」도 마찬가지(패- / 팹- / 팼-).
+#  ⚠ 여기 걸려도 **차단이 아니다.** 2층(harm_who)이 「누구의 행동인지」를 본다.
+#    그래서 「망치로 때리는 일」 같은 직업 발화가 걸려도 LLM 한 번 더 볼 뿐 막히지 않는다.
+#    → 넓게 잡아도 되는 자리다. 반대로 놓치면 가정폭력 진술이 통째로 샌다.
+HARM_OTHERS = ('죽여', '죽이', '때려', '패버', '강간', '성폭',
+               #  ─ 활용형 보강(2026-08-06) ─
+               '때리', '때렸', '때린', '때립', '맞고살', '팹니', '팼', '패고',
+               '폭행', '학대해', '학대하')
 ABUSE = ('꺼져', '병신', '씨발', '개새')
 BAD_WORDS = list(HARM_OTHERS + ABUSE)      # 하위호환(외부에서 import 하는 곳이 있을 수 있음)
 
@@ -1668,7 +1741,14 @@ _HARM_SAFE_WORD = ('성폭력', '가정폭력', '학교폭력', '데이트폭력
 
 #  '죽이다'의 관용 용법 — 칭찬이거나 시간을 보낸다는 뜻이다.
 #  (때리다·강간 등에는 이런 용법이 없어 여기 넣지 않는다)
-_HARM_IDIOM = ('시간을죽이', '시간죽이', '죽이게', '죽여주', '죽이는맛', '죽인다', '죽이네')
+#  ★★★ 2026-08-06 (3차) — **예외 목록에도 같은 「짧은 패턴」 버그가 있었다.**
+#    실측: 「제발 죽여주세요」 → pre_check None. 위기 발화가 통째로 통과했다.
+#      HARM_OTHERS 의 '죽여'는 제대로 걸렸는데, 여기 '죽여주'가 «관용구»로 판정해서 뺐다.
+#    「죽여주네」(감탄)와 「죽여주세요」(요청)는 **어미가 정반대인데 앞 3자가 같다.**
+#    → 관용구는 서술형으로만 인정한다. 명령·청유형(죽여주세요·죽여줘)은 관용구가 아니다.
+#    ⚠ 이건 오차단이 아니라 **미탐지**다 — 이 파일이 「놓치는 게 더 나쁘다」고 한 바로 그 쪽.
+_HARM_IDIOM = ('시간을죽이', '시간죽이', '죽이게', '죽이는맛', '죽인다', '죽이네',
+               '죽여주네', '죽여준다', '죽여주는', '죽여줬', '죽여주더')
 
 #  욕설이 **상대(챗봇)를 향한** 것인지 가르는 2인칭 지칭.
 #  ⚠ '너' 한 글자를 부분문자열로 보면 「너무」에 걸린다 — 아주 흔한 말이다.
@@ -1751,6 +1831,94 @@ def _norm_strip(msg):
       그건 _norm_evade 가 맡는다. 셋이 서로의 사각을 메운다.
     """
     return re.sub(r'(.)\1+', r'\1', re.sub(r'[^가-힣]', '', str(msg or '')))
+
+
+# ── 어절 정렬 매칭 (2026-08-06 3차) ─────────────────────────────────────────
+#  ★★ **이건 낱말 하나를 고치는 게 아니라 «매칭 방식»을 바꾸는 것이다.**
+#
+#  같은 버그가 이 파일에 «세 번» 기록돼 있다. 세 번 다 처방이 달랐다.
+#      _2P_RE         「할머니」 안의 '머니'   → 낱말 경계 정규식      (구조를 고쳤다)
+#      _IMPERATIVE    「가슴이 답답해요」의 '답해' → 「짧은 패턴을 넣지 마라」 (사람에게 한 당부)
+#      _INJECT        「규칙적인…잊어버려요」  → 6자 인접 조건        (그 자리만)
+#  세 번째 처방은 «각오»지 코드가 아니다. 각오는 다음 사람에게 전달되지 않고,
+#  그 뒤 실측에서 **오차단 16건**이 더 났다:
+#      「장애인 활동지원사 알려주세요」 → 장**애인**   ← 우리 사용자의 실제 직업이다
+#      「웹 개발 기초」               → 개**발기**초
+#      「저 혼자 해요」               → 혼**자해**요
+#      「특강 간호 쪽」               → 특**강간**호
+#      「보건 분야 동향」             → 분**야동**향
+#  전부 `substring in 공백지운문자열` 하나에서 나왔다. 낱말표를 아무리 다듬어도
+#  **다음에 넣는 낱말에서 또 난다.** 그래서 낱말이 아니라 매칭을 바꾼다.
+#
+#  근거가 되는 관찰 — 우회와 오탐은 «자르는 위치»가 반대다.
+#      우회는 어절 «사이»를 쪼갠다   「대 마 초」 「가 슴」 「씨 발」
+#      오탐은 어절 «한가운데»서 붙는다  장애인|활동  개발|기초  혼자|해요
+#  ⇒ **낱말이 어절 시작에서 시작할 때만 인정한다.** 그러면
+#      「대 마 초」 → 대마초, '대마초'가 0번(어절 시작)  → 잡힌다
+#      「장애인 활동」 → 장애인활동, '애인'이 1번(어절 중간) → 안 잡힌다
+#    낱말표를 한 글자도 안 건드리고, **앞으로 추가될 낱말까지** 같이 덮인다.
+#
+#  ⚠ 다만 이걸 전부에 똑같이 걸면 안 된다 — 낱말표마다 **틀리는 비용이 다르다.**
+#    이 파일이 이미 못 박아 둔 원칙(2172행): 자해·폭력은 «놓치는 것»이 더 나쁘다.
+#      「정말죽고싶어」 처럼 띄어쓰기 없이 붙여 쓰면 '죽고싶'이 어절 중간이 된다.
+#      위기 신호를 그렇게 놓치면 이 서비스가 할 수 있는 최악의 실수다.
+#    ⇒ 자해·폭력에는 **융합 허용 길이**를 둔다. 3자 이상이면 어절 중간이라도 인정한다.
+#      (2자짜리 '자해'·'강간'·'때려'는 어절 정렬만 — 이것들이 오차단을 냈다)
+#    반대로 즉시 차단 + 남용 카운트가 붙는 욕설·성적 낱말은 **오탐이 제일 비싸다.**
+#      → 융합을 아예 허용하지 않는다(FUSE_NONE).
+FUSE_NONE = 0     # 어절 시작에서만 인정 — 즉시 차단되는 목록(오탐이 제일 비싸다)
+FUSE_CRISIS = 3   # 3자 이상이면 어절 중간도 인정 — 자해·폭력(놓치는 게 더 나쁘다)
+FUSE_LOOSE = 4    # 4자 이상 — 2층 LLM 이 한 번 더 보는 목록
+
+
+def _wseg(msg, fn=None):
+    """어절마다 정규화해서 이어 붙이고, **각 어절이 시작하는 위치**를 함께 돌려준다.
+
+    반환 (이어붙인문자열, {어절이 시작하는 인덱스})
+
+    ⚠ 정규화를 «전체 문자열»이 아니라 «어절마다» 거는 것이 핵심이다.
+      전체에 걸면 어절 경계가 사라져서 어디가 시작인지 알 수 없게 된다.
+    """
+    fn = fn or (lambda w: w)
+    out, starts, pos = [], set(), 0
+    for w in str(msg or '').split():
+        s = fn(w)
+        if not s:
+            continue
+        starts.add(pos)
+        out.append(s)
+        pos += len(s)
+    return ''.join(out), starts
+
+
+def _segs(msg):
+    """정규화 넷을 어절 경계를 지킨 채로 만든다 — 이 목록을 낱말 검사에 넘긴다.
+
+    넷을 다 보는 이유는 기존과 같다(_norm_compose/_norm_strip 주석):
+      원문     띄어쓰기 그대로            「죽고 싶어요」
+      evade    숫자·기호 제거, 자모 유지  「시1발」 「ㅅㅂ」
+      compose  분해 자모 결합             「필ㄹㅗ폰」
+      strip    완성형만                   「가s슴」
+    """
+    return [_wseg(msg), _wseg(msg, _norm_evade),
+            _wseg(msg, _norm_compose), _wseg(msg, _norm_strip)]
+
+
+def _wmatch(segs, words, fuse=FUSE_NONE):
+    """낱말표가 걸리는가 — **어절 시작**에서 시작할 때만. fuse 이상 길이면 중간도 인정."""
+    for hay, starts in segs:
+        if not hay:
+            continue
+        for b in words:
+            if fuse and len(b) >= fuse and b in hay:
+                return True
+            i = hay.find(b)
+            while i != -1:
+                if i in starts:
+                    return True
+                i = hay.find(b, i + 1)
+    return False
+
 
 #  정규화 뒤에 걸리는 흔한 변형들. 위 ABUSE 와 달리 **이건 끝이 없는 목록이다** —
 #  새 우회가 보이면 여기 더하면 되지만, 여기에만 기대면 안 된다(위 주석).
@@ -1841,7 +2009,7 @@ def _is_abuse_at_bot(msg, norm):
     return _is_at_bot(msg)
 
 
-def _sexual_kind(msg, *norms):
+def _sexual_kind(msg, segs):
     """성적 발화인가 — 'HARD'(단정) | 'AT_BOT'(상대를 향할 때만) | None.
 
     ★ 2026-08-06 — 이 게이트는 **오늘까지 아예 없었다.** 성적 발화에 대한 코드 방어가
@@ -1853,9 +2021,15 @@ def _sexual_kind(msg, *norms):
       실측: `_SEXUAL_SOFT` 에 '가슴'이 있는데 「가s슴 큰 여자들 어디 많아요?」가 통과했다.
             `_SEXUAL_HARD` 에 '섹스'가 있는데 「섹ㅅㅡ」가 통과했다.
       이제 정규화 여러 개를 받아 **하나라도 걸리면** 판정한다(_norm_strip/_norm_compose 주석).
+    ★★★ 2026-08-06 (3차) — **어절 정렬로 바꿨다.** 이 게이트가 오차단을 제일 많이 냈다:
+        「장애인 활동지원사 알려주세요」 → 장**애인** + '알려주세'(AT_BOT) → UNSAFE
+        「웹 개발 기초 배우고 싶어요」   → 개**발기**초                 → UNSAFE
+        「보건 분야 동향」              → 분**야동**향                 → UNSAFE
+      즉시 차단 + 남용 카운트가 붙는 목록이라 **오탐이 제일 비싸다.**
+      → FUSE_NONE. 어절 중간에서 시작하는 매칭은 한 건도 인정하지 않는다.
     """
     def _in(words):
-        return any(w in n for n in norms for w in words)
+        return _wmatch(segs, words, FUSE_NONE)
     if _in(_SEXUAL_HARD):
         return 'HARD'
     if _in(_SEXUAL_SOFT) and _is_at_bot(msg):
@@ -1973,7 +2147,14 @@ SAFETY_BLOCK_REPLY = (
 
 #  안전필터가 아니라 **우리 쪽 실패**인 finishReason 들.
 #  이건 사용자 발화와 무관하므로 「다시 말씀해 주세요」 쪽으로 보낸다.
-_OUR_FAULT = ('MAX_TOKENS', 'RECITATION', 'OTHER', 'LENGTH', 'MALFORMED_FUNCTION_CALL')
+#  ★★ 2026-08-06 — 'CALL_FAILED' 를 더한다. **호출 자체가 실패한 경우**다.
+#    왜 필요한가 — turn() 이 None 을 내면 _step 이 last_block 을 보고
+#    「안전필터가 막았나 우리 버그인가」를 가른다. 그런데 네트워크·타임아웃으로 죽으면
+#    last_block 은 **직전 호출의 낡은 값**이다. 그게 'SAFETY' 였으면 네트워크 장애인데
+#    「희롱을 막았다」로 분기해 SAFETY_BLOCK_REPLY 를 내보낸다. 정반대 응답이다.
+#    ⇒ 실패 경로에서 명시적으로 이 값을 박는다.
+_OUR_FAULT = ('MAX_TOKENS', 'RECITATION', 'OTHER', 'LENGTH', 'MALFORMED_FUNCTION_CALL',
+              'CALL_FAILED')
 
 
 #  ── 남용 카운터 (2026-08-05) ─────────────────────────────────────
@@ -2007,8 +2188,28 @@ def abuse_limits(profile):
 
     비례 계수(5턴당 경고 +1 · 3턴당 종료 +1)는 «비율 감각»으로 고른 값이다:
       바닥 3/6 에서 시작해 40턴쯤에 10/20 상한에 닿는다 → 대략 이탈률 25·50% 선.
+    ★★ 2026-08-06 (정정) — **분모가 틀렸다. 트롤이 스스로 문턱을 올리고 있었다.**
+      원래는 t = _turns(전체 턴)였다. 그런데 _turns 는 «남용한 턴»도 함께 센다.
+        6턴 대화에서 이탈 6회 → stop = 6 + 6//3 = 8   ← 6 < 8 이라 «안 잠긴다»
+      게다가 잠긴 뒤에도 _turns 가 계속 올라 3턴마다 문턱이 1씩 오르고
+      **차단이 저절로 풀렸다.** 벽에 대고 소리쳐서 자기 할당량을 늘리는 셈이다.
+
+      근거(원문 확인) — 이 분야는 전부 «좋은 활동»을 분모로 쓴다:
+        · Google SRE, Handling Overload(Client-Side Throttling) — 거절 확률의 분모가
+          **accepts** 다: "The number of requests **accepted by the backend**".
+          시도한 전체(requests)가 아니다.
+        · Gmail 발신자 가이드라인 — 기준이 절대 개수가 아니라 **비율**이다
+          ("Keep spam rates … below 0.3%").
+        · US 9882852(단계적 임시 차단) — 반복 위반이면 차단을 **늘린다**. 줄이지 않는다.
+
+    ⇒ 분모를 «정상적으로 오간 턴»(_turns − _abuse)으로 바꾼다.
+      설계 의도는 그대로다 — 40턴 대화의 이탈 6회는 여전히 안 잠긴다(good=34 → stop=17).
+      바뀌는 건 6턴에 6회 떠든 사람뿐이다(good=0 → stop=6 → 잠긴다).
+    ⚠ 이것만으로는 부족하다. 차단된 턴이 _turns 를 올리는 것도 함께 막았다 —
+      _step() 의 남용 게이트 주석 참고.
     """
-    t = int((profile or {}).get('_turns') or 0)
+    p = profile or {}
+    t = max(0, int(p.get('_turns') or 0) - int(p.get('_abuse') or 0))
     warn = min(ABUSE_WARN + t // 5, ABUSE_WARN_MAX)
     stop = min(ABUSE_STOP + t // 3, ABUSE_STOP_MAX)
     return warn, stop
@@ -2057,11 +2258,14 @@ def illegal_signal(msg):
     """
     m = str(msg or '')
     flat = m.replace(' ', '')
-    forms = (flat, _norm_evade(m), _norm_compose(m), _norm_strip(m))
     #  진로 문맥 예외 — 「마약수사관이 되고 싶어요」 같은 말은 세지 않는다.
     if _is_harm_career(flat):
         return []
-    return [w for w in _ILLEGAL_SIGNAL if any(w in f for f in forms)]
+    #  ★★★ 2026-08-06 (3차) — 여기도 어절 정렬로 통일한다. 차단은 안 하지만 **계측이
+    #    틀리면 판단이 틀린다.** 유령 매칭이 섞인 숫자로 「불법 요청이 늘었다」고 읽으면
+    #    없는 문제를 쫓게 된다. 4자 이상만 어절 중간을 인정한다(항목 대부분이 4자 이상).
+    seg = _segs(m)
+    return [w for w in _ILLEGAL_SIGNAL if _wmatch(seg, (w,), FUSE_LOOSE)]
 
 
 ABUSE_NOTE = (
@@ -2131,8 +2335,19 @@ def pre_check(msg):
     comp = _norm_compose(msg)
     strip = _norm_strip(msg)
 
-    def _hit(words):
-        return any(b in flat or b in norm or b in comp or b in strip for b in words)
+    #  ★★★ 2026-08-06 (3차) — **어절 경계를 지킨 채로 정규화한 것을 따로 만든다.**
+    #    위 flat/norm/comp/strip 은 어절이 다 붙어 버려서 「없던 낱말」이 생긴다.
+    #    실측 오차단 16건이 전부 여기서 나왔다(_wmatch 주석에 목록).
+    #    아래 seg 는 어절 시작 위치를 같이 들고 다닌다 → _wmatch 가 그걸 본다.
+    #  ⚠ flat/norm/comp/strip 은 **지우지 않는다** — 예외 판정(_is_harm_career 등)이 쓴다.
+    #    예외는 «통과시키는» 쪽이라 넓게 잡아도 안전하다. 좁히면 오히려 차단이 늘어난다.
+    seg = _segs(msg)
+
+    #  fuse 기본값이 FUSE_CRISIS 인 이유 — 이 함수에서 _hit 을 쓰는 건 자해·폭력뿐이고,
+    #  그쪽은 이 파일이 「놓치는 것이 더 나쁘다」고 못 박은 영역이다(위 2266행).
+    #  「정말죽고싶어」처럼 붙여 쓰면 '죽고싶'이 어절 중간이 되는데, 그걸 놓치면 안 된다.
+    def _hit(words, fuse=FUSE_CRISIS):
+        return _wmatch(seg, words, fuse)
 
     if _hit(SELF_HARM):                        # 자기 위해가 먼저다 — 욕설 판정보다 우선
         if not _is_career_not_crisis(flat):    # 단 '자살예방 상담사' 류는 진로 발화다(2026-08-04)
@@ -2143,16 +2358,26 @@ def pre_check(msg):
     #      「삼촌이 저한테 성관계를 요구해요」  → '성관계'(_SEXUAL_HARD) → 차단 + 남용 +1
     #      「몸파는 일 말고 다른 거 없을까요」  → 차단 + 카운트  (가장 절박한 사용자다)
     #    성적 피해도 「누구의 행동인가」를 낱말로는 못 가른다. 폭력과 완전히 같은 문제다.
-    if _hit(HARM_OTHERS) or _hit(_SEXUAL_HARM):
+    #  ⚠ _SEXUAL_HARM 만 FUSE_LOOSE(4자) 다. 이 목록은 '성관계'(3자)를 갖고 있는데
+    #    FUSE_CRISIS(3자) 로 두면 「적**성 관계**로 고민이에요」가 2층 LLM 을 부른다.
+    #    HARM_OTHERS 는 전부 2자('죽여'·'때려'·'강간')라 어절 정렬만 걸린다 —
+    #    그래서 「특**강 간**호」·「저 혼**자 해**요」가 자동으로 빠진다.
+    if _hit(HARM_OTHERS) or _hit(_SEXUAL_HARM, FUSE_LOOSE):
         #  진로·관용구는 여기서 공짜로 걸러낸다(LLM 을 안 부른다).
         #  나머지만 2층으로 보내 **누구의 행동인지** 본다 — 낱말로는 못 가른다.
         if not (_is_harm_career(flat) or _is_idiom_not_harm(flat)):
             return 'HARM'
     #  ★ 남은 성적 낱말(명백한 희롱)에도 **진로 예외**는 둔다 — 「음란물 예방 강사」.
     #    오늘 「성폭력 상담사」로 같은 버그를 겪고도 새 낱말표에 그대로 재현했다.
-    if _sexual_kind(msg, norm, comp, strip) and not _is_harm_career(flat):
+    if _sexual_kind(msg, seg) and not _is_harm_career(flat):
         return 'UNSAFE'
-    if any(b in flat for b in ABUSE) or any(b in norm for b in _ABUSE_VARIANT):
+    #  ★★★ 2026-08-06 (3차) — 욕설도 어절 정렬. 「제**조까**지 해봤어요」가 차단됐었다.
+    #  ⚠ **알면서 남기는 구멍** — 「아씨발」처럼 감탄사를 붙여 쓰면 '씨발'이 어절 중간이라
+    #    안 걸린다(띄어 쓴 「아 씨발」은 걸린다). 감탄사 예외를 두는 건 검토하고 **버렸다**:
+    #    「이발기」(미용 기계)가 '이'+'발기'로 갈려 오차단된다 — 우리 도메인에 실제로 있는 말이다.
+    #    이 파일의 설계가 원래 그렇다(1745행): 낱말표는 값싼 1차 필터, 작정한 우회는 LLM 이 받는다.
+    #    ⇒ 이 구멍은 word_boundary_test.py 에 «알려진 한계»로 박아 둔다. 조용히 두지 않는다.
+    if _wmatch(seg, ABUSE, FUSE_NONE) or _wmatch(seg, _ABUSE_VARIANT, FUSE_NONE):
         #  상대를 향한 욕설만 막는다. 혼잣말 좌절은 그대로 흘려보낸다.
         return 'UNSAFE' if _is_abuse_at_bot(msg, norm) else None
     return None
@@ -2402,6 +2627,16 @@ class ItdaEngine:
     #  HTTP 자체는 동기(urllib)다. async 전환 후에도 검증된 이 코드를 지키되,
     #  네트워크 I/O 를 asyncio.to_thread 로 던져 이벤트 루프를 막지 않는다.
     #  (quota 풀리면 팀처럼 httpx.AsyncClient 로 바꿀 수 있다 — 그때 E2E 검증 가능)
+    #  ★★ 2026-08-06 — 타임아웃·예산. 근거는 gemini_util.call 의 deadline 주석에 전부 적었다.
+    #    LLM_TIMEOUT  한 번의 HTTP 요청 상한. 예전엔 90초였다 — 실측 평균 2.6초의 **35배**다.
+    #      (골든셋 110초 / LLM 42회 = 2.6초. 2026-08-06 측정)
+    #      25초로 낮춘다: 평균의 ~10배. Gemini 개발자 포럼에 「1초 미만이던 게 5~10초」로
+    #      느려진 실사용 보고가 있는데, 그 열화까지 넉넉히 덮는 값이다.
+    #    LLM_DEADLINE 재시도·대기를 «전부 합친» 상한. 이게 없으면 25초여도 3회 곱해진다.
+    #      45초 — 1차 실패(25s) 뒤 429 대기가 길면 재시도를 «포기»한다. 그게 400초를 없앤다.
+    LLM_TIMEOUT = float(ENV.get('ITDA_LLM_TIMEOUT') or 25)
+    LLM_DEADLINE = float(ENV.get('ITDA_LLM_DEADLINE') or 45)
+
     async def gemini(self, prompt, schema, temp=0.7, think=None, system=None):
         """think 를 주면 그 호출만 사고량을 덮어쓴다(예/아니오 판정에 dynamic 사고를 쓰지 않게).
 
@@ -2441,9 +2676,11 @@ class ItdaEngine:
                    f'{self.model}:generateContent?key={key}')
             req = urllib.request.Request(url, data=body,
                                          headers={'Content-Type': 'application/json'})
-            return urllib.request.urlopen(req, timeout=90).read()
+            return urllib.request.urlopen(req, timeout=self.LLM_TIMEOUT).read()
 
-        j = await _gutil.call(_post, ENV, key=self.gemini_key)
+        j = await _gutil.call(_post, ENV, key=self.gemini_key,
+                              deadline=self.LLM_DEADLINE,
+                              call_timeout=self.LLM_TIMEOUT)
         # 과금 근거를 남긴다 — 사고 토큰은 화면에 안 보이므로 이걸로만 확인 가능
         #  cached: 프롬프트 캐싱으로 재사용된 입력 토큰. 있으면 그만큼 입력비가 싸진다.
         um = j.get('usageMetadata') or {}
@@ -2562,16 +2799,31 @@ class ItdaEngine:
             _TURN_CACHE[ck] = _TURN_CACHE.pop(ck)      # LRU 갱신
             return dict(hit)
 
+        #  ★★ 2026-08-06 — **예외를 여기서 받는다.** 예전엔 안 감쌌다.
+        #    gemini_util.call 은 실패하면 **None 이 아니라 RuntimeError 를 던진다.**
+        #    그래서 Gemini 가 흔들리면 예외가 controllers 의 broad catch 까지 올라가
+        #    대화가 그냥 끊겼다. ⚠ 아이러니하게도 SELF_CONSISTENCY=1(지금 값) 쪽만
+        #    취약했다 — N=3 경로는 gather(return_exceptions=True) 라 이미 견뎠다.
+        #  ⚠ last_block 을 반드시 박는다(_OUR_FAULT 주석 참고). 안 박으면 _step 이
+        #    직전 호출의 낡은 값을 읽어 네트워크 장애를 「안전필터 차단」으로 오해한다.
         n = max(1, int(self.SELF_CONSISTENCY))
-        if n == 1:
-            got = await self.gemini(prompt, self.turn_schema, self.TEMP_TURN, system=SYSTEM)
-        else:
-            outs = await asyncio.gather(
-                *(self.gemini(prompt, self.turn_schema, self.TEMP_TURN, system=SYSTEM)
-                  for _ in range(n)),
-                return_exceptions=True)
-            cands = [o for o in outs if isinstance(o, dict) and o.get('action')]
-            got = self._vote(cands, user_msg) if cands else None
+        got = None
+        try:
+            if n == 1:
+                got = await self.gemini(prompt, self.turn_schema, self.TEMP_TURN, system=SYSTEM)
+            else:
+                outs = await asyncio.gather(
+                    *(self.gemini(prompt, self.turn_schema, self.TEMP_TURN, system=SYSTEM)
+                      for _ in range(n)),
+                    return_exceptions=True)
+                cands = [o for o in outs if isinstance(o, dict) and o.get('action')]
+                if not cands:
+                    self.last_block = 'CALL_FAILED'
+                got = self._vote(cands, user_msg) if cands else None
+        except Exception as e:                                     # noqa: BLE001
+            print(f'[itda] turn() 호출 실패 — {type(e).__name__}: {str(e)[:90]}')
+            self.last_block = 'CALL_FAILED'
+            got = None
 
         #  캐시 저장 — **모든 action 을 담는다**(2026-07-30 2차).
         #    처음엔 SEARCH/DIRECT 만 담았는데(문구가 굳는 걸 피하려고) 흔들림이 안 잡혔다.
@@ -3501,8 +3753,23 @@ class ItdaEngine:
         """
         #  ★ 'minimal' 고정(2026-07-30) — 한 낱말 판정이다. 기본값(dynamic)이면
         #    화면에 안 보이는 사고 토큰이 출력 단가로 붙어, 이 게이트 하나가 본 턴에 맞먹는 비용을 낸다.
-        j = await self.gemini(GATE_ONTOPIC.format(msg=user_msg), _GATE_SCHEMA, 0.0,
-                              think='minimal')
+        #  ★★ 2026-08-06 — **fail-open 이다. 그리고 그게 맞다.**
+        #    gemini() 는 실패 시 None 이 아니라 예외를 던진다(gemini_util.call 참고).
+        #    위 도크스트링은 「실패(None)하면 낱말표로 판단한다」고 적어 뒀는데,
+        #    구현이 그걸 안 따라가서 **1턴차에 Gemini 가 흔들리면 첫 화면이 error** 였다.
+        #  왜 열어도 되나 — 이건 «접근 제어»가 아니라 «주제 관련성» 게이트다.
+        #    Saltzer & Schroeder(1975)·OWASP 의 fail-closed 원칙은 isAuthorized/validate
+        #    같은 접근 제어에 대한 것이고, 우리의 그 자리는 pre_check·is_injection 이다.
+        #    둘 다 **순수 코드**라 LLM 이 죽어도 이미 돌았다 — 안전층은 안 뚫린다.
+        #    여기서 새는 건 「레시피 알려줘」에 답이 나가는 것뿐이고, 반대로 닫으면
+        #    정상 진로 발화가 1턴차에 막힌다(홀드아웃 실측: 이탈 오판의 대가가 훨씬 크다).
+        #    Google SRE 의 graceful degradation — "Serve lower-quality … results to the user."
+        try:
+            j = await self.gemini(GATE_ONTOPIC.format(msg=user_msg), _GATE_SCHEMA, 0.0,
+                                  think='minimal')
+        except Exception as e:                                     # noqa: BLE001
+            print(f'[itda] utt_kind 실패(낱말표로 판단) — {type(e).__name__}: {str(e)[:80]}')
+            return None
         k = (j or {}).get('유형')
         return k if k in ('진로', '사정', '못정함', '되묻기', '착지요청', '이탈') else None
 
@@ -3516,9 +3783,15 @@ class ItdaEngine:
         #  ⚠ 「끄면 통과」로 만들면 안 된다 — 이탈 게이트가 통째로 죽어
         #    「레시피 알려줘」에도 카드가 나간다(골든셋 [이탈] 4건이 깨진다).
         if not self.UTT_KIND:
-            j = await self.gemini(GATE_ONTOPIC_BIN.format(msg=user_msg),
-                                  _GATE_SCHEMA_BIN, 0.0, think='minimal')
+            #  ★ 여기도 fail-open (위 utt_kind 주석에 근거를 전부 적었다).
+            try:
+                j = await self.gemini(GATE_ONTOPIC_BIN.format(msg=user_msg),
+                                      _GATE_SCHEMA_BIN, 0.0, think='minimal')
+            except Exception as e:                                 # noqa: BLE001
+                print(f'[itda] _on_topic 실패(통과시킴) — {type(e).__name__}: {str(e)[:80]}')
+                return True
             return True if j is None else bool(j.get('on_topic', True))
+        #  utt_kind 는 실패 시 None 을 낸다 → None != '이탈' → True. 자동으로 fail-open 이다.
         return (await self.utt_kind(user_msg)) != '이탈'
 
     async def _named_entity(self, db, user_msg, exact=False):
@@ -4208,14 +4481,23 @@ class ItdaEngine:
         #    축 하나당 ATTR_LIFT 칸만 당기므로 **동점 근처에서만** 작동한다.
         #  ⚠ 태그가 없는 직업(현재 30개·중공업 계열)은 그냥 안 당겨진다. 손해가 없다.
         #  끄려면 .env 에 ITDA_ATTR_LIFT=0.
+        #  ★★ 2026-08-06 — 「누구를」(obj_detail) 을 가중에 더한다.
+        #    이 축은 obj_type='사람' 인 109개에만 있고, 나머지는 None 이라 그냥 안 걸린다.
+        #    ⚠ 가중을 «두 배»로 준다. 이유 —
+        #      실측(checks/axis_split.py): 돌봄 계열에서 다른 축은 거의 안 갈리는데
+        #      이 축만 갈린다. 「할머니 돌보는 일」 활동유형 H=0.30 · 다루는대상 H=0.20 ·
+        #      **누구를 H=0.62**. 즉 이 축이 맞으면 그건 «훨씬 강한 신호»다.
+        #      (그래도 순위만 당긴다 — score 는 안 건드린다. 위 주석의 이유 그대로)
         if self.ATTR_LIFT > 0 and jobs:
             _acts = {x for x in as_list((profile or {}).get('활동유형')) if x}
             _objs = {x for x in as_list((profile or {}).get('다루는대상')) if x}
-            if _acts or _objs:
+            _who = (profile or {}).get('대상세부')
+            if _acts or _objs or _who:
                 _ranked = []
                 for _i, _j in enumerate(jobs):
                     _m = ((1 if _j.get('act_type') in _acts else 0)
-                          + (1 if _j.get('obj_type') in _objs else 0))
+                          + (1 if _j.get('obj_type') in _objs else 0)
+                          + (2 if (_who and _j.get('obj_detail') == _who) else 0))
                     _ranked.append((_i - _m * self.ATTR_LIFT, _i, _j))
                 #  같은 자리면 원래 RRF 순서를 지킨다(안정 정렬).
                 _ranked.sort(key=lambda x: (x[0], x[1]))
@@ -5022,6 +5304,16 @@ class ItdaEngine:
         db 는 요청마다 밖에서 받은 async 세션(get_db). 엔진은 커넥션을 안 들고 있다.
         """
         profile = profile or {}
+        #  ★★★ 2026-08-06 — **남용 종료 판정을 «_turns 를 올리기 전»으로 옮겼다.**
+        #    예전엔 아래에서 _turns 를 +1 한 «다음»에 판정했다. 그런데 문턱이 턴에 비례하므로
+        #    잠긴 사람이 계속 보낼수록 _turns 가 올라 **3턴마다 차단이 저절로 풀렸다.**
+        #    벽에 대고 소리쳐서 자기 할당량을 늘리는 셈이다(abuse_limits 주석에 근거).
+        #  ⇒ 이미 잠긴 세션은 여기서 끝낸다. _turns 도 _now_msg 도 안 건드린다.
+        #    LLM 호출 0회는 그대로다 — 트롤이 계속 보내도 비용이 안 는다.
+        if int(profile.get('_abuse') or 0) >= abuse_limits(profile)[1]:
+            return {'kind': 'blocked', 'profile': profile, 'reply': ABUSE_STOP_REPLY,
+                    'missing': missing_slots(profile), 'can_land': can_land(profile),
+                    'card': None}
         #  ★ 턴 수 (2026-08-04) — 「이 대화가 처음인가」를 **엔진이 직접** 센다.
         #    _history 로 대신 알 수도 있지만 그건 호출자(controllers·시험 하네스)가 채우는 값이라,
         #    엔진의 판단이 호출자 구현에 묶인다. 이탈 게이트가 이 값을 본다(아래).
@@ -5094,10 +5386,9 @@ class ItdaEngine:
         #  ★ 남용으로 이미 닫힌 세션이면 더 진행하지 않는다(bump_abuse 주석 참고).
         #    여기서 끊으므로 LLM 호출이 0이다 — 트롤이 계속 보내도 비용이 안 는다.
         #  ⚠ 문턱은 «대화 길이에 비례»한다(abuse_limits) — 고정값이 아니다.
+        #  ⚠ 종료 판정은 **함수 맨 앞으로 옮겼다**(_turns 를 올리기 전에 봐야 해서).
+        #    여기서는 경고 문턱만 쓴다. _STOP_N 은 아래 경고 문구 계산에 쓰인다.
         _WARN_N, _STOP_N = abuse_limits(profile)
-        if int(profile.get('_abuse') or 0) >= _STOP_N:
-            return {'kind': 'blocked', 'profile': profile, 'reply': ABUSE_STOP_REPLY,
-                    'missing': missing_slots(profile), 'can_land': can_land(profile), 'card': None}
 
         #  ★ 불법 신호 — **차단하지 않는다. 세기만 한다**(illegal_signal 주석 참고).
         #    판정 권한은 계속 LLM(문맥)이 갖는다. 여기서 하는 건 「무슨 일이 있었는지 아는 것」뿐이다.
@@ -5414,6 +5705,11 @@ class ItdaEngine:
         profile, _filled = fill_object_slot(profile, user_msg)
         if _filled:
             print(f'[itda] 다루는대상 코드보완: {_filled}')
+        #  ★ 「누구를」 — fill_obj_detail 주석 참고. _OBJ_MARK 이 이미 구별해서 보던 것을
+        #    '사람' 하나로 뭉개 버리던 손실을 여기서 되찾는다.
+        profile, _who = fill_obj_detail(profile, user_msg)
+        if _who:
+            print(f'[itda] 누구를 코드보완: {_who}')
         profile = note_slot_turns(profile)      # 축이 '몇 턴째에' 찼는지 — one_shot_land 용
         #  ★ '모르겠다' 카운터 초기화 (2026-08-05 좁힘) — 예전엔 `if new_slots:` 였다.
         #    슬롯이 **하나라도** 들어오면 사다리가 1단으로 돌아갔는데, 그중엔

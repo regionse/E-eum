@@ -22,8 +22,11 @@ _seen = []
 _orig = gutil.call
 
 
-async def _spy(make_request, env, *, key=None, max_retry=2):
-    j = await _orig(make_request, env, key=key, max_retry=max_retry)
+#  ⚠ **kw 로 받는다 — gutil.call 의 시그니처를 여기서 «복제»하면 안 된다.
+#    2026-08-06 에 call() 에 deadline 인자가 붙었는데, 예전처럼 인자를 나열해 뒀으면
+#    이 스크립트가 TypeError 로 죽었을 것이다(호출부는 6곳인데 여기만 시그니처를 베낀다).
+async def _spy(make_request, env, **kw):
+    j = await _orig(make_request, env, **kw)
     _seen.append(j)
     return j
 
