@@ -24,6 +24,7 @@ from sqlalchemy import text                        # noqa: E402
 
 from app.itda.db import async_session              # noqa: E402
 import app.itda.session as S                       # noqa: E402
+from app.itda.env import ENV                       # noqa: E402
 
 SID = '__test_session_db__'
 DDL = """
@@ -60,7 +61,33 @@ def chk(ok, name, detail=''):
         bad.append(name)
 
 
+#  ★★ 2026-08-07 — **원격 DB 에서는 아예 안 돈다.**
+#    도크스트링에 「운영/시연 DB 에서 돌리지 마라」고 적어 뒀지만, 경고는 안 읽힌다.
+#    실제로 공용 RDS 에서 돌아 itda_session 이 사라졌고, .env 는 ITDA_SESSION_DB=1 이라
+#    서버가 매번 메모리 전용으로 폴백했다 — 재시작하면 진행 중 대화가 전부 날아가는 상태로
+#    며칠을 돌았다. 그리고 아무도 몰랐다(‘조용한 실패’ 그 자체다).
+#  ⇒ **글로 부탁하지 말고 코드가 막는다.** 이 파일의 다른 원칙과 같다.
+def _guard():
+    host = (ENV.get('DB_HOST') or '').strip().lower()
+    local = ('localhost', '127.0.0.1', '::1', '')
+    if host in local or host.startswith('192.168.') or host.startswith('10.'):
+        return
+    print('=' * 78)
+    print('  🔴 원격 DB 에서는 돌리지 않습니다.')
+    print(f'     DB_HOST = {host}')
+    print('  이 검사는 itda_session 을 DROP 했다가 다시 만듭니다 —')
+    print('  «테이블이 없을 때도 서버가 사는가»를 재현해야 해서입니다.')
+    print('  공용/운영 DB 에서 돌리면 진행 중인 대화가 전부 사라집니다.')
+    print()
+    print('  로컬 MySQL 을 띄우고 .env 의 DB_HOST 를 localhost 로 바꾼 뒤 돌리세요.')
+    print('  (정말 여기서 돌려야 한다면 --i-know-this-drops-sessions 를 붙이세요)')
+    print('=' * 78)
+    sys.exit(2)
+
+
 async def main():
+    if '--i-know-this-drops-sessions' not in sys.argv:
+        _guard()
     print(f'ITDA_SESSION_DB 설정값 → SESSION_DB={S.SESSION_DB}\n')
 
     async with async_session() as db:

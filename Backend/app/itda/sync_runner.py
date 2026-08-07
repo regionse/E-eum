@@ -44,10 +44,16 @@ STEPS = [
     {
         'key': 'load',
         'title': '데이터 적재',
-        'desc': '자격증·강좌 원본 데이터 동기화',
+        'desc': '자격증·강좌·시험일정 원본 데이터 동기화',
+        #  ★ 2026-08-05 — **시험일정을 여기 넣는다.** 빠져 있었다.
+        #    화면의 「최신화」 버튼이 자격증·강좌만 갱신하고 exam_schedule 은 안 건드려서,
+        #    카드에 「접수 ~2026-08-02 (마감)」 같은 지난 회차가 계속 나갔다(실측).
+        #    사용자가 카드에서 제일 먼저 보는 게 그 날짜다 — 여기가 낡으면 카드 전체가 낡는다.
+        #    ※ Q-Net API 는 당해년도만 준다. 그래서 자주 돌릴수록 다음 회차가 빨리 잡힌다.
         'commands': [
             ['-m', 'app.itda.scripts.load_certification'],
             ['-m', 'app.itda.scripts.load_course'],
+            ['-m', 'app.itda.scripts.load_exam_schedule'],
         ],
     },
     {
