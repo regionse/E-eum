@@ -162,6 +162,25 @@ export async function request(
   const wasLoggedIn = !!token
   if (res.status === 401) {
     clearToken()
+    //  ★★ 2026-08-09 — **토큰만 지우면 화면은 «로그인 상태»로 남는다.**
+    //    로그인 여부를 그리는 건 store/auth.jsx 인데, 그건 eum_token 이 아니라
+    //    **eum_user** 라는 별도 키를 본다. 그래서 401 뒤에
+    //      · 헤더는 「로그아웃 · 마이페이지」를 그대로 보여주고
+    //      · 모든 요청은 토큰이 없어 계속 실패한다
+    //    는 상태가 됐다. 「로그인이 만료되었어요」가 «반복해서» 뜨던 것의 정체다.
+    //    (브라우저에서 직접 확인 — 토큰만 넣었더니 화면은 「로그인이 필요해요」였고,
+    //     eum_user 를 넣으니 그제서야 로그인 상태가 됐다. 두 키가 따로 논다)
+    //  ⚠ 여기서 이벤트를 쏘거나 리다이렉트하지 않는다 — client.js 는 화면을 모른다.
+    //    키만 맞춰 두면 «다음 렌더»부터 auth.jsx 가 로그아웃 상태로 읽는다.
+    //  ⚠ 토큰이 원래 없던 요청(=로그인 시도)에서는 건드리지 않는다. 지울 것도 없다.
+    if (wasLoggedIn) {
+      try {
+        localStorage.removeItem('eum_user')
+        localStorage.removeItem('eum_family')
+      } catch {
+        // localStorage 접근이 제한된 환경
+      }
+    }
   }
   if (!res.ok) {                                  // 백엔드가 준 detail(409 중복·400 약관·422 검증)을 그대로
     let msg = res.status === 401
