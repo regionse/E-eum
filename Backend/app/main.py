@@ -54,7 +54,9 @@ from app.mypage.router import router as mypage_router
 def _cors_origins() -> list[str]:
     origins = os.getenv(
         "ALLOWED_ORIGINS",
-        (
+        (            
+            "https://eum-r-e.kr,"
+            "https://www.eum-r-e.kr,"
             "http://localhost:5173,"
             "http://127.0.0.1:5173"
         ),
@@ -147,6 +149,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://eum-r-e.kr,"
+        "https://www.eum-r-e.kr,"
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
