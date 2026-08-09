@@ -68,7 +68,7 @@ MAX_POLICY_TEXT_LENGTH = 800
 MAX_CONDITION_TEXT_LENGTH = 1600
 
 # 시스템 프롬프트와 동일한 추가 질문 상한
-MAX_FOLLOW_UP_QUESTION_COUNT = 3
+MAX_FOLLOW_UP_QUESTION_COUNT = 2
 
 
 # =========================================================
@@ -873,7 +873,7 @@ def _build_user_message(
     can_ask_follow_up = (
         follow_up_question_count
         < MAX_FOLLOW_UP_QUESTION_COUNT
-    )       # 추가 질문 가능 여부 판단. (질문 3개 초과 -> 불가능으로 판단)
+    )       # 추가 질문 가능 여부 판단. (질문 2개 초과 -> 불가능으로 판단)
 
     request_stage = (
         "follow_up_chat"
