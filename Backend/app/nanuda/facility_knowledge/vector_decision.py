@@ -14,10 +14,54 @@ ALLOWED_FACILITY_TYPES = {
 }
 
 
+def _normalize_hit(hit):
+    """Pinecone SDK 버전에 관계없이 검색 결과를 dict로 통일한다."""
+    if isinstance(hit, dict):
+        normalized = dict(hit)
+    elif hasattr(hit, "model_dump"):
+        # Pinecone SDK 9의 Hit는 Pydantic 객체이며,
+        # by_alias=True일 때 _id, _score 키로 변환된다.
+        normalized = hit.model_dump(by_alias=True)
+    else:
+        normalized = {}
+
+    fields = normalized.get("fields")
+    if fields is None:
+        fields = getattr(hit, "fields", None)
+
+    vector_score = normalized.get("_score")
+    if vector_score is None:
+        vector_score = normalized.get("score")
+    if vector_score is None:
+        vector_score = normalized.get("score_")
+    if vector_score is None:
+        vector_score = getattr(hit, "score_", None)
+
+    hit_id = normalized.get("_id")
+    if hit_id is None:
+        hit_id = normalized.get("id")
+    if hit_id is None:
+        hit_id = normalized.get("id_")
+    if hit_id is None:
+        hit_id = getattr(hit, "id_", None)
+
+    normalized["fields"] = fields or {}
+    normalized["_id"] = hit_id
+    normalized["_score"] = (
+        float(vector_score)
+        if vector_score is not None
+        else None
+    )
+
+    return normalized
+
+
 def get_best_hit_by_facility_type(hits):
     best_hits = {}
 
-    for hit in hits:
+    for raw_hit in hits:
+        hit = _normalize_hit(raw_hit)
+
         facility_type = hit["fields"].get(
             "facility_type"
         )
