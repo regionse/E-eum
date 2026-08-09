@@ -84,6 +84,18 @@ async def lifespan(app: FastAPI):
 
     print("데이터베이스 초기화가 완료되었습니다.")
 
+    #  ★ 2026-08-08 — 잇다 검색(Pinecone) 연결을 미리 데운다.
+    #    실측: 클라이언트 생성에 5.28초가 걸리고 두 번째부터는 0.00초다.
+    #    데우지 않으면 «서버 재시작 후 첫 사용자»가 그 5.3초를 혼자 문다
+    #    (검색이 붙는 턴이 11.4초까지 갔다 — 챗봇에서 그 침묵은 그 자체로 실패다).
+    #  ⚠ 기동을 막지 않는다. 실패해도 서버는 그대로 뜬다(첫 검색이 예전처럼 느릴 뿐).
+    #  ⚠ 태스크를 **app.state 에 붙들어 둔다.** create_task 의 반환값을 아무도 안 잡으면
+    #    파이썬이 실행 도중에 가비지 컬렉트해 버린다(공식 문서가 경고하는 그 함정).
+    #    실제로 그래서 첫 시도에 예열 로그가 아예 안 찍혔다(2026-08-08 실측).
+    import asyncio
+    from app.itda import match as _itda_match
+    app.state._itda_warmup = asyncio.create_task(_itda_match.warmup())
+
     yield
 
     await engine.dispose()

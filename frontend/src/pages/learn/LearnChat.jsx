@@ -178,8 +178,15 @@ export default function LearnChat() {
     } finally { setSaving(false) }
   }
 
+  //  ★ 2026-08-07 — maxWidth 960 → 1240.
+  //    **채팅 페이지만 사이트 기본(--maxw 1080)보다 «좁았다».**
+  //    미래설계지도 카드가 세로로 길어 한 화면에 안 들어왔다(실사용 신고).
+  //    카드는 .bubble(max-width 78%) 밖이라 컨테이너 폭을 그대로 쓴다 —
+  //    넓히면 줄바꿈이 줄어 카드가 «짧아진다». 높이를 늘리는 것보다 효과가 크다.
+  //  ⚠ 이 주석을 return( 바로 뒤에 «JSX 주석»으로 넣었다가 화면이 통째로 죽었다(500).
+  //    return 이 최상위 요소를 둘 가지게 되어 파싱이 깨진다. 주석은 return «밖»에 둔다.
   return (
-    <div className="container page" style={{ maxWidth: 960 }}>
+    <div className="container page" style={{ maxWidth: 1240 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: 24, letterSpacing: '-.02em', margin: 0 }}>🌱 잇다</h1>
@@ -203,9 +210,16 @@ export default function LearnChat() {
           </div>
           {/*  높이를 화면에 맞춘다(2026-07-30) — 고정 500px 이라 작은 화면(667×714 실측)에서는
                대화창이 화면을 넘겨 '바깥 스크롤 + 안쪽 스크롤'이 겹치고, 정작 아래 빈 공간은 남았다.
-               미래설계지도는 긴 카드라 좁은 창에서 계속 스크롤해야 했다. clamp 로 화면에 맞춘다. */}
+               미래설계지도는 긴 카드라 좁은 창에서 계속 스크롤해야 했다. clamp 로 화면에 맞춘다.
+
+               ★ 2026-08-07 — 최대 620 → 820. 1080p 노트북에서 620 은 카드 절반만 보였다.
+               ⚠ 빼는 값(300 → 270)은 «조심해서» 줄였다. 이 위로 헤더 96 + 제목 74 +
+                 글자크기 40, 아래로 입력창 60 + 안내 30 이 있다. 더 줄이면 «입력창이
+                 화면 밖»으로 나간다 — 그건 지금보다 나쁘다.
+               ⚠ 이 주석을 «속성 사이»에 넣었다가 파싱이 깨졌다(500). JSX 속성 목록
+                 안에는 {/*…*/} 를 못 쓴다. 주석은 여는 태그 «위»에 둔다. */}
           <div className="chat-wrap" role="log" aria-live="polite" ref={wrapRef}
-            style={{ height: 'clamp(320px, calc(100vh - 300px), 620px)',
+            style={{ height: 'clamp(320px, calc(100vh - 270px), 820px)',
                      fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
               <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal}
@@ -407,7 +421,15 @@ function Examples({ items, onPick }) {
 }
 
 // 로딩 표시 (2026-07-31)
-//  응답이 3~10초 걸리므로 그 동안 '살아있다'는 신호가 필요하다.
+//  응답이 걸리는 동안 '살아있다'는 신호가 필요하다.
+//  ★★ 2026-08-09 실측으로 구간을 다시 잡았다 — 예전 주석의 「3~10초」는 낡았다.
+//    턴 안에서 무엇이 얼마나 걸리는지 직접 쟀다(호출별):
+//      일반 턴 «1.3~1.9초»   유해게이트 1.0 + 본문 1.2 를 **나란히** 돌린다(asyncio.gather)
+//      카드 턴 «7.2초»       위 + 대분류 0.8 → 검색 1.7 → 고르기 1.0 → 대안검색 0.7 (순차)
+//    ⇒ 예전 구간(0/3/6/10초)은 실제 진행과 어긋났다. 3초에 「정리하고 있어요」라고 했지만
+//      그때는 이미 검색 중이었다. 구간을 실측에 맞춘다.
+//    ⚠ 일반 턴은 «1.3초»에 끝나므로 사실상 첫 문구만 보인다. 그게 맞다 — 빠른 답에
+//      단계를 보여줄 이유가 없다.
 //  ※ 단계 문구를 시간으로 추측해 바꾸는 방식은 2026-07-30 에 폐기했다(실제 진행과 어긋나 산만했다).
 //    대신 ①문구는 하나로 고정 ②경과 초를 실제로 세어 보여주고 ③오래 걸리면 멈출 수 있게 한다.
 //    경과 시간은 추측이 아니라 사실이라 어긋날 일이 없다.
@@ -423,11 +445,13 @@ function Examples({ items, onPick }) {
 //    ※ 참고 — Gnewuch et al. (BISE 2022, N=202): 2.3초 지연은 **초보 사용자**에게
 //      오히려 사회적 실재감을 높였다(b=0.69, p<0.05). 우리 사용자는 그쪽이다.
 //      그러니 목표는 0초가 아니라 「4초 선을 넘을 때 자연스럽게 말 걸기」다.
+//  구간은 실측 기준이다 — 카드 턴의 실제 순서(정리 → 검색 → 고르기)와 맞춰 놓았다.
 const WAIT_LINES = [
   [0, '네, 듣고 있어요…'],
-  [3, '말씀해 주신 걸 정리하고 있어요…'],
-  [6, '비슷한 일들을 찾아보는 중이에요…'],
-  [10, '조금만요, 거의 다 됐어요…'],
+  [2, '말씀해 주신 걸 정리하고 있어요…'],   // 본문 호출이 끝나갈 무렵
+  [4, '비슷한 일들을 찾아보는 중이에요…'],   // 검색이 도는 구간
+  [6, '어느 쪽이 맞을지 보고 있어요…'],      // 고르기(llm_pick)
+  [9, '조금만요, 거의 다 됐어요…'],
 ]
 
 function TypingBubble({ onCancel }) {
@@ -518,7 +542,12 @@ function GoalCard({ goal, alternatives, onSave }) {
                 1 · 무료 강의 수강 신청{' '}
                 <span className="muted" style={{ fontWeight: 400, fontSize: 12.5 }}>K-MOOC · 무료</span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/*  ★ 2026-08-07 — 세로 한 줄 → «가로로 채우는» 격자.
+                   강좌 3개가 세로로 쌓여 카드가 그만큼 길어졌다(1개당 ~56px).
+                   auto-fit 이라 좁은 화면에서는 자동으로 한 줄씩 = 예전과 같다.
+                   280px 아래로는 제목이 깨져서 그걸 최소폭으로 잡았다. */}
+              <div style={{ display: 'grid', gap: 10,
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
                 {goal.courses.map((c, i) => (
                   <button key={i} onClick={() => setOpenCourse(c)} className="card card-hover"
                     style={{ textAlign: 'left', cursor: 'pointer', padding: '13px 16px', display: 'block', width: '100%' }}>

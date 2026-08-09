@@ -46,10 +46,10 @@ export function createCareGroup({
 }) {
   return request('/care-groups', {
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       user_id: userId,
       relationships,
-    }),
+    },
   })
 }
 
@@ -84,10 +84,10 @@ export function createInviteCode({
 }) {
   return request('/invite-codes', {
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       user_id: userId,
       care_group_id: careGroupId,
-    }),
+    },
   })
 }
 
@@ -98,11 +98,11 @@ export function joinCareGroup({
 }) {
   return request('/invite-codes/join', {
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       user_id: userId,
       invite_code: inviteCode.toUpperCase(),
       relationships: relationships || null,
-    }),
+    },
   })
 }
 
@@ -117,11 +117,11 @@ export function createFamilyLetter({
 }) {
   return request('/family-letters', {
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       user_id: userId,
       care_group_id: careGroupId,
       content,
-    }),
+    },
   })
 }
 
@@ -246,10 +246,10 @@ export function recommendFacility({
     {
       method: 'POST',
       signal,
-      body: JSON.stringify({
+      body: {
         latitude,
         longitude,
-      }),
+      },
     },
   )
 }

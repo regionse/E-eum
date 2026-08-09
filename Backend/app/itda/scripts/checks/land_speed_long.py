@@ -41,8 +41,8 @@ _CODE_FILLS = []
 _orig_fill = core.fill_object_slot
 
 
-def _spy_fill(p, user_msg):
-    p2, got = _orig_fill(p, user_msg)
+def _spy_fill(p, user_msg, *a, **kw):
+    p2, got = _orig_fill(p, user_msg, *a, **kw)
     if got:
         _CODE_FILLS.append(got)
     return p2, got

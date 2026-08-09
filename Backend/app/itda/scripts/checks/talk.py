@@ -133,7 +133,10 @@ async def main():
                 if g.get(k):
                     print(f'     {k}: {str(g[k])[:160]}')
             if g.get('certs'):
-                print(f'     자격증: {[c.get("name") if isinstance(c, dict) else c for c in g["certs"]][:4]}')
+                #  ★ 2026-08-08 — 키가 'name' 이 아니라 'cert' 다. 그동안 자격증이 멀쩡히
+                #    들어있는데도 [None] 로 찍혀, 이 도구를 보는 사람이 「자격증이 안 나온다」고
+                #    오해할 수 있었다. 프론트(LearnChat.jsx CertRow)는 s.cert 로 옳게 읽고 있다.
+                print(f'     자격증: {[c.get("cert") if isinstance(c, dict) else c for c in g["certs"]][:4]}')
             if g.get('courses'):
                 print(f'     강좌: {len(g["courses"])}개')
         if r.alternatives:
