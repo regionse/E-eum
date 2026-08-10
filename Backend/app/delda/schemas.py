@@ -462,6 +462,24 @@ class PolicyRecommendationRequest(BaseModel):
     )
 
 
+class PolicyLookupRequest(BaseModel):
+    """
+    사용자가 알고 있는 정책명을 직접 검색할 때 사용하는 요청 Schema.
+
+    맞춤 추천이 아니므로 돌봄 상황 등의 구조화 정보는 받지 않는다.
+    """
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid",
+    )
+
+    policy_name: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+
 class PolicyRecommendationContext(
     PolicyRecommendationRequest
 ):
