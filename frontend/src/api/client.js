@@ -109,8 +109,17 @@ export async function request(
           : {}),
       },
 
+      //  ★★ 2026-08-07 — **이미 문자열이면 그대로 보낸다.**
+      //    예전엔 무조건 JSON.stringify 를 했다. 그런데 share.js·mypage.js 의 POST 7곳이
+      //    «본문을 미리 문자열로 만들어» 넘기고 있었고, 그러면 문자열을 «한 번 더» 감싼다:
+      //        넘긴 것  {"user_id":1,"invite_code":"ABC123"}
+      //        나간 것 "{\"user_id\":1,\"invite_code\":\"ABC123\"}"    ← 객체가 아니라 문자열
+      //    서버(FastAPI)는 객체를 기대하므로 본문을 못 읽는다.
+      //    실제로 «가족방 만들기·초대코드·참여·가족편지·기관추천·동의·탈퇴»가 전부 이랬다.
+      //  ⇒ 호출부 7곳을 고쳤고(body 를 객체로), 여기서도 «한 번 더» 막는다.
+      //    이 한 줄이 있었으면 애초에 안 터졌다. 앞으로 누가 실수해도 여기서 걸린다.
       body: body
-        ? JSON.stringify(body)
+        ? (typeof body === 'string' ? body : JSON.stringify(body))
         : undefined,
 
       // 기존 ctrl.signal 그대로 사용
@@ -153,6 +162,34 @@ export async function request(
   const wasLoggedIn = !!token
   if (res.status === 401) {
     clearToken()
+    //  ★★ 2026-08-09 — **토큰만 지우면 화면은 «로그인 상태»로 남는다.**
+    //    로그인 여부를 그리는 건 store/auth.jsx 인데, 그건 eum_token 이 아니라
+    //    **eum_user** 라는 별도 키를 본다. 그래서 401 뒤에
+    //      · 헤더는 「로그아웃 · 마이페이지」를 그대로 보여주고
+    //      · 모든 요청은 토큰이 없어 계속 실패한다
+    //    는 상태가 됐다. 「로그인이 만료되었어요」가 «반복해서» 뜨던 것의 정체다.
+    //    (브라우저에서 직접 확인 — 토큰만 넣었더니 화면은 「로그인이 필요해요」였고,
+    //     eum_user 를 넣으니 그제서야 로그인 상태가 됐다. 두 키가 따로 논다)
+    //  ★ 2026-08-10 — 어제 주석(「키만 맞춰 두면 다음 렌더부터 로그아웃으로 읽는다」)의
+    //    **전제가 틀려서 지웠다.** auth.jsx 는 localStorage 를 useState «초기화 때 한 번만»
+    //    읽는다(같은 탭 쓰기는 storage 이벤트도 안 낸다). 즉 키를 지워도 헤더는 로그인
+    //    상태로 남고, F5 전엔 복구가 안 됐다(에이전트 검토 + 코드로 확인).
+    //  ⇒ 사실만 방송한다 — 「세션이 끝났다」. 화면을 아는 건 여전히 auth.jsx 쪽이다
+    //    (거기서 이 이벤트를 듣고 상태를 내린다). 리다이렉트는 여기서 하지 않는다.
+    //  ⚠ 토큰이 원래 없던 요청(=로그인 시도)에서는 건드리지 않는다. 지울 것도 없다.
+    if (wasLoggedIn) {
+      try {
+        localStorage.removeItem('eum_user')
+        localStorage.removeItem('eum_family')
+      } catch {
+        // localStorage 접근이 제한된 환경
+      }
+      try {
+        window.dispatchEvent(new CustomEvent('eum:session-expired'))
+      } catch {
+        // 테스트 등 window 가 없는 환경
+      }
+    }
   }
   if (!res.ok) {                                  // 백엔드가 준 detail(409 중복·400 약관·422 검증)을 그대로
     let msg = res.status === 401
@@ -178,8 +215,27 @@ export async function request(
                 )
               : msg
       }
+      //  ★★ 2026-08-07 — **실제 응답을 콘솔에 남긴다.**
+      //    화면에 「[object Object]」만 뜨고 원인을 못 찾는 일이 있었다(가족 초대코드).
+      //    detail 이 문자열도 배열도 아닌 모양으로 오면 위 분기가 전부 빠져서
+      //    무슨 일이 있었는지 알 방법이 없다. 개발자 도구에 원문을 남긴다.
+      if (typeof msg !== 'string') {
+        console.error('[api] detail 이 문자열이 아닙니다', path, res.status, j)
+      }
     } catch {
       // 응답 본문 없음
+    }
+
+    //  ★★ 2026-08-07 — **메시지를 «반드시 문자열»로 만든다.**
+    //    new Error(객체) 를 하면 message 가 «"[object Object]"» 라는 문자열이 되고,
+    //    화면엔 그 여섯 글자만 뜬다. 실제로 가족 연결 화면에서 그게 나왔다.
+    //    사용자는 무엇이 잘못됐는지 알 수 없고, 우리도 못 고친다.
+    if (typeof msg !== 'string') {
+      try {
+        msg = JSON.stringify(msg)
+      } catch {
+        msg = `요청 실패 (${res.status})`
+      }
     }
 
     throw new Error(msg)

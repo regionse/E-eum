@@ -17,6 +17,13 @@ sys.path.insert(0, r'C:\e-um-1\E-eum-team\Backend')
 
 from app.itda.db import async_session          # noqa: E402
 from app.itda.itda_core import ItdaEngine      # noqa: E402
+from app.itda.prompts import FORBIDDEN_ASK     # noqa: E402
+
+
+def _ask_rule():
+    """FORBIDDEN_ASK(평평한 꼴)를 «띄어쓰기 허용» 정규식으로 — holdout2._ask_rule 과 동일."""
+    alt = '|'.join(r'\s*'.join(re.escape(ch) for ch in t) for t in FORBIDDEN_ASK)
+    return re.compile(f'(?:{alt})(?![^.!?\n]*(?:몰라|모르))')
 
 #  ── 단일 턴 ─────────────────────────────────────────────────────
 SINGLE = [
@@ -55,7 +62,7 @@ _BAD = [
     (re.compile(r'학력부담|체력부담|비용부담|시간부족|대인부담'), '제약 딱지를 되돌려줌'),
     (re.compile(r'\*\*'), '마크다운 별표(프론트에 파서 없음)'),
     (re.compile(r'취미|쉴 때|시간 가는 줄|재밌어 보'), '여유를 전제한 질문'),
-    (re.compile(r'어떤 일을 하고 싶|무슨 일을 하고 싶|어떤 직업을'), '프롬프트 최우선 금지 질문'),
+    (_ask_rule(), '프롬프트 최우선 금지 질문'),   # ★ 2026-08-10 표면형을 prompts 와 공유
 ]
 
 

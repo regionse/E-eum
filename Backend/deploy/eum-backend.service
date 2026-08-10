@@ -1,0 +1,60 @@
+#  이음 백엔드 — systemd 유닛 (우분투 EC2)
+#
+#  왜 필요한가 (2026-08-09 서버 실측)
+#    지금 백엔드는 손으로 띄운 맨 프로세스다:
+#      ubuntu 190945 ... /home/ubuntu/E-eum/Backend/.venv/bin/python -m uvicorn app.main:app
+#      ... Ssl  Aug07  5:43
+#    ⇒ ① 죽으면 «안 돌아온다»  ② 재부팅하면 «사라진다»  ③ 로그가 어디 있는지 모른다
+#    발표(8/11) 전날 밤 인스턴스가 한 번 튕기면 그걸로 끝인데, 그게 이 프로젝트에서
+#    유일하게 «되돌릴 수 없는» 사고다.
+#
+#  까는 법 (서버 xterm 에서)
+#    sudo cp /home/ubuntu/E-eum/Backend/deploy/eum-backend.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    kill 190945                       ← 손으로 띄운 옛 프로세스를 «먼저» 내린다(포트 충돌)
+#    sudo systemctl enable --now eum-backend
+#    systemctl status eum-backend      ← active (running) 확인
+#
+#  쓰는 법
+#    sudo systemctl restart eum-backend    배포 후 재시작 (kill + nohup 을 대신한다)
+#    journalctl -u eum-backend -f          로그 실시간
+#    journalctl -u eum-backend -n 200      최근 200줄
+#
+#  ⚠ 이 파일을 고쳐도 바로 반영 안 된다 — 반드시 daemon-reload 를 다시 해야 한다.
+
+[Unit]
+Description=Eum backend (FastAPI/uvicorn)
+#  네트워크가 «실제로 올라온 뒤» 뜨게 한다. network.target 만으로는 부팅 직후
+#  RDS·Pinecone 이름풀이가 실패할 수 있다.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/E-eum/Backend
+
+#  ⚠ 한글 로그가 깨지지 않게 — 없으면 cp949/ascii 로 떨어져 로그 줄에서 턴이 죽는다
+#    (로컬 restart.ps1 에도 같은 이유로 들어가 있다).
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUNBUFFERED=1
+
+#  ⚠ --host 127.0.0.1 을 «유지»한다. 0.0.0.0 으로 열면 nginx 를 건너뛰고
+#    8000 포트가 인터넷에 그대로 노출된다(TLS 도 rate limit 도 없이).
+ExecStart=/home/ubuntu/E-eum/Backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+#  죽으면 되살린다. 다만 «설정이 틀려서» 계속 죽는 경우엔 무한 재시작을 막는다 —
+#  JWT_SECRET_KEY 가 없으면 이제 기동이 실패하는데(main.py lifespan),
+#  그걸 초당 한 번씩 영원히 재시도하면 로그만 뒤덮인다.
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+#  종료할 때 워커가 정리될 시간을 준다(진행 중인 LLM 호출이 최대 25초까지 간다)
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

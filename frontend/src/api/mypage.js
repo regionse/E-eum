@@ -46,8 +46,10 @@ export function updateUserConsents(
   return request(
     `/mypage/users/${userId}/consents`,
     {
+      //  ⚠ 2026-08-07 — JSON.stringify(values) 였다. request() 가 «또» 문자열로 만들어서
+      //    서버에 객체가 아니라 문자열이 갔다. body 는 «객체 그대로» 넘긴다.
       method: 'PATCH',
-      body: JSON.stringify(values),
+      body: values,
     },
   )
 }
@@ -56,8 +58,9 @@ export function updateUserConsents(
 export function withdrawMe(reason) {
   return request('/auth/me/withdraw', {
     method: 'POST',
-    body: JSON.stringify({
+    //  ⚠ 2026-08-07 — 여기도 JSON.stringify 였다. request() 가 또 감싼다(client.js 참고).
+    body: {
       reason,
-    }),
+    },
   })
 }

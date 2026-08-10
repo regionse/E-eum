@@ -2,6 +2,7 @@ import {
   useCallback,
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from 'react'
@@ -44,6 +45,21 @@ export function AuthProvider({ children }) {
     user?.user_id ??
     user?.id ??
     null
+
+  //  ★ 2026-08-10 — 토큰 만료(401) 때 화면이 로그인 상태로 «박제»되던 것.
+  //    client.js 가 eum_user/eum_family 를 지워도, 위 useState 초기화는 «마운트 때
+  //    한 번»이라 상태가 안 내려갔다(같은 탭 쓰기는 storage 이벤트도 안 낸다).
+  //    client.js 가 쏘는 'eum:session-expired' 를 듣고 상태만 맞춘다.
+  //  ⚠ logout() 을 부르지 않는다 — 그건 «사용자의 행동»이라 로컬 대화 백업까지
+  //    지운다. 만료는 사용자가 시킨 게 아니므로 화면 상태만 내린다.
+  useEffect(() => {
+    const onExpired = () => {
+      setUser(null)
+      setFamilyLinked(false)
+    }
+    window.addEventListener('eum:session-expired', onExpired)
+    return () => window.removeEventListener('eum:session-expired', onExpired)
+  }, [])
 
   const logout = () => {
     setUser(null)

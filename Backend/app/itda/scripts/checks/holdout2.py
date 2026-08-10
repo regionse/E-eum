@@ -17,6 +17,17 @@ sys.path.insert(0, r'C:\e-um-1\E-eum-team\Backend')
 
 from app.itda.db import async_session          # noqa: E402
 from app.itda.itda_core import ItdaEngine      # noqa: E402
+from app.itda.prompts import FORBIDDEN_ASK     # noqa: E402
+
+
+def _ask_rule():
+    """FORBIDDEN_ASK(평평한 꼴)를 «띄어쓰기 허용» 정규식으로 합성한다.
+
+    뒤에 몰라/모르가 따라오는 문장(「~하고 싶은지 몰라도 괜찮아요」)은 위반이 아니다.
+    ⚠ 매칭 구현은 가드(scrub_output)와 일부러 다르다 — 가드가 고장나면 여기서 걸리게.
+    """
+    alt = '|'.join(r'\s*'.join(re.escape(ch) for ch in t) for t in FORBIDDEN_ASK)
+    return re.compile(f'(?:{alt})(?![^.!?\n]*(?:몰라|모르))')
 
 SINGLE = [
     ('오타·구어체', '제빵사되고싶어여'),
@@ -54,7 +65,7 @@ _BAD = [
     (re.compile(r'학력부담|체력부담|비용부담|시간부족|대인부담'), '제약 딱지를 되돌려줌'),
     (re.compile(r'\*\*'), '마크다운 별표'),
     (re.compile(r'취미|쉴 때|시간 가는 줄|재밌어 보'), '여유를 전제한 질문'),
-    (re.compile(r'어떤 일을 하고 싶|무슨 일을 하고 싶|어떤 직업을'), '프롬프트 최우선 금지 질문'),
+    (_ask_rule(), '프롬프트 최우선 금지 질문'),   # ★ 2026-08-10 표면형을 prompts 와 공유
     (re.compile(r'기다려|잠시만 기다|곧 알려'), '기다리라고 함(카드 턴이면 거짓)'),
 ]
 

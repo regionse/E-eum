@@ -183,6 +183,12 @@ async def handle_message(db, session_id: str, message: str,
     #    길면 자른다 — 필요한 건 '무엇을 물었나'지 문장 전체가 아니다.
     if r.get("reply"):
         profile["_last_ask"] = str(r["reply"])[:300]
+        #  ★ 2026-08-09 — 최근 «여러 턴»을 쌓는다. drop_echo 가 A→B→A 처럼 한 턴 건너뛴
+        #    반복을 잡으려면 직전 하나로는 부족하다(동적 페르소나 실측: 13턴↔15턴이 동일).
+        #    3개면 충분하다 — 그보다 멀면 사용자도 같은 말로 못 느낀다.
+        _la = list(profile.get("_last_asks") or [])
+        _la.append(str(r["reply"])[:300])
+        profile["_last_asks"] = _la[-3:]
     #  대화 이력 — HISTORY_MODE='full' 이 읽는다. 최근 것만 남겨 무한히 커지지 않게 한다.
     #  r={'r':'u'|'b','t':텍스트} 로 짧게 담는다(키 이름이 길면 그것만으로 토큰이 는다).
     hist = list(profile.get("_history") or [])
@@ -408,6 +414,7 @@ async def save_map(db, user_id: int, session_id: str) -> dict:
     #    지도가 담아야 하는 건 **결론(슬롯·직업·이유)**이지 과정이 아니다.
     profile.pop("_history", None)
     profile.pop("_last_ask", None)
+    profile.pop("_last_asks", None)
     #  ★★ 2026-08-05 (코드감사) — **저장이 500 으로 죽고 있었다.**
     #    _last_certs(2026-08-04 추가)는 「시험이 언제예요?」에 DB 값 그대로 답하려고 남겨둔
     #    **다음 턴용 임시 상태**인데, 그 안의 exam 은 _next_exam() 이 DB 에서 꺼낸

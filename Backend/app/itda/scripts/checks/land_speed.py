@@ -29,8 +29,11 @@ _CODE_FILLS = []
 _orig_fill = core.fill_object_slot
 
 
-def _spy_fill(p, user_msg):
-    p2, got = _orig_fill(p, user_msg)
+#  ★ 2026-08-08 — *args 로 받는다. fill_object_slot 에 new_slots 인자가 늘면서
+#    이 스파이가 TypeError 를 냈고, step() 이 그걸 삼켜 **8흐름 전부 「안 됨」**으로 보였다.
+#    엔진은 멀쩡한데 검사 도구가 거짓 보고를 한 것이다. 서명을 고정하지 않는다.
+def _spy_fill(p, user_msg, *a, **kw):
+    p2, got = _orig_fill(p, user_msg, *a, **kw)
     if got:
         _CODE_FILLS.append(got)
     return p2, got
