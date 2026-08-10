@@ -80,6 +80,23 @@ async def lifespan(app: FastAPI):
     서버 종료 시 DB 연결을 정리한다.
     """
 
+    #  ★★ 2026-08-09 — **JWT 비밀키가 없으면 여기서 «죽인다».**
+    #  왜 — 없어도 서버는 «멀쩡히 떴다». 대신 로그인·인증이 전부 500 이 났다.
+    #    실측(python -c 로 직접 확인):
+    #      JWT_SECRET_KEY 없음(None) → jwt.encode 가 TypeError: Expected a string value
+    #      빈 문자열('')            → InvalidKeyError: HMAC key must not be empty
+    #    둘 다 «토큰 발급 시점»에 터진다. 즉 기동 로그는 깨끗하고 헬스체크도 초록불인데
+    #    사용자만 못 들어온다. 배포 현장에서 제일 늦게 발견되는 형태다.
+    #  ⚠ 서명이 안 되는 것이지 «빈 키로 서명»되는 건 아니다 — 보안 구멍은 아니었다.
+    #    그래도 막는 이유는 **실패를 앞당기려는 것**이다(fail fast).
+    #  ⚠ 여기(lifespan)에 두고 import 시점에 두지 않는다 — security.py 를 import 만 하는
+    #    검사 스크립트·도구까지 같이 죽으면 곤란하다. 실제로 서빙을 시작할 때만 막는다.
+    if not (os.getenv("JWT_SECRET_KEY") or "").strip():
+        raise RuntimeError(
+            "JWT_SECRET_KEY 가 비어 있습니다. Backend/app/.env 에 넣어 주세요. "
+            "이 값이 없으면 서버는 뜨지만 로그인·인증이 «전부» 500 이 납니다."
+        )
+
     print("데이터베이스 초기화를 시작합니다.")
 
     await init_db()

@@ -19,6 +19,7 @@
     python -m app.itda.scripts.golden_check --tag 안전    # 특정 묶음만
     python -m app.itda.scripts.golden_check --repeat 3   # 각 케이스 3회(편차 측정)
 """
+import re
 import sys
 import time
 import asyncio
@@ -425,7 +426,7 @@ async def main():
     cases = [c for c in CASES if not a.tag or c['tag'] == a.tag]
     t0 = time.time()
     tally = Counter()
-    fails, suspects, unknown_keys = [], [], set()
+    fails, suspects, unknown_keys, weak = [], [], set(), []
     cost = 0.0
 
     async with async_session() as db:
@@ -448,11 +449,40 @@ async def main():
                 for j in judged:
                     if j[3]:
                         suspects.append((case, j[3]))
+            #  ★★★ 2026-08-09 — **통과한 것도 «왜» 통과했는지 본다.**
+            #  실측 사고: 「용접 일을 하고 싶어요」가 34/34 안에서 통과하고 있었는데,
+            #    카드에 용접이 있어서가 아니라 **봇이 되묻는 문장에 '용접'을 되풀이해서**였다.
+            #      🤖 "용접 일을 생각하고 계시는군요. 혹시 용접을 배워보신 적이…"
+            #    검색은 아예 돌지도 않았다. 그런데 채점기는 「응답 어딘가에 있나」만 봤다.
+            #    ⇒ 대분류 필터가 정답을 통째로 버리는 결함이 **그 뒤에 숨어 있었다.**
+            #  ⇒ 내용이 `reply` 에서만 맞았으면 «약한 통과»로 따로 센다.
+            #    사용자 발화의 낱말이 그대로 되풀이된 것이면 더 강하게 표시한다.
+            if ok:
+                _where = [j[1] for j in judged if 'in reply' in str(j[1])]
+                if _where:
+                    #  ⚠ «실제로 맞은» 낱말이 사용자 말에 있는지를 본다.
+                    #    처음엔 기대 낱말 «전부»를 봤다가 틀렸다 — 「레시피 개발자 되고
+                    #    싶은데요」에서 맞은 건 '제과'인데 목록의 다른 낱말('레시피')이
+                    #    발화에 있어서 되풀이로 오판했다(2026-08-09).
+                    _m = re.search(r'«([^»]+)»', str(_where[0]))
+                    _hit = _m.group(1) if _m else ''
+                    weak.append((case, _where[0], bool(_hit) and _hit in case['msg']))
 
     # ── 결과 ──
     sec = time.time() - t0
     print(f"\n{'='*78}\n■ 결과  통과 {tally['pass']} / 실패 {tally['fail']}  "
           f"(코드검사 실패 {unit_fail})  ·  {sec:.0f}s\n{'='*78}")
+
+    #  ★ 「통과」를 그냥 넘기지 않는다 — 위 weak 수집 주석의 근거.
+    if weak:
+        _echo = [w for w in weak if w[2]]
+        print(f'\n⚠️  약한 통과 {len(weak)}건 — 카드가 아니라 «응답 문장»에서만 맞았다'
+              f'{f" (그중 {len(_echo)}건은 사용자 말의 «되풀이»)" if _echo else ""}')
+        for case, where, echo in weak:
+            print(f'   {"🔴" if echo else "·"} «{case["msg"][:32]}»  {where}')
+            if echo:
+                print(f'       ↑ 기대 낱말이 «사용자 발화에 그대로» 있다. 봇이 되풀이만 해도 통과한다.')
+        print('   → 기대값을 card.* 로 좁히는 것을 검토할 것. 이 자리에 결함이 숨는다.\n')
 
     if unknown_keys:
         print(f'⚠️  응답에 채점기가 모르는 키가 있다: {sorted(unknown_keys)}')
