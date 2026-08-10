@@ -3,7 +3,7 @@ from .llm_scorer import (
 )
 
 
-MIN_VECTOR_SCORE = 0.70
+MIN_VECTOR_SCORE = 0.65
 MIN_VECTOR_GAP = 0.05
 
 ALLOWED_FACILITY_TYPES = {
