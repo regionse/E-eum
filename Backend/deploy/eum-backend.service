@@ -29,6 +29,20 @@ Description=Eum backend (FastAPI/uvicorn)
 After=network-online.target
 Wants=network-online.target
 
+#  재시작 제한 — «설정이 틀려서» 계속 죽는 경우에 무한 재시작을 막는다.
+#  JWT_SECRET_KEY 가 없으면 기동이 실패하는데(main.py lifespan), 그걸 3초마다
+#  영원히 재시도하면 로그만 뒤덮인다. 60초 안에 5번까지만 시도한다.
+#
+#  ⚠ 2026-08-10 — 이 두 줄은 원래 [Service] 에 있었고, systemd 가 **버리고 있었다.**
+#    서버 실측(journalctl, 09:53:26):
+#      /etc/systemd/system/eum-backend.service:52:
+#      Unknown key 'StartLimitIntervalSec' in section [Service], ignoring.
+#    ⇒ 「파일에 적혀 있다 = 적용된다」가 아니다. systemd 는 모르는 키를 «조용히»
+#      무시하고 기동은 성공시킨다. status 가 active 라서 눈치챌 수도 없었다.
+#      StartLimit* 은 [Unit] 섹션 키다(systemd v229 부터). 여기가 제자리다.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
 Type=simple
 User=ubuntu
