@@ -137,6 +137,17 @@ export default function PolicyResult() {
   // 기존 입력값을 복원하기 위해 사용한다.
   const request = state?.request || null
 
+  // 정책 직접 검색 결과인지 확인한다.
+  const isLookupMode =
+    state?.searchMode === 'lookup'
+    || response?.status
+      === 'policy_lookup_completed'
+
+  const lookupPolicyName =
+    state?.policyName
+    || response?.requested_policy_name
+    || ''
+
   // 즐겨찾기 API가 처리 중인 정책 ID
   const [ favoriteLoadingIds, setFavoriteLoadingIds ] = useState([])
 
@@ -244,6 +255,20 @@ export default function PolicyResult() {
   // -------------------------------------------------------
 
   const goBackToInput = () => {
+    if (isLookupMode) {
+      navigate(
+        '/welfare/policy',
+        {
+          state: {
+            searchMode: 'lookup',
+            policyName: lookupPolicyName,
+          },
+        },
+      )
+
+      return
+    }
+
     navigate(
       '/welfare/policy',
       {
@@ -420,15 +445,25 @@ export default function PolicyResult() {
       }}
     >
       <PageHead
-        title="맞춤 지원 정책 추천 결과"
-        sub="입력하신 상황과 실제 정책 자격조건을 바탕으로 정리한 결과예요."
+        title={
+          isLookupMode
+            ? '정책 검색 결과'
+            : '맞춤 지원 정책 추천 결과'
+        }
+        sub={
+          isLookupMode
+            ? '입력한 정책명과 같거나 비슷한 정책을 찾은 결과예요.'
+            : '입력하신 상황과 실제 정책 자격조건을 바탕으로 정리한 결과예요.'
+        }
         right={(
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             onClick={goBackToInput}
           >
-            조건 다시 입력
+            {isLookupMode
+              ? '다른 정책 찾기'
+              : '조건 다시 입력'}
           </button>
         )}
       />
@@ -480,6 +515,9 @@ export default function PolicyResult() {
             response={response}
             onEditConditions={
               goBackToInput
+            }
+            lookupMode={
+              isLookupMode
             }
           />
         )}
@@ -759,6 +797,7 @@ function PolicyLookupCompleted({
         onEditConditions={
           onEditConditions
         }
+        editLabel="다른 정책 찾기"
       />
     </div>
   )
@@ -1177,6 +1216,7 @@ function PolicyCard({
 function NoPolicyFound({
   response,
   onEditConditions,
+  lookupMode = false,
 }) {
   const alternativeActions =
     response.alternative_actions
@@ -1203,7 +1243,9 @@ function NoPolicyFound({
             marginBottom: 8,
           }}
         >
-          현재 조건과 잘 맞는 정책을 찾지 못했어요.
+          {lookupMode
+            ? '입력한 이름과 일치하는 정책을 찾지 못했어요.'
+            : '현재 조건과 잘 맞는 정책을 찾지 못했어요.'}
         </div>
 
 
@@ -1230,7 +1272,9 @@ function NoPolicyFound({
               marginBottom: 5,
             }}
           >
-            AI 분석 결과
+            {lookupMode
+              ? '검색 결과'
+              : 'AI 분석 결과'}
           </div>
 
           <div
@@ -1300,7 +1344,9 @@ function NoPolicyFound({
             onEditConditions
           }
         >
-          조건 다시 입력하기
+          {lookupMode
+            ? '다른 정책 찾기'
+            : '조건 다시 입력하기'}
         </button>
       </div>
     </div>
@@ -1485,6 +1531,7 @@ function MessageResult({
 
 function ResultActions({
   onEditConditions,
+  editLabel = '입력 내용 수정하기',
 }) {
   return (
     <div
@@ -1505,7 +1552,7 @@ function ResultActions({
           onEditConditions
         }
       >
-        입력 내용 수정하기
+        {editLabel}
       </button>
 
       <Link
