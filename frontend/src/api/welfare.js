@@ -63,6 +63,30 @@ export function recommendPolicies(
 
 
 // =========================================================
+// 특정 정책명 직접 검색
+// =========================================================
+
+export function searchPolicyByName(
+  policyName,
+  { signal } = {},
+) {
+  const userId = getLoggedInUserId()
+
+  return request(
+    `/policy-recommendations/users/${userId}/lookup`,
+    {
+      method: 'POST',
+      body: {
+        policy_name: policyName,
+      },
+      signal,
+      timeout: 30000,
+    },
+  )
+}
+
+
+// =========================================================
 // 최근 정책 추천 이력
 // =========================================================
 

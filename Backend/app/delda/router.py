@@ -22,6 +22,7 @@ from app.delda.schemas import (
     PolicySyncLatestResponse,
     PolicySyncResultResponse,
     PolicySyncStartResponse,
+    PolicyLookupRequest,
 )
 from app.user.models import User
 from app.user.security import get_current_user, get_current_admin
@@ -181,6 +182,49 @@ async def recommend_policies(
     )
 
     return await controllers.run_policy_recommendation(
+        db=db,
+        user_id=verified_user_id,
+        request=request,
+    )
+
+
+# =========================================================
+# 특정 정책명 직접 검색
+# =========================================================
+
+
+@user_router.post(
+    "/users/{user_id}/lookup",
+    response_model=PolicyRecommendationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="특정 정책명 직접 검색",
+)
+async def search_policy_by_name(
+    request: PolicyLookupRequest,
+    user_id: int = Path(
+        ...,
+        ge=1,
+        description="사용자 ID",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    ),
+):
+    """
+    사용자가 알고 있는 정책명을 직접 입력하여
+    정책 정보를 검색한다.
+
+    맞춤 추천과 달리
+    돌봄 상황 등의 구조화 입력은 받지 않는다.
+    """
+
+    verified_user_id = get_verified_user_id(
+        user_id=user_id,
+        current_user=current_user,
+    )
+
+    return await controllers.search_policies_by_name(
         db=db,
         user_id=verified_user_id,
         request=request,

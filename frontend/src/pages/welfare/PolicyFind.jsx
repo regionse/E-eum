@@ -9,7 +9,10 @@ import {
   useNavigate,
 } from 'react-router-dom'
 
-import { recommendPolicies } from '../../api/welfare.js'
+import {
+  recommendPolicies,
+  searchPolicyByName,
+} from '../../api/welfare.js'
 import RequireLogin from '../../components/RequireLogin.jsx'
 import { PageHead } from '../../components/ui/index.jsx'
 import { useAuth } from '../../store/auth.jsx'
@@ -180,6 +183,15 @@ export default function PolicyFind() {
     }
   })
 
+  const [searchMode, setSearchMode] = useState(
+    routeState?.searchMode === 'lookup'
+      ? 'lookup'
+      : 'recommend',
+  )
+  const [policyName, setPolicyName] = useState(
+    routeState?.policyName || '',
+  )
+
   const [mode, setMode] = useState('form')
   const [loading, setLoading] = useState(false)
   const [loadingStep, setLoadingStep] = useState(0)
@@ -311,6 +323,85 @@ export default function PolicyFind() {
     }
   }
 
+  const handlePolicyLookup = async (
+    event,
+  ) => {
+    event.preventDefault()
+
+    const cleanedPolicyName =
+      policyName.trim()
+
+    if (!cleanedPolicyName) {
+      setError(
+        '찾고 싶은 정책명을 입력해 주세요.',
+      )
+      return
+    }
+
+    abortControllerRef.current?.abort()
+
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    setLoading(true)
+    setError('')
+
+    try {
+      const response = await searchPolicyByName(
+        cleanedPolicyName,
+        {
+          signal: controller.signal,
+        },
+      )
+
+      if (controller.signal.aborted) {
+        return
+      }
+
+      navigate(
+        '/welfare/policy/result',
+        {
+          state: {
+            response,
+            request: null,
+            searchMode: 'lookup',
+            policyName: cleanedPolicyName,
+          },
+        },
+      )
+    } catch (requestError) {
+      if (requestError?.name === 'AbortError') {
+        return
+      }
+
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : '정책 검색 중 오류가 발생했습니다.',
+      )
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+        setLoading(false)
+      }
+    }
+  }
+
+  const changeSearchMode = (
+    nextMode,
+  ) => {
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+
+    setSearchMode(nextMode)
+    setLoading(false)
+    setMode('form')
+    setError('')
+    setValidationErrors({})
+    setFollowUpAnswers([])
+    setFollowUpResponse(null)
+  }
+
   const handleSubmit = (event) => {
     event.preventDefault()
 
@@ -391,15 +482,42 @@ export default function PolicyFind() {
       style={{ maxWidth: 1040 }}
     >
       <PageHead
-        title="맞춤 지원 정책 찾기"
-        sub="몇 가지 정보만 알려주시면 현재 상황에 맞는 정책을 찾아드릴게요. 부족한 정보는 대화로 이어서 확인합니다."
+        title="지원 정책 찾기"
+        sub="내 상황에 맞는 정책을 추천받거나, 알고 있는 정책을 이름으로 바로 찾아볼 수 있어요."
       />
 
-      <RequireLogin axis="맞춤 지원 정책 찾기">
+      <RequireLogin axis="지원 정책 찾기">
+        {!loading
+          && mode !== 'chat'
+          && (
+            <SearchModeSelector
+              searchMode={searchMode}
+              onChange={changeSearchMode}
+            />
+          )}
+
         {loading ? (
-          <RecommendationLoading
-            stepIndex={loadingStep}
-            onCancel={cancelRecommendation}
+          searchMode === 'lookup'
+            ? (
+              <PolicyLookupLoading
+                onCancel={cancelRecommendation}
+              />
+            )
+            : (
+              <RecommendationLoading
+                stepIndex={loadingStep}
+                onCancel={cancelRecommendation}
+              />
+            )
+        ) : searchMode === 'lookup' ? (
+          <PolicyLookupForm
+            policyName={policyName}
+            error={error}
+            onChange={(value) => {
+              setPolicyName(value)
+              setError('')
+            }}
+            onSubmit={handlePolicyLookup}
           />
         ) : mode === 'chat' && followUpResponse ? (
           <FollowUpChat
@@ -672,6 +790,237 @@ export default function PolicyFind() {
           </form>
         )}
       </RequireLogin>
+    </div>
+  )
+}
+
+function SearchModeSelector({
+  searchMode,
+  onChange,
+}) {
+  return (
+    <div
+      className="card card-pad"
+      style={{
+        marginBottom: 16,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 18,
+          fontWeight: 800,
+          marginBottom: 6,
+        }}
+      >
+        어떤 방식으로 찾을까요?
+      </div>
+
+      <div
+        className="muted"
+        style={{
+          fontSize: 13.5,
+          marginBottom: 14,
+        }}
+      >
+        맞춤 추천을 받거나 알고 있는 정책명을
+        바로 검색할 수 있어요.
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns:
+            'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: 12,
+        }}
+      >
+        <button
+          type="button"
+          className={
+            searchMode === 'recommend'
+              ? 'btn btn-primary'
+              : 'btn btn-ghost'
+          }
+          onClick={() => onChange('recommend')}
+          style={{
+            minHeight: 54,
+          }}
+        >
+          👤 나에게 맞는 정책 추천
+        </button>
+
+        <button
+          type="button"
+          className={
+            searchMode === 'lookup'
+              ? 'btn btn-primary'
+              : 'btn btn-ghost'
+          }
+          onClick={() => onChange('lookup')}
+          style={{
+            minHeight: 54,
+          }}
+        >
+          🔎 정책 직접 찾기
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PolicyLookupForm({
+  policyName,
+  error,
+  onChange,
+  onSubmit,
+}) {
+  return (
+    <form onSubmit={onSubmit}>
+      <div
+        className="card card-pad"
+        style={{
+          maxWidth: 720,
+          margin: '0 auto',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 20,
+            fontWeight: 800,
+          }}
+        >
+          정책 직접 찾기
+        </div>
+
+        <p
+          className="muted"
+          style={{
+            margin: '6px 0 20px',
+            lineHeight: 1.6,
+          }}
+        >
+          알고 있는 정책명을 입력하면 정책을 바로 찾아드려요.
+        </p>
+
+        <label
+          htmlFor="policy-name"
+          style={{
+            fontWeight: 700,
+          }}
+        >
+          정책명
+            <span
+              style={{
+                color: '#dc2626',
+                marginLeft: 4,
+              }}
+            >
+              *
+            </span>
+        </label>
+
+        <input
+          id="policy-name"
+          type="text"
+          className="input"
+          value={policyName}
+          maxLength={200}
+          placeholder="예) 일상돌봄 서비스"
+          onChange={(event) => {
+            onChange(event.target.value)
+          }}
+          style={{
+            marginTop: 8,
+          }}
+        />
+
+        <div
+          className="hint"
+          style={{
+            marginTop: 8,
+          }}
+        >
+          정책명만 입력해주세요.
+        </div>
+
+        {error && (
+          <div
+            className="err"
+            role="alert"
+            style={{
+              marginTop: 14,
+              color: '#dc2626',
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          className="btn btn-primary btn-block btn-lg"
+          style={{
+            marginTop: 20,
+          }}
+        >
+          정책 찾기
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function PolicyLookupLoading({
+  onCancel,
+}) {
+  return (
+    <div
+      className="card card-pad"
+      style={{
+        minHeight: 300,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+      }}
+    >
+      <div
+        className="spinner"
+        style={{
+          marginBottom: 22,
+        }}
+      />
+
+      <div
+        style={{
+          fontSize: 21,
+          fontWeight: 800,
+        }}
+      >
+        정책을 찾고 있어요
+      </div>
+
+      <div
+        className="muted"
+        style={{
+          marginTop: 8,
+        }}
+      >
+        입력한 정책명과 같거나 비슷한 정책을
+        검색하고 있어요.
+      </div>
+
+      <button
+        type="button"
+        className="btn btn-ghost"
+        style={{
+          marginTop: 24,
+        }}
+        onClick={onCancel}
+      >
+        검색 취소
+      </button>
     </div>
   )
 }

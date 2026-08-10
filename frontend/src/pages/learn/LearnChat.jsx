@@ -18,6 +18,10 @@ const GREET = { role: 'bot', kind: 'text', greet: 'hello', text: '안녕하세�
 //  '이어서하기'로 들어왔을 때의 머리말. 위 GREET 과 똑같이 **우리가 쓴 안내문**이라 같은 규칙을 받는다.
 const RESUME_GREET = { role: 'bot', kind: 'text', greet: 'resume', text: '저장한 지도를 이어서 볼게요 — 더 이야기하면 방향을 다듬을 수 있어요.' }
 const GOAL_EXAMPLES = ['나무나 식물을 다루는 일', '컴퓨터로 뭔가 만드는 일', '사람에게 도움이 되는 일']
+//  ★ 2026-08-10 — 한 번에 보낼 수 있는 글자 수. **백엔드와 같은 값이어야 한다**
+//    (Backend/app/itda/schemas.py 의 MessageRequest.message max_length).
+//    한쪽만 바꾸면 프론트는 통과시키는데 서버가 422 로 튕긴다 — 사용자에겐 그냥 오류 화면이다.
+const MAX_LEN = 200
 
 //  ★ 머리말은 '저장된 대화'가 아니라 '지금 코드의 문구'로 되살린다 (2026-08-05)
 //  무슨 일이 있었나 — 8/4 에 GREET 을 새 문구로 바꿨는데 화면엔 계속 옛 문구가 나왔다.
@@ -69,7 +73,16 @@ export default function LearnChat() {
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
     if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [msgs, busy])
+  //  ★ 2026-08-10 — 로그아웃 직후 이 effect 가 «지운 대화를 도로 저장»하고 있었다.
+  //    순서: logout() 이 eum_itda_chat* 전부 삭제 → uid 가 null 로 바뀜 → deps 의 uid 가
+  //    변해 effect 재실행 → 화면에 남아 있던 msgs 를 'anon' 키로 통째로 재저장.
+  //    공용 PC 라면 로그아웃했는데 상담 내용(돌봄 사정)이 localStorage 에 남는다.
+  //    (토큰 만료로 uid 가 내려갈 때도 같은 일이 난다 — 에이전트 검토가 잡음)
+  //  ⇒ 이 화면이 열릴 때의 사용자에게만 저장한다. uid 가 바뀌었다는 건 «다른 사람» 키라는
+  //    뜻이므로 그 순간부터는 쓰지 않는다.
+  const uidAtMountRef = useRef(uid)
   useEffect(() => {   // 새로고침·중간이탈에도 이어지도록 마지막 대화를 이 사용자 키에 저장
+    if (uid !== uidAtMountRef.current) return
     saveItdaDraft(uid, { sid: sidRef.current, msgs, mapped })
   }, [msgs, mapped, uid])
   //  언마운트 뒤에도 응답을 저장할 수 있게 최신 msgs 를 ref 로 들고 있는다(send 참고).
@@ -86,12 +99,15 @@ export default function LearnChat() {
     const q = (raw ?? input).trim(); setWarn('')
     if (!q) { setWarn('내용을 입력해 주세요.'); return }
     setInput('')
-    const meaningful = q.replace(/[^가-힣a-zA-Z]/g, '')
-    if (!meaningful || /^[ㄱ-ㅎㅏ-ㅣ\s]+$/.test(q)) {
-      push({ role: 'me', kind: 'text', text: q })
-      push({ role: 'bot', kind: 'text', text: '앗, 잘 이해하지 못했어요. 관심 있는 분야나 좋아하는 걸 말로 적어주시겠어요?' })
-      return
-    }
+    //  ★ 2026-08-10 — 여기 있던 «프론트 자체 오타 필터»(한글·라틴 없음 또는 자모만이면
+    //    「앗, 잘 이해하지 못했어요」)를 지웠다. 발표 전 최종 점검에서 실측:
+    //      「ㄱㄱ」 → 백엔드에 «보내지도 않고» 프론트가 오타 취급 (백엔드 게이트는 오늘
+    //        자모 축약을 «말»로 받게 고쳤는데, 프론트 사본이 그대로 막고 있었다)
+    //      「...」 → 침묵 신호(SILENT — 말문이 막힌 사용자를 받는 백엔드 기능)가
+    //        웹 화면에서는 «한 번도 발동할 수 없었다». 프론트가 먼저 삼켰으니까.
+    //    같은 판정이 두 곳에 있으면 한쪽만 고쳐지는 사고가 반복된다(오늘만 두 번째다).
+    //    이 판정의 원본은 백엔드 pre_check 하나로 둔다 — VAGUE/SILENT 응답은
+    //    코드가 쓰는 문구라 LLM 비용도 0이다. 왕복 한 번이 늘 뿐이다.
     push({ role: 'me', kind: 'text', text: q })
     //  ★ 자기 위해 신호는 프론트에서 막지 않는다(2026-07-30). 공유 BAD_WORDS 에 '죽어'가 있어
     //    "죽어버리고 싶어요" 같은 말이 여기서 걸려 "그런 쪽은 도와드리기 어려워요"가 떴다.
@@ -239,14 +255,26 @@ export default function LearnChat() {
           {msgs.length <= 1 && <Examples items={GOAL_EXAMPLES} onPick={send} />}
           {warn && <p role="alert" style={{ color: '#c0392b', fontSize: 14, margin: '10px 0 0' }}>⚠ {warn}</p>}
           <div className="chat-input">
+            {/*  ★ 2026-08-10 — 입력 상한 200자. 백엔드(schemas.MessageRequest)와 «같은 값»이다.
+                 예전엔 프론트에 상한이 없어서, 백엔드 한도를 넘기면 안내 대신 422 오류 화면이 떴다.
+                 maxLength 로 «애초에 못 넘기게» 하고, 남은 글자를 보여 준다.  */}
             <input className="input" disabled={busy} value={input}
               aria-label="관심사 입력"
+              maxLength={MAX_LEN}
               style={{ fontSize: 15.5, padding: '13px 15px' }}
               placeholder={mapped ? '더 이야기하거나, 다른 관심을 말해도 돼요…' : '관심 있는 것을 자유롭게 적어주세요…'}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => setInput(e.target.value.slice(0, MAX_LEN))}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send() }} />
             <button className="btn btn-primary" style={{ fontSize: 15 }} onClick={() => send()} disabled={busy}>보내기</button>
           </div>
+          {/*  글자 수는 «한도에 가까울 때만» 보여 준다 — 평소엔 세면서 쓰라고 압박하지 않는다.  */}
+          {input.length >= MAX_LEN - 40 && (
+            <p className="hint" style={{ marginTop: 8, color: input.length >= MAX_LEN ? '#c0392b' : undefined }}>
+              {input.length >= MAX_LEN
+                ? `${MAX_LEN}자까지 쓸 수 있어요. 나눠서 말씀해 주셔도 괜찮아요.`
+                : `${input.length} / ${MAX_LEN}자`}
+            </p>
+          )}
           <p className="hint" style={{ marginTop: 10 }}>답변은 AI가 하는 것이라 확실하지 않을 수 있어요. 오류가 생기면 문의 부탁드려요!</p>
         </div>
         {toast.node}

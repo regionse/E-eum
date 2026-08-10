@@ -130,10 +130,16 @@ def slot_str(p):
 
 
 def weight_of(p):
-    """지금 무게가 얼마인가 — can_land 의 내부를 그대로 다시 센다(설명용)."""
+    """지금 무게가 얼마인가 — can_land 의 내부를 그대로 다시 센다(설명용).
+
+    ★ 2026-08-10 — 종류 가중(KIND_W × axis_kind)이 빠져 있었다. can_land 는
+      「못함」 축에 0 을 곱하는데 여기는 만점으로 세서, 무게=2.0 이라 찍어 놓고
+      착지는 안 되는 «자기모순 출력»이 나왔다(에이전트 검토가 잡음). 엔진과 같은 식으로.
+    """
     src = p.get('_slot_src') or {}
     axes = [k for k in AXES if p.get(k)]
-    return sum(core.LAND_W_CODE if src.get(k) == 'code' else core.LAND_W_USER
+    return sum((core.LAND_W_CODE if src.get(k) == 'code' else core.LAND_W_USER)
+               * core.KIND_W.get(core.axis_kind(p, k), 1.0)
                for k in axes)
 
 

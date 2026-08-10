@@ -33,6 +33,9 @@ from app.delda.schemas import (
     PolicySyncStartResponse,
     PolicySyncStatus,
     RecommendedPolicyItemResponse,
+    PolicyLookupCompletedResponse,
+    PolicyLookupRequest,
+    PolicyNoPolicyFoundResponse,
 )
 
 from app.delda.services.policy_sync_orchestrator import (
@@ -42,6 +45,10 @@ from app.delda.services.policy_sync_orchestrator import (
 
 from app.delda.graphs.policy_recommendation_graph import (
     run_policy_recommendation_graph,
+)
+
+from app.delda.services.policy_retrieval_service import (
+    retrieve_policies_by_name,
 )
 
 from app.user.models import (
@@ -346,6 +353,149 @@ async def run_policy_recommendation(
         user_id=user_id,
         context=context,
     )
+
+
+# =========================================================
+# 특정 정책명 직접 검색
+# =========================================================
+
+
+async def search_policies_by_name(
+    *,
+    db: AsyncSession,
+    user_id: int,
+    request: PolicyLookupRequest,
+) -> PolicyRecommendationResponse:
+    """
+    사용자가 입력한 정책명을 기준으로
+    정책을 직접 검색한다.
+
+    맞춤 추천이 아니므로
+    Agent와 LangGraph를 실행하지 않는다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 사용자 존재 및 활성 상태 확인
+    # -----------------------------------------------------
+
+    await get_active_user_or_404(
+        db=db,
+        user_id=user_id,
+    )
+
+    # -----------------------------------------------------
+    # 2. 정책명 검색
+    # -----------------------------------------------------
+
+    policy_name = request.policy_name.strip()
+
+    policies = await retrieve_policies_by_name(
+        db=db,
+        policy_name=policy_name,
+        limit=5,
+    )
+
+    # -----------------------------------------------------
+    # 3. 검색 결과가 없는 경우
+    # -----------------------------------------------------
+
+    if not policies:
+        return PolicyNoPolicyFoundResponse(
+            understood_situation=None,
+            reason=(
+                f"'{policy_name}'과 일치하거나 "
+                "이름이 비슷한 정책을 찾지 못했습니다."
+            ),
+            alternative_actions=[],
+        )
+
+    # -----------------------------------------------------
+    # 4. 즐겨찾기 여부 조회
+    # -----------------------------------------------------
+
+    policy_ids = [
+        policy.policy_id
+        for policy in policies
+    ]
+
+    favorite_result = await db.execute(
+        select(PolicyFavorite.policy_id)
+        .where(
+            PolicyFavorite.user_id == user_id,
+            PolicyFavorite.policy_id.in_(
+                policy_ids
+            ),
+        )
+    )
+
+    favorite_policy_ids = set(
+        favorite_result.scalars().all()
+    )
+
+    # -----------------------------------------------------
+    # 5. 정책 응답 생성
+    # -----------------------------------------------------
+
+    policy_items: list[
+        PolicyDetailResponse
+    ] = []
+
+    for policy in policies:
+        policy_items.append(
+            PolicyDetailResponse(
+                policy_id=policy.policy_id,
+                source_name=policy.source_name,
+                region=policy.region,
+                policy_name=policy.policy_name,
+                institution_name=(
+                    policy.institution_name
+                ),
+                category=list(
+                    policy.category or []
+                ),
+                support_type=(
+                    policy.support_type
+                ),
+                support_cycle=(
+                    policy.support_cycle
+                ),
+                policy_summary=(
+                    policy.policy_summary
+                ),
+                target_detail=(
+                    policy.target_detail
+                ),
+                selection_criteria=(
+                    policy.selection_criteria
+                ),
+                support_content=(
+                    policy.support_content
+                ),
+                application_method=(
+                    policy.application_method
+                ),
+                detail_url=(
+                    policy.detail_url
+                ),
+                guide_pdf_url=(
+                    policy.guide_pdf_url
+                ),
+                is_favorite=(
+                    policy.policy_id
+                    in favorite_policy_ids
+                ),
+            )
+        )
+
+    # -----------------------------------------------------
+    # 6. 직접 검색 결과 반환
+    # -----------------------------------------------------
+
+    return PolicyLookupCompletedResponse(
+        requested_policy_name=policy_name,
+        policies=policy_items,
+    )
+
 
 
 # =========================================================

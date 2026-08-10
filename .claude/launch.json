@@ -16,6 +16,17 @@
       "url": "http://localhost:5173",
       "port": 5173,
       "autoPort": false
+    },
+    {
+      "_주석": "2026-08-10 — 검증용으로 직접 띄우는 항목. 위 attach 항목과 별개다.",
+      "name": "eum-frontend-dev",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd /d C:\\e-um-1\\E-eum-team\\frontend && npm run dev -- --port 5173 --strictPort"
+      ],
+      "port": 5173,
+      "autoPort": false
     }
   ]
 }

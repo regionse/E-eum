@@ -132,7 +132,8 @@ MULTI_MAX = 4          # 한 슬롯에 담을 최대 개수 — 무한정 쌓이
 #
 #  ⚠ 왜 «선호 3축에만» 넣나 — 실측(checks/kind_capability_test.py, 100케이스):
 #      6슬롯 전체에 얹으면 8/14, 선호 3축 + 프롬프트 설명이면 75/79(95%).
-#    세부관심·강점성향은 「원함/못함」이 성립하지 않고, 제약은 이미 제약이다.
+#    세부관심은 「원함/못함」이 성립하지 않고, 제약은 이미 제약이다.
+#    (2026-08-10 — 여기 같이 적혀 있던 '강점성향' 은 슬롯째 없앴다. 그 자리 주석 참고)
 #  ⚠ 정의를 프롬프트 «본문»에도 둔다(prompts.SYSTEM). 스키마 description 에만 두면
 #    4,500토큰짜리 지시 속에서 흘린다 — 위 실측의 8/14 가 그 조건이었다.
 KINDS = ['원함', '해봤음', '못함']
@@ -176,7 +177,9 @@ def slot_text(x):
 
 #  슬롯 재설계(2026-07-28) — 직업을 '특정'하는 축으로 5개. (환경·시간·비용 제거)
 #    관심분야(무엇에) × 활동유형(어떻게) × 다루는대상(무엇으로) 이 직업을 가르고,
-#    세부관심은 '넓게 남을 때' 좁히기(narrowing)로 채워지며, 강점성향은 보강 신호다.
+#    세부관심은 '넓게 남을 때' 좁히기(narrowing)로 채워진다.
+#    ⚠ 2026-08-10 — 여기 「강점성향은 보강 신호다」라고 적혀 있었다. **틀린 주석이었다** —
+#      400발화 동안 0회 찼다. 보강한 적이 없다. 슬롯을 없애면서 문장도 지운다.
 #    활동유형·다루는대상은 enum('갇힌 출력') — 모델이 목록에서만 고른다.
 #  ★ NCS 대분류 24개 — job_catalog.job_lcls_name 의 실제 값 그대로 (2026-08-04).
 #    DB 를 직접 가리키는 유일한 슬롯이라, 다른 슬롯과 달리 '우리가 만든 어휘'가 아니다.
@@ -225,7 +228,19 @@ PROFILE_SCHEMA = {'type': 'OBJECT', 'properties': {
     '세부관심': _slot('관심을 좁히는 구체 정보 — 분야(웹/게임/앱, 한식/제빵)든 '
                     '대상(어르신/아동/장애인/반려동물)이든 장소(병원/공장/학교)든 '
                     '"무엇을 콕 집었나"에 해당하면 담는다. 사용자가 말한 표현 그대로.'),
-    '강점성향': _slot('잘하거나 편한 것 (손재주·꼼꼼함·체력·사교성·인내심 등). 말할 때만'),
+    #  ★★ 2026-08-10 — '강점성향' 을 **뺐다.**  _slot('잘하거나 편한 것 … 말할 때만')
+    #    실측(페르소나 2인 · 사용자 발화 400개):
+    #      · 그 슬롯이 «한 번도» 안 찼다 — **0/400**. (세부관심 11% · 제약 88% 와 대비)
+    #      · 같은 400발화에서 「꼼꼼·손재주·체력·사교·인내·잘해·자신있…」류 표현이 **0회**.
+    #    구조적으로 0이었다 —
+    #      ① ASK_ORDER 에 없어 봇이 «먼저 묻지 않는다»
+    #      ② 정의가 「말할 때만」이라 사용자가 자발적으로 말해야만 찬다
+    #      ③ 그런데 이 사용자는 그 말을 안 한다
+    #    ③ 이 본질이다. 「이제 뭘 해야 할지 모르겠다」고 오는 사람에게
+    #    «자기 강점을 스스로 말하라»고 기대한 슬롯이다. 그럴 수 있는 사람은 여기 안 온다.
+    #    ⇒ 구현이 틀린 게 아니라 **전제가 틀렸다.** 매 호출 스키마 값만 내고 빈칸을 돌려줬다.
+    #    ⚠ 되살리려면 ASK_ORDER 에 넣어 봇이 물어야 하는데, 「잘하는 게 뭐예요?」는
+    #      대답 못 하면 자기 탓으로 돌아가는 질문이다. 이 사용자에게 던지면 안 된다.
     #  ★★ 제약 (2026-08-04 부활) — 2026-07-28 재설계 때 '시간제약·환경·비용'을 뺐었다.
     #    뺀 이유는 타당했다: **제약은 직업을 가르지 않는다**(「시간이 없다」로 직업이 좁혀지지 않음).
     #    그래서 이번에도 **검색어에는 넣지 않는다.** 되살린 이유는 따로 있다 —
@@ -383,7 +398,18 @@ def notfound_reply(near):
     msg = '말씀하신 일은 저희가 지금 다루는 범위에서는 딱 맞는 걸 찾지 못했어요.'
     if names:
         msg += f'\n\n비슷한 쪽으로는 {names} 같은 일이 있어요. 이 중에 끌리는 게 있으세요?'
-    msg += '\n아니면 어떤 일을 하고 싶은지 편하게 말씀해 주셔도 좋아요.'
+    #  ★★ 2026-08-10 — 여기 「아니면 «어떤 일을 하고 싶은지» 편하게 말씀해 주셔도 좋아요」
+    #    라고 적혀 있었다. **프롬프트가 「가장 중요한 원칙」으로 금지한 바로 그 질문이다**
+    #    (prompts.py 140행: 「그 질문에 답할 수 있는 사람은 애초에 여기 오지 않는다」).
+    #    실측: checks/holdout2.py 가 「프롬프트 최우선 금지 질문」으로 잡아냈다.
+    #    ⇒ 모델은 프롬프트를 지키는데 **코드가 어기고 있었다.** SAFE_LINES 로 고쳤던
+    #      「프롬프트↔코드 어긋남」과 같은 부류다. 이번엔 코드가 «질문»을 어겼다.
+    #    ⇒ 원칙(141행)대로 «일상의 언어»로 바꾼다. 희망 직업이 아니라 «지나간 경험»을 묻는다.
+    #      못 정한 사람도 답할 수 있는 형태여야 한다.
+    #    ⚠ 「시간이 잘 가시는지」로 하려다 뺐다 — 검사기 «여유를 전제한 질문» 규칙(취미·쉴 때)과
+    #      취지가 겹친다. 돌봄으로 하루가 다 가는 사람에게 여유를 전제하는 말이다.
+    #      ctx_check [돌봄못함] 장면에서 통과가 확인된 「그동안 해보신 일」 꼴을 쓴다.
+    msg += '\n아니면 그동안 해보신 일이나 눈이 갔던 것들을 말씀해 주셔도 좋아요.'
     return msg
 
 
@@ -498,8 +524,35 @@ _THIN_ACK = frozenset((
 ))
 
 
+def _jamo_word(msg):
+    """자모 축약(「ㄱㄱ」·「ㅇㅈ」·「ㅇㅋㅇㅋ」)인가 — 두 글자 자모 또는 그 반복.
+
+    ★ 2026-08-10 — pre_check 의 자모 규칙과 is_thin_ack 가 «같은 판정»을 쓰게 한 곳.
+      규칙을 pre_check 안에만 두었더니, 게이트는 「ㄱㄱ」을 통과시키는데
+      is_thin_ack 은 몰라서 **「ㄱㄱ」이 그대로 검색 주질의가 됐다** —
+      _THIN_ACK 주석이 기록한 「주 질의 = "네"」 사고가 자모로 되살아난 것(검토가 잡음).
+    ⚠ 자모가 «아닌» 글자(문장부호·이모지·공백)는 지우고 본다 — 「ㅇㅈ!」·「ㄱㄱ.」도 같은 말이다.
+      (is_meta 의 꼬리떼기, _FILLER_RE 와 같은 관례)
+    ⚠ 단, 완성 한글·라틴·숫자가 하나라도 있으면 **아니다** — 「ㄱㄱ 빵집」은 축약이 아니라
+      «내용 있는 말»이다. 자모만 추출하면 「빵집」이 지워져 thin 으로 오판된다(자체 검증에서 잡음).
+    ⚠ 웃음·울음(ㅋㅎㅠㅜ)만으로 된 것은 제외 — 그건 «침묵»(SILENT)으로 남아야 한다.
+    """
+    if re.search(r'[가-힣a-zA-Z0-9]', msg or ''):
+        return False
+    bare = re.sub(r'[^ㄱ-ㅎㅏ-ㅣ]', '', msg or '')
+    return (bool(re.fullmatch(r'([ㄱ-ㅎㅏ-ㅣ]{2})\1*', bare))
+            and bool(re.sub(r'[ㅠㅜㅎㅋ]', '', bare)))
+
+
 def is_thin_ack(msg):
     """발화 전체가 알맹이 없는 맞장구인가 → 검색어로 쓰지 않는다."""
+    #  ★ 2026-08-10 — 자모 축약은 전부 «알맹이 없음»이다. ㄱㄱ(가자)·ㅇㅈ(인정)·ㄴㄴ(아니)
+    #    모두 진로 내용이 없다 — 검색어로 쓰면 안 된다. 낱말을 _THIN_ACK 에 더 넣는 대신
+    #    pre_check 와 같은 «꼴» 판정을 쓴다(_jamo_word 주석).
+    #    부수 효과: 목록의 'ㅇㅋ' 는 사실 닿은 적이 없었다 — _FILLER_RE 가 ㅋ 를 지워
+    #    'ㅇ' 만 남아 목록 대조가 항상 빗나갔다. 이 경로가 그걸 대신 잡는다.
+    if _jamo_word(msg):
+        return True
     m = _FILLER_RE.sub('', (msg or '').lower())
     return bool(m) and m in _THIN_ACK
 
@@ -520,6 +573,42 @@ def useless_answer(msg):
       한쪽으로만 틀린다 — 버리는 쪽이라 최악이어도 지금까지 모은 슬롯으로 찾는다.
     """
     return is_thin_ack(msg) or is_uncertain(msg)
+
+
+def apply_rejection(profile):
+    """직전 추천을 «물렸을 때» 상태를 정리한다 → 새 프로필. (2026-08-10 함수로 뺐다)
+
+    왜 함수로 뺐나 — 거부를 판정하는 곳이 «둘»이 됐다:
+      ① step()   낱말표 rejects_last_card / none_of_these  ← 게이트 «전»에 돈다
+      ② _step()  게이트의 「거부」 필드                      ← 게이트 «뒤»라 ①에 못 닿는다
+    ②만 붙였더니 억제는 풀렸는데 배제가 안 걸려 **같은 카드가 다시 나왔다**(브라우저 실측).
+    같은 일을 두 곳에서 하게 되면 갈라진다 — 오늘만 세 번 겪은 병이다. 그래서 한 곳에 둔다.
+
+    하는 일 — 카드는 하드 배제(_exclude), 칩은 강등(_demote). 세기를 다르게 두는 근거는
+    search() 의 _dem 블록 주석 참고. 그리고 되묻기 잠금과 착지 표시를 푼다.
+    ⚠ 세부관심만 비운다 — 관심분야·활동유형까지 지우면 대화를 처음부터 다시 하게 된다.
+      사용자는 '방향'을 거부한 게 아니라 '그 직업'을 거부한 것이다.
+    ⚠ 배제할 대상이 없으면 아무것도 안 한다(원본을 그대로 돌려준다).
+    """
+    if not (profile.get('_last_job') or profile.get('_narrow_codes')):
+        return profile
+    profile = dict(profile)
+    if profile.get('_last_job'):
+        ex = list(profile.get('_exclude') or [])
+        if profile['_last_job'] not in ex:
+            ex.append(profile['_last_job'])
+        profile['_exclude'] = ex[-8:]       # 무한정 쌓이지 않게
+    #  칩은 목록째로 강등한다. 상한은 _exclude 와 같은 8 —
+    #  더 쌓으면 후보 풀(8)보다 커져 '남는 게 없어 되살리기'만 반복된다.
+    dem = list(profile.get('_demote') or [])
+    for c in (profile.get('_narrow_codes') or []):
+        if c and c not in dem:
+            dem.append(c)
+    if dem:
+        profile['_demote'] = dem[-8:]
+    for k in ('세부관심', '_narrowed', '_narrow_opts', '_narrow_codes', '_landed'):
+        profile.pop(k, None)
+    return profile
 
 
 def rejects_last_card(msg):
@@ -866,6 +955,33 @@ _EPISTEMIC_HEDGE = _EPISTEMIC_HEDGE + _safe_line_stems()
 #  이 표현이 든 문장은 «유보처럼 보여도» 결국 사실 단정이라 절대 못 살린다.
 _ENTRY_HARD = ('제한없이', '제한이없', '누구나응시', '누구든지', '누구나')
 
+
+def _forbidden_ask_terms():
+    """★★ 2026-08-10 — prompts.FORBIDDEN_ASK 를 읽어 온다 (_safe_line_stems 와 같은 방식).
+
+    프롬프트의 「가장 중요한 원칙」 — "어떤 일을 하고 싶으세요?"라고 대놓고 묻지 않는다.
+    그 질문에 답할 수 있는 사람은 애초에 여기 오지 않는다 — 을 어긴 문장을 떼기 위한 목록.
+    출처·실측·이유는 prompts.FORBIDDEN_ASK 주석에 있다. 여기서는 «읽기만» 한다.
+    """
+    try:
+        from .prompts import FORBIDDEN_ASK
+        return FORBIDDEN_ASK
+    except Exception:                                   # noqa: BLE001
+        return ()
+
+
+_FORBIDDEN_ASK = _forbidden_ask_terms()
+#  「~하고 싶은지 «몰라도» 괜찮아요」(안심) · 「~모르겠다고 하셨죠」(되짚기)는 살린다.
+#  걸린 표현 «뒤»에서만 본다 — _is_assertion 의 _NOT_ASSERT_TAIL 과 같은 요령.
+#  ★ 2026-08-10 (2차) — '하셔서'·'하셨' 추가. llm_pick 의 추천 이유가
+#    「뭘 하고 싶은지 분명히 말씀«하셔서» 골랐어요」처럼 사용자의 말을 «과거로 인용»하는
+#    문장을 쓰는데, 이건 질문이 아니라 근거 인용이다(검토가 실행으로 재현).
+#    묻는 꼴(「말씀해 주세요/주실래요」)에는 '하셔서/하셨'이 없어서 겹치지 않는다.
+_ASK_KEEP_TAIL = ('몰라', '모르', '하셔서', '하셨')
+#  이 체가 문장을 다 지웠을 때의 대체 문구 — 원칙 141행(일상의 언어)대로 «경험»을 묻는다.
+#  ctx_check [돌봄못함] 장면에서 통과가 확인된 꼴이다. ENTRY_SAFE 와 같은 역할.
+ASK_SAFE = '그동안 해보신 일이나 눈이 갔던 것들이 있으면 편하게 말씀해 주세요.'
+
 #  ★ 카드에 없는 '속성'을 직업에 갖다 붙이는 말 (2026-08-05 브라우저 확인에서 발견)
 #    실측 문장 — 🤖「그중에 **지금 바로 시작할 수 있는 게** 건설기계정비예요」
 #    '지금 바로 시작 가능'은 **자격증**의 값(entry_free)이지 직업의 값이 아니다.
@@ -976,6 +1092,13 @@ def scrub_output(reply, card_text=''):
         if _hit and _is_assertion(s, f, _hit):
             dropped.append(f'근거없는 속성: {s.strip()[:40]}')
             continue
+        #  ①-3 「어떤 일을 하고 싶으세요?」 — 프롬프트 «가장 중요한 원칙» 위반 (2026-08-10)
+        #    실측: 프롬프트가 금지하는데도 holdout2 에서 모델이 두 번 물었다.
+        #    목록·이유는 prompts.FORBIDDEN_ASK 주석. 「몰라도 괜찮아요」류는 살린다.
+        _ask = next((t for t in _FORBIDDEN_ASK if t in f), None)
+        if _ask and not any(k in f.split(_ask, 1)[1] for k in _ASK_KEEP_TAIL):
+            dropped.append(f'금지된 되물음: {s.strip()[:40]}')
+            continue
         #  ② 카드에 없는 숫자 — 날짜·회차·개수를 지어낸 경우
         #    2자리 이상 숫자만 본다(「3개」 같은 건 문장 표현이라 오탐이 크다)
         #
@@ -998,17 +1121,39 @@ def scrub_output(reply, card_text=''):
         kept.append(s.strip())
     out = ' '.join(kept).strip()
     _entry = any('응시요건' in d for d in dropped)
+    _asked = any('금지된 되물음' in d for d in dropped)
     #  ⚠ 다 지워졌을 때 원문을 되돌리면 **가드가 무의미해진다**(2026-08-05 자체시험에서 발견).
     #    실측 사고 문장(「…제한 없이 누구나 응시할 수 있는 자격증이에요」)이 한 문장짜리라
     #    정확히 이 경우에 해당했다. 대체할 안전 문구가 있으면 그걸 쓴다.
     if not out:
         if _entry:
+            #  ★ 2026-08-10 (2차) — 응시요건 문장과 금지 되물음이 «같이» 다 지워진 턴:
+            #    ENTRY_SAFE 만 돌려주면 되묻기 턴이 질문 없이 끝난다(대화가 막힌다).
+            #    카드가 없는 턴에만 질문을 이어 붙인다 — 카드 턴에 질문을 붙이면
+            #    「카드가 나가는데 되묻는다」 금지를 가드 스스로 어긴다(아래 주석 참고).
+            if _asked and not flat_card:
+                return ENTRY_SAFE + '\n' + ASK_SAFE, dropped
             return ENTRY_SAFE, dropped
+        #  ★ 되물음이 답변의 전부였던 턴 — 「아래에서 확인」은 카드 없는 턴에서 거짓말이 된다.
+        #    묻긴 물어야 하는 자리이므로, 원칙에 맞는 질문(ASK_SAFE)으로 바꿔 묻는다.
+        #  ⚠ 2026-08-10 (2차) — **카드가 있는 턴은 예외다**(검토가 잡음). 카드 턴에
+        #    ASK_SAFE(질문)를 넣으면 「카드+되묻기 금지」(716행께 규칙) 위반이고,
+        #    이 함수는 job_reason(추천 이유 칸)에도 쓰이는데 그 칸에 「말씀해 주세요」가
+        #    박히면 추천 이유가 대화 유도문이 된다. 카드 턴은 기존 일반 대체문으로 간다.
+        if _asked and not flat_card:
+            return ASK_SAFE, dropped
         if dropped:
             return '말씀해 주신 걸 바탕으로 아래에서 확인해 주세요.', dropped
         return reply, dropped
     if _entry:
         out = (out + '\n' + ENTRY_SAFE).strip()
+    #  ★ 되물음을 뗐는데 남은 문장에 물음표가 하나도 없으면 — 그 턴은 «질문 없는 되묻기 턴»이
+    #    된다(대화가 막힌다). 원칙에 맞는 질문을 뒤에 붙여 대화를 이어 준다.
+    #  ⚠ 2026-08-10 (2차) — 카드 턴(flat_card 있음)에는 붙이지 않는다. 카드 턴은
+    #    원래 질문이 없는 게 정상이고(716행께 「카드+되묻기 금지」·7571행께 drop_questions),
+    #    붙이면 그 금지를 가드가 스스로 어긴다(검토가 잡음).
+    if _asked and not flat_card and '?' not in out and '？' not in out:
+        out = (out + '\n' + ASK_SAFE).strip()
     return out, dropped
 
 
@@ -1130,7 +1275,7 @@ def _match_mod():
     return match
 
 
-ASK_ORDER = ['관심분야', '활동유형', '다루는대상']    # 되물어 채울 슬롯(세부관심=narrowing·강점성향=보강은 제외)
+ASK_ORDER = ['관심분야', '활동유형', '다루는대상']    # 되물어 채울 슬롯(세부관심=narrowing 은 제외)
 
 def missing_slots(p):
     return [k for k in ASK_ORDER if not (p or {}).get(k)]
@@ -1149,8 +1294,7 @@ def missing_slots(p):
 #  ⚠ 여기 없는 슬롯은 아예 안 보여준다 — 특히 '제약'(학력부담·체력부담…)과 '관심대분류'.
 #    제약을 되돌려주면 사용자가 자기 처지에 붙은 딱지를 눈으로 보게 된다.
 _MET_LABEL = {'관심분야': '관심 있다고 하신 것', '활동유형': '해보고 싶다고 하신 일',
-              '다루는대상': '주로 마주하게 될 것', '세부관심': '좁혀 말씀해 주신 방향',
-              '강점성향': '편하다고 하신 것'}
+              '다루는대상': '주로 마주하게 될 것', '세부관심': '좁혀 말씀해 주신 방향'}
 
 #  ★ 2026-08-06 — 활동유형·다루는대상 문구를 고쳤다. 둘 다 프롬프트가 금지한 형태였다.
 #    · 다루는대상: 「주로 무엇을 **다루는 일**이 좋으세요?」 = 내부 용어('다루는대상') 직역.
@@ -2915,11 +3059,26 @@ def pre_check(msg):
     #  ★ 자모만 있는 입력은 원래 전부 '무의미'로 봤다(「ㅁㄴㅇㄹ」 키보드 난타).
     #    그런데 **자모 축약은 실제로 쓰는 말이다** — 실측: 「ㅎㅇ」가 첫 마디였는데
     #    「잘 못 알아들었어요」로 차단됐다. 인사에 대고 못 알아들었다고 한 셈이다.
-    #    자주 쓰는 축약만 통과시킨다(난타는 그대로 막힌다).
-    _JAMO_OK = {'ㅎㅇ', 'ㅇㅇ', 'ㄴㄴ', 'ㄱㅅ', 'ㅇㅋ', 'ㅂㅂ', 'ㅅㄱ', 'ㅈㅅ'}
-    _bare = re.sub(r'\s+', '', msg)
-    if _bare in _JAMO_OK:
-        return None
+    #
+    #  ★★ 2026-08-10 — 8개짜리 «허용 목록»을 «구조 규칙»으로 바꿨다.
+    #    지우기 전 실측(pre_check 직접 호출):
+    #      ㄱㄱ · ㄱㅊ · ㅇㅈ · ㅊㅋ · ㄱㅅㄱㅅ  →  VAGUE 「혹시 오타가 있었을까요?」
+    #      ㅅㅂ · ㅁㅊ                        →  VAGUE  ← **욕설에 대고 「오타냐」고 되물었다**
+    #      ㅇㅋㅇㅋ                          →  SILENT ← 말인데 «침묵»으로 분류됐다
+    #    목록에 든 여덟 개(ㅎㅇ·ㅇㅇ·ㄴㄴ·ㄱㅅ·ㅇㅋ·ㅂㅂ·ㅅㄱ·ㅈㅅ)만 통과했기 때문이다.
+    #    목록 밖 축약은 계속 나온다 — 낱말을 더 넣는 건 끝이 없다.
+    #  ⇒ 구별점을 «낱말»에서 «꼴»로 옮긴다.
+    #      실제 축약  = 두 글자(ㄱㄱ·ㅇㅈ) 이거나 그 반복(ㅇㅋㅇㅋ·ㄱㅅㄱㅅ)
+    #      키보드 난타 = ㅁㄴㅇㄹ·ㅂㅈㄷㄱ — 2주기 반복이 아니라서 안 걸린다
+    #  ⚠ 웃음·울음(ㅠㅠ·ㅎㅎ·ㅋㅋ·ㅜㅜ)은 꼴이 같지만 «침묵»으로 남겨야 한다.
+    #    그 네 글자만 뺀 뒤에도 남는 게 있어야 축약으로 본다.
+    #  ⚠ **여기서 return None 을 하지 않는다.** 그러면 「ㅅㅂ」까지 통과한다.
+    #    VAGUE·SILENT 만 면제하고, 아래 욕설·위기 검사는 «그대로» 태운다.
+    #  ★ 2026-08-10 (2차) — 판정을 _jamo_word() 로 옮겼다. 두 가지 이유(검토가 잡음):
+    #    ① 처음 판은 공백만 지워서 「ㅇㅈ!」·「ㄱㄱ.」이 그대로 VAGUE 로 튕겼고,
+    #      「ㅇㅋ!」는 글자가 전부 _EMO_ONLY 라 «침묵»(SILENT)으로 오분류됐다.
+    #    ② is_thin_ack 와 같은 판정을 써야 게이트가 들여보낸 것을 검색어 조립이 알아본다.
+    _jamo_ok = _jamo_word(msg)
     #  ★★ 2026-08-06 — **「…」 은 «의미 없는 입력»이 아니다.**
     #    실측(페르소나 ⑦ 강태오 · 어머니 암 4기, 말문이 막혀 단답만 하는 16세):
     #      🧑 「...」  →  [blocked] 「혹시 오타가 있었을까요?」
@@ -2939,9 +3098,9 @@ def pre_check(msg):
     #    「의미 없는 입력」과 「말 대신 쓰는 표현」을 구별하지 못했다.
     #  ⚠ 「ㅁㄴㅇㄹ」(키보드 난타)은 그대로 VAGUE 다. 그 자모들은 아래 목록에 없다.
     #    구별점은 «자모냐»가 아니라 «감정을 나타내는 글자냐»다.
-    if msg.strip() and not _EMO_ONLY.sub('', msg).strip():
+    if not _jamo_ok and msg.strip() and not _EMO_ONLY.sub('', msg).strip():
         return 'SILENT'
-    if not meaningful or re.fullmatch(r'[ㄱ-ㅎㅏ-ㅣ\s]+', msg):
+    if not _jamo_ok and (not meaningful or re.fullmatch(r'[ㄱ-ㅎㅏ-ㅣ\s]+', msg)):
         return 'VAGUE'
     flat = msg.replace(' ', '')
     #  ★★ 2026-08-06 (2차) — **정규화를 위기 판정에도 쓴다.** 처음엔 욕설·성적 낱말에만
@@ -3556,6 +3715,25 @@ class ItdaEngine:
     #    ⇒ 분류는 flash-lite 에 맡기고(6/8), 필터는 그대로 쓴다. 되돌리려면 .env 에
     #      ITDA_THINK_MODEL=gemini-3.6-flash 한 줄이면 된다.
     THINK_MODEL = ENV.get('ITDA_THINK_MODEL') or MODEL
+
+    #  ★★ 2026-08-10 — **안전 게이트만 상위 모델로 올린다.**
+    #    무엇이 이 모델을 쓰나 — _harm_gate(유해) · crisis_who(자해가 누구 이야기인가) ·
+    #    harm_who(폭력이 누구 행동인가) · utt_kind(발화 종류). 본문 turn() 은 그대로 lite.
+    #  ⚠ **측정 없이 바꿨다.** 사용자 판단(2026-08-10) — 「근거되는 정황이 많으니 그냥 하자,
+    #    실험은 안 해도 된다」. 정직하게 적어 둔다: 이 변경의 «효과는 재지 않았다».
+    #    준비했던 A/B(위기 8 + 유해 6 + gate_blast 23 = 37케이스, 약 70~80원)는 안 돌렸다.
+    #  근거로 삼은 정황(전부 기존 실측) —
+    #    · 게이트는 놓치는 것(FN)이 헛짚는 것보다 나쁜 자리다(이 파일이 여러 곳에 못 박은 원칙).
+    #    · 유해 판정이 SYSTEM 이 붙은 본문 호출에서 1/4 였다 — 맥락이 판정을 무디게 한다
+    #      (_harm_gate 주석). 분리로 4/4 가 됐지만, 판정 자체의 힘은 모델에서 온다.
+    #    · think 실측에서 상위 모델이 지시 준수가 나았다(대분류 6/8 → 8/8, 짐작 대신 빈 배열).
+    #  ⚠ 반대 방향 실측도 있다 — 골든셋 «흔들림»은 3.6-flash 3/7 vs lite 2/7 로 상위가 더 컸다.
+    #    그건 본문 대화 생성 이야기이고 여기는 enum 판정이라 다르다고 «보지만», 확인은 안 했다.
+    #  단가(공식 문서 2026-08-10 확인) — 3.6-flash 입력 $1.50 / 출력 $7.50 (lite 의 6배·5배).
+    #    게이트는 SYSTEM 없이 짧아 호출당 0.17원 → 약 1원. 게이트는 «매 턴» 돌지 않는다
+    #    (코드가 의심스러울 때만 부른다) — 그래서 총액 영향은 작다. 다만 이것도 추정이다.
+    #  되돌리기: .env 에 ITDA_GATE_MODEL=gemini-3.1-flash-lite 한 줄.
+    GATE_MODEL = ENV.get('ITDA_GATE_MODEL') or 'gemini-3.6-flash'
     THINK_ENABLED = True
     #  대분류로 후보를 거를까 — 회귀 비교 때 오늘 변경을 통째로 끄기 위한 스위치.
     #  ★★ 2026-08-09 — **.env 로 뺐다.** 코드를 고쳐야만 껐다 켤 수 있으면 회귀 비교를
@@ -3622,6 +3800,23 @@ class ItdaEngine:
             print(f'[itda] think 실패(작은 모델 질의로 진행): {type(e).__name__}: {str(e)[:90]}')
             return None
 
+    async def gate_gemini(self, prompt, schema, temp=0.0, **kw):
+        """안전 게이트 전용 호출 — GATE_MODEL 로 간다 (2026-08-10).
+
+        think() 가 쓰는 방식과 «같다» — 하위 엔진을 만들고 사용량만 이번 턴에 합산한다.
+        ⚠ GATE_MODEL 이 MODEL 과 같으면 엔진을 새로 만들지 않는다(불필요한 객체 생성 방지).
+        ⚠ 실패는 여기서 삼키지 않는다 — 부르는 쪽이 「실패하면 어느 쪽으로 기울지」를
+          각자 정해 놨다(crisis_who 는 '본인', harm_who 는 다르게). 그 판단을 뺏으면 안 된다.
+        """
+        if self.GATE_MODEL == self.model:
+            return await self.gemini(prompt, schema, temp, **kw)
+        eng = ItdaEngine(model=self.GATE_MODEL)
+        try:
+            return await eng.gemini(prompt, schema, temp, **kw)
+        finally:
+            for k in ('in', 'out'):
+                self.total_usage[k] = self.total_usage.get(k, 0) + eng.total_usage.get(k, 0)
+
     #  ★★ 위기 2층 — 대상 판정 (2026-08-05). 근거는 CRISIS_TRIAGE_SCHEMA 주석.
     #    1층(낱말)이 걸렸을 때**만** 부른다. 상용 챗봇 기준 주간 대화의 0.15% 수준이라
     #    비용·지연이 사실상 안 는다.
@@ -3648,7 +3843,7 @@ class ItdaEngine:
             '★ 근거는 발화에서 그대로 인용해라.\n\n'
             f'[앞선 대화]\n{lines or "(없음)"}\n\n[발화]\n{user_msg}')
         try:
-            r = await self.gemini(prompt, CRISIS_TRIAGE_SCHEMA, 0.0)
+            r = await self.gate_gemini(prompt, CRISIS_TRIAGE_SCHEMA, 0.0)   # 2026-08-10 GATE_MODEL
         except Exception as e:                              # noqa: BLE001
             print(f'[itda] 위기 대상판정 실패(본인으로 처리): {type(e).__name__}: {str(e)[:80]}')
             return '본인'
@@ -3696,7 +3891,7 @@ class ItdaEngine:
             '★ 근거는 발화에서 그대로 인용해라.\n\n'
             f'[앞선 대화]\n{lines or "(없음)"}\n\n[발화]\n{user_msg}')
         try:
-            r = await self.gemini(prompt, HARM_TRIAGE_SCHEMA, 0.0)
+            r = await self.gate_gemini(prompt, HARM_TRIAGE_SCHEMA, 0.0)     # 2026-08-10 GATE_MODEL
         except Exception as e:                              # noqa: BLE001
             return _fallback(f'실패({type(e).__name__})')
         who = (r or {}).get('대상')
@@ -4349,7 +4544,21 @@ class ItdaEngine:
     #    · LIFT=3 은 과하다 — 「컴퓨터로 하는 일」에 구조해석설계가 2위로 올라온다.
     #  ⚠ 「돕기·돌봄」 태그에 서비스업(골프캐디·항공객실서비스·경호)이 섞여 있다.
     #    2 칸이면 동점 근처에서만 작동해서 1위를 뒤집지는 못한다 — 그래서 안전하다.
-    ATTR_LIFT = int(ENV.get('ITDA_ATTR_LIFT') or 2)
+    #  ★★ 2026-08-10 — 기본값을 2 → **0** 으로 내렸다. 즉 «태그 가중을 끈다».
+    #    근거(모두 실측) —
+    #      ① 신뢰도  checks/tag_reliability.py — 같은 모델로 다시 태깅해도 **71%** 만 같고,
+    #                다른 모델(Solar)과는 **43%**. 정답표가 없으니 이건 «정확도의 상한»이다.
+    #                재현이 71% 라는 건 나머지가 «그날의 운»이라는 뜻이다.
+    #      ② 효과    checks/attr_lift_ablation.py — 정답표 100개에서 가중 2 는 @1 을
+    #                **+4** 올린다. 그런데 곡선이 뾰족하다(4·8 에서 다시 떨어진다) —
+    #                신호가 아니라 «우연히 맞은 자리»라는 뜻이다.
+    #      ③ 해악    「어르신 돌보는 일」에 네일미용·골프캐디가 올라왔다. 「돕기·돌봄」 칸
+    #                40개의 최대 군집이 돌봄이 아니라 **미용·접객**이다.
+    #      ④ 골든셋  34/34 는 가중을 꺼도 «그대로»다.
+    #    ⇒ 71% 짜리 자체 제작 라벨로 순위를 흔드는 것보다, 검색이 스스로 뽑은 순서를
+    #      믿는 편이 낫다. 되돌리려면 .env 에 ITDA_ATTR_LIFT=2.
+    #    ⚠ 이 값이 0 이 되면 '대상세부' 슬롯을 «읽는 곳이 없어진다»(유일한 소비처였다).
+    ATTR_LIFT = int(ENV.get('ITDA_ATTR_LIFT') or 0)
 
     #  ★ 검색어 캐싱(2026-07-30) — 같은 상태·같은 말이면 **LLM 을 다시 부르지 않고** 저장된 검색어를 쓴다.
     #    근거(실측): 같은 검색어로 6회 검색 → 결과 6/6 완전 동일. 즉 이 파이프라인에서
@@ -4453,8 +4662,8 @@ class ItdaEngine:
         #    정상 진로 발화가 1턴차에 막힌다(홀드아웃 실측: 이탈 오판의 대가가 훨씬 크다).
         #    Google SRE 의 graceful degradation — "Serve lower-quality … results to the user."
         try:
-            j = await self.gemini(GATE_ONTOPIC.format(msg=user_msg), _GATE_SCHEMA, 0.0,
-                                  think='minimal')
+            j = await self.gate_gemini(GATE_ONTOPIC.format(msg=user_msg), _GATE_SCHEMA, 0.0,
+                                       think='minimal')                     # 2026-08-10 GATE_MODEL
         except Exception as e:                                     # noqa: BLE001
             print(f'[itda] utt_kind 실패(낱말표로 판단) — {type(e).__name__}: {str(e)[:80]}')
             return None
@@ -4480,8 +4689,8 @@ class ItdaEngine:
         if not self.UTT_KIND:
             #  ★ 여기도 fail-open (위 utt_kind 주석에 근거를 전부 적었다).
             try:
-                j = await self.gemini(GATE_ONTOPIC_BIN.format(msg=user_msg),
-                                      _GATE_SCHEMA_BIN, 0.0, think='minimal')
+                j = await self.gate_gemini(GATE_ONTOPIC_BIN.format(msg=user_msg),
+                                           _GATE_SCHEMA_BIN, 0.0, think='minimal')
             except Exception as e:                                 # noqa: BLE001
                 print(f'[itda] _on_topic 실패(통과시킴) — {type(e).__name__}: {str(e)[:80]}')
                 return True
@@ -4646,9 +4855,9 @@ class ItdaEngine:
         iv = [str(x).strip() for x in wanted_vals(p, '관심분야') if str(x).strip()]
         av = [str(x).strip() for x in wanted_vals(p, '활동유형') if str(x).strip()]
         #  꼬리 — 나누지 않는 축. _search_query 와 **같은 순서**를 지킨다.
-        detail, obj, strong = (slot_text(p.get('세부관심')),
-                               slot_text(wanted_vals(p, '다루는대상')),
-                               slot_text(p.get('강점성향')))
+        #  ★ 2026-08-10 — 꼬리에서 '강점성향'(strong) 을 뺐다. 400발화 0회라 항상 빈 문자열이었다.
+        detail, obj = (slot_text(p.get('세부관심')),
+                       slot_text(wanted_vals(p, '다루는대상')))
 
         def _join(*parts):
             return ' '.join(x for x in parts if x)
@@ -4657,16 +4866,16 @@ class ItdaEngine:
         #  ① **닻** — 누적 슬롯 전체를 하나의 질의로. 값이 하나뿐이어도 낸다.
         #    이게 topic drift 를 잡는 본체다. LLM 질의가 이번 턴에 쏠려도
         #    「지금까지 쌓인 것」이 순위 하나로 함께 들어간다.
-        anchor = _join(slot_text(iv), detail, slot_text(av), obj, strong)
+        anchor = _join(slot_text(iv), detail, slot_text(av), obj)
         if anchor:
             out.append(anchor)
         #  ② 다중값 축이 있으면 값마다 하나씩 더 — 한 값이 다른 값을 가리지 않게.
         #    (SciNUP 의 「한 질의에 여러 주제」 문제. 닻만으로는 그건 그대로다)
         #    최대 3개 — 질의가 늘면 임베딩 호출도 는다.
         if len(iv) > 1:
-            out += [_join(x, detail, slot_text(av), obj, strong) for x in iv[:3]]
+            out += [_join(x, detail, slot_text(av), obj) for x in iv[:3]]
         elif len(av) > 1:
-            out += [_join(slot_text(iv), detail, x, obj, strong) for x in av[:3]]
+            out += [_join(slot_text(iv), detail, x, obj) for x in av[:3]]
         return out
 
     def _search_query(self, profile, query=''):
@@ -4679,9 +4888,9 @@ class ItdaEngine:
         #  후보에 두 갈래가 다 올라오고, 그중 하나를 고르는 건 llm_pick 이 대화를 보고 한다.
         #  ★ 2026-08-08 — 「못함」인 값은 뺀다. 「돕기·돌봄(못함)」이 섞이면
         #    검색이 아이돌봄·요양지원 쪽으로 끌려간다(wanted_vals 주석의 실측).
+        #  ★ 2026-08-10 — '강점성향' 을 뺐다(슬롯 자체를 없앴다). 항상 빈 문자열이었다.
         bits = [slot_text(wanted_vals(p, '관심분야')), slot_text(p.get('세부관심')),
-                slot_text(wanted_vals(p, '활동유형')), slot_text(wanted_vals(p, '다루는대상')),
-                slot_text(p.get('강점성향'))]
+                slot_text(wanted_vals(p, '활동유형')), slot_text(wanted_vals(p, '다루는대상'))]
         return ' '.join(x for x in bits if x)
 
     async def _next_exam(self, db, cert_id):
@@ -6068,10 +6277,32 @@ class ItdaEngine:
                                        '「보여주세요」·「가져와 보세요」·「말해보세요」·'
                                        '「일단 봐볼게요」처럼 «내놓으라는» 말이면 예. '
                                        '⚠ 새 정보를 주거나 질문에 답한 것이면 아니오.'},
+                        #  ★★★ 2026-08-10 — 「거부」도 같은 호출에서 받는다. 비용 ≈ 0.05원/턴.
+                        #    `_REJECT_LAST`(38낱말)가 못 잡는 것이 실측으로 나왔다 —
+                        #    브라우저 완주 시험(자동차 정비 목표, 7턴):
+                        #      🤖 [카드 자동차전기·전자장치정비]
+                        #      🧑「전기쪽은 좀 «어려울 것 같고요», 엔진이나 몸통 고치는 거 없나요」
+                        #         → 목록에 '어렵/어려울'이 없어 «거부 아님» 판정
+                        #         → 「착지 뒤 재검색 억제」가 안 풀림 → 3턴을 헛돌았고
+                        #           모델은 검색을 못 하니 **같은 질문을 두 번** 했다.
+                        #      🧑「그거 «말고» 다른 거 보여주세요」 → 목록에 있어서 즉시 통과
+                        #    ⇒ 사용자가 «낱말표에 있는 말»을 써야만 다음 카드로 갈 수 있었다.
+                        #    ⚠ 낱말을 더하는 건 답이 아니다 — '어렵'을 넣으면
+                        #      「어려운 일도 괜찮아요」가 거부로 잡힌다.
+                        #  ⚠ 판정에 필요한 문맥은 «방금 준 카드 이름» 하나뿐이다(아래 프롬프트).
+                        #    이력 전체를 주면 +261토큰이고, 무엇보다 앞 대화의 무거운 이야기가
+                        #    «위기» 판정을 흔들 수 있다 — 게이트의 위기는 2층 없이 «바로» 나간다.
+                        '거부': {'type': 'STRING',
+                                'enum': ['아니오', '예'],
+                                'description':
+                                    '방금 보여준 추천을 «무르는» 말인가. 마음에 안 든다·'
+                                    '어려울 것 같다·다른 걸 보고 싶다는 뜻이면 예. '
+                                    '⚠ 그 추천에 «대해 묻는» 것은 아니오 '
+                                    '(「그거 자격증 뭐예요?」·「얼마나 걸려요?」).'},
                         '근거': {'type': 'STRING'}},
                     'required': ['유해', '위기', '근거']}
 
-    async def _harm_gate(self, user_msg):
+    async def _harm_gate(self, user_msg, last_job=None):
         """유해 발화 판정 — **SYSTEM 을 붙이지 않은 «별도» 호출**(2026-08-09).
 
         왜 별도인가 — 본문 호출(SYSTEM 12,112자)에 「유해」 필드를 얹어 봤더니 **1/4 만 잡았다.**
@@ -6092,10 +6323,19 @@ class ItdaEngine:
         ⚠ 실패하면 「아니오」(통과)다. 판정기 오류로 정상 사용자를 막지 않는다 —
           위험군의 마지막 방어선은 pre_check 와 Gemini 자체 안전필터가 계속 맡는다.
         """
+        #  ★ 2026-08-10 — 매 턴 «반드시» 초기화한다. 안 하면 위기·유해로 조기 return 한 턴에
+        #    지난 턴의 거부/사정 값이 그대로 남아 다음 판단에 섞인다(상태 누수).
+        self.last_reject = False
+        self.last_reject_seen = False
+        self.last_situation = False
         try:
-            j = await self.gemini(
+            j = await self.gate_gemini(                                     # 2026-08-10 GATE_MODEL
                 '다음 발화를 판정하라. 진로상담 챗봇에 들어온 말이다.\n\n'
-                f'[발화] {user_msg}\n\n'
+                f'[발화] {user_msg}\n'
+                #  ★ 2026-08-10 — 「거부」 판정에 필요한 «유일한» 문맥. 이력 전체가 아니다.
+                #    없으면(카드 전) 이 줄 자체를 안 넣는다 — 빈 값을 주면 모델이 헷갈린다.
+                + (f'[방금 보여준 추천] {last_job}\n' if last_job else '')
+                + '\n'
                 '· «불법이거나 남을 해치는 일»을 묻거나 원하면 그 종류를 고른다.\n'
                 '· 합법적인 직업은 「아니오」다 — 총포화약안전기술·경찰·군인·보안·의료·'
                 '수의·주류판매·도축·장례는 정상 진로다.\n'
@@ -6157,6 +6397,16 @@ class ItdaEngine:
             return ('유해', kind)
         #  ★ 사정은 «막는 것»이 아니다 — 표시만 남기고 계속 간다.
         self.last_situation = ((j or {}).get('사정') or '아니오').strip() == '예'
+        #  ★ 2026-08-10 — 「거부」는 «막는 것»이 아니다. 사정과 같이 표시만 남기고 계속 간다.
+        #    ★★ 이 값이 «주 판정»이다. 낱말표(rejects_last_card)는 이 호출이 실패했을 때만 쓴다.
+        #      근거(실측) — 낱말표가 뜻을 판정하려다 두 번 다 틀렸다:
+        #        놓침 「전기쪽은 좀 어려울 것 같고요」 → 목록에 없어 3턴 헛돎
+        #        오탐 「아 그런 뜻 아니고요 … 지게차 알려주세요」 → '아니고' 걸려 지게차를 뺏음
+        #      같은 두 문장에서 게이트는 «둘 다» 맞혔다. 뜻은 문맥이 정하는데 낱말표엔 문맥이 없다.
+        #    _harm_gate_seen 은 「이 호출이 실제로 판정했나」다 — 실패/차단이면 False 로 남아
+        #    _step 이 낱말표로 되돌아간다(fail-safe).
+        self.last_reject = ((j or {}).get('거부') or '아니오').strip() == '예'
+        self.last_reject_seen = True
         if ((j or {}).get('착지요청') or '아니오').strip() == '예':
             print(f'[itda] 착지요청(게이트) — {why}')
             return ('착지', '예')
@@ -6290,8 +6540,22 @@ class ItdaEngine:
                        #      「술 냄새요」·「몰라요」·「그냥요」에 카드를 들이밀 이유가 없다.
                        #      정체는 사라지지 않으니 사용자가 한 문장이라도 더 주면 그때 낸다.
                        and len(_FILLER_RE.sub('', (user_msg or '').replace(' ', ''))) > 8)
+        #  ★★★ 2026-08-10 — **방향 슬롯이 «하나도» 없으면 먼저 보여주지 않는다.**
+        #    실측(클로드 페르소나, 새 대화 3턴) —
+        #      🧑「여기 뭐하는 데예요」 🧑「사람이 아니라 ai죠 이거」 🧑「그냥 뭐 딱히 할 말은 없는데」
+        #      🤖 [카드 «자동차전기·전자장치정비»]      ← 자동차 이야기를 «한 적이 없다»
+        #      로그: [itda] 정체 3턴 — 카드 1번째
+        #    원인: 빈 프로필이면 _search_query 가 '' 라 free_dirs() 로 떨어지는데,
+        #      그건 «아직 부정 안 한 활동유형 목록»이다(만들기·고치기·정비·운전·조작).
+        #      그 낱말 뭉치가 그대로 검색어가 되어 기계 계열이 떴다.
+        #    ⇒ 「3턴 잡담 → 무작위 직업 카드」. 이 파일이 막으려던 «추천 자판기»가
+        #      정체 경로로 되살아난 것이다. 사용자는 자기가 한 적 없는 말을 근거로 받는다.
+        #  ⚠ 칩(먼저 보여주기)도 같이 막는다 — 같은 쓰레기 질의에서 나오므로 칩도 무작위다.
+        #    「보기를 준다」는 원칙은 '모르겠다' 사다리가 이미 맡는다(그건 슬롯이 필요 없다).
+        #  ⚠ 정체는 사라지지 않는다. 사용자가 방향을 한 마디라도 주면 그때 보여준다.
+        _has_dir = any((_sp or {}).get(k) for k in ASK_ORDER)
         if (isinstance(out, dict) and out.get('kind') == 'ask'
-                and not out.get('card') and not out.get('options')
+                and not out.get('card') and not out.get('options') and _has_dir
                 and (should_nudge(_sp or {}) or _stall_card)):
             _p = out['profile']
             _q = (self._search_query(_p) or '').strip() or ' '.join(free_dirs(_p))
@@ -6340,7 +6604,14 @@ class ItdaEngine:
                         _pf['_stall_seen'] = list(_seen | {_g})[-6:]
                     out['reply'] = ((out.get('reply') or '').rstrip()
                                     + _CARD_NUDGE_TAIL)
-                    return out
+                    #  ★★ 2026-08-10 — 여기 있던 `return out` 을 지웠다 (에이전트 검토가 잡음).
+                    #    step() 의 «유일한 내부 return» 이라, 이 경로만 아래의
+                    #    「기다려 주세요」 스트리퍼 · 출력가드(scrub_output) · 덜다 꼬리를
+                    #    전부 건너뛰었다 — 「모든 답변이 지나가는 유일한 출구」 주석이
+                    #    이 경로에선 거짓이었다. 정체 3턴 뒤 카드가 모델의 원문 그대로
+                    #    (금지 되물음·「기다려 주세요」 포함 가능) 나가고 있었다.
+                    #  ⇒ 흘려보낸다. 카드가 나갔으니 아래 칩 분기만 건너뛴다.
+                    _nm = None
             if _nm:
                 print(f'[itda] 먼저 보여줌(부정 {neg_count(_p)}개) — {_q!r} -> {_nm}')
                 out['options'] = _nm
@@ -6483,32 +6754,20 @@ class ItdaEngine:
         #    근거는 search() 의 _dem 블록 주석 참고(문헌 경고).
         #  ★ 2026-08-05 — 「다 아니다」도 같은 처리를 받는다(none_of_these 주석 참고).
         #    기계는 이미 다 있었다. **말이 안 걸려서** 강등이 안 돌던 것뿐이다.
+        #  ★★★ 2026-08-10 — **낱말표 거부 처리를 여기서 «하지 않는다».** _step 으로 옮겼다.
+        #    이유(실측) — 여기는 게이트(LLM)보다 «먼저» 돌아서, 낱말표가 틀려도 이긴다:
+        #      🤖 [카드 지게차운전]  (사용자가 위기 신호로 오해받은 직후)
+        #      🧑「아 그런 뜻 «아니고»요 그냥 돈 얘기였어요. 지게차 그거나 알려주세요」
+        #        낱말표 → '아니고' 걸림 → «거부» → 지게차 배제 + 슬롯에서 지게차 제거
+        #        게이트 → 근거: 「돈 관련 이야기를 «정정»하며 지게차 정보 제공을 요청」  ← 맞다
+        #      결과 [콘크리트공기계운전]. 사용자는 «오해를 정정»했을 뿐인데 원하던 걸 뺏겼다.
+        #    ⇒ 판정은 게이트가 «본 뒤에» 한 번만 한다(_step). 낱말표는 게이트가 못 돌았을 때만.
+        #  ⚠ none_of_these(칩 전체 거부)는 여기 남긴다 — 그건 «우리가 준 목록»에 대한 답이라
+        #    문맥이 필요 없고, 게이트의 「거부」와 뜻이 다르다(하나가 아니라 «전부» 아니다).
         _all_no = none_of_these(user_msg)
-        _rejected = rejects_last_card(user_msg) or _all_no
         if _all_no:
             print(f'[itda] 목록 전체 거부: {str(user_msg)[:30]}')
-        if _rejected and (profile.get('_last_job') or profile.get('_narrow_codes')):
-            profile = dict(profile)
-            if profile.get('_last_job'):
-                ex = list(profile.get('_exclude') or [])
-                if profile['_last_job'] not in ex:
-                    ex.append(profile['_last_job'])
-                profile['_exclude'] = ex[-8:]       # 무한정 쌓이지 않게
-            #  칩은 목록째로 강등한다. 상한은 _exclude 와 같은 8 —
-            #  더 쌓으면 후보 풀(8)보다 커져 '남는 게 없어 되살리기'만 반복된다.
-            dem = list(profile.get('_demote') or [])
-            for c in (profile.get('_narrow_codes') or []):
-                if c and c not in dem:
-                    dem.append(c)
-            if dem:
-                profile['_demote'] = dem[-8:]
-            #  세부관심만 비운다 — 관심분야·활동유형까지 지우면 대화를 처음부터 다시 하게 된다.
-            #  사용자는 '방향'을 거부한 게 아니라 '그 직업'을 거부한 것이다.
-            profile.pop('세부관심', None)
-            profile.pop('_narrowed', None)
-            profile.pop('_narrow_opts', None)
-            profile.pop('_narrow_codes', None)
-            profile.pop('_landed', None)
+            profile = apply_rejection(profile)
 
         #  ★ 정책 안내를 물렸나 (2026-08-04) — 「됐어요」·「이미 받고 있어요」·「알아봤어요」.
         #    **우리가 건넨 직후에만** 본다. 안 그러면 「괜찮아요」·「나중에」 같은 흔한 말이
@@ -6830,12 +7089,31 @@ class ItdaEngine:
         #  ⇒ **나란히 던진다.** 지연은 max(0.9, 본문) 이라 사실상 0이 된다.
         #    유해면 본문 결과를 «쓰지 않고 버린다» — 슬롯도 안 담기고 그 문장도 안 나간다.
         #    (유해 턴에서 본문 1.3원을 버리게 되지만, 그런 턴은 드물다. 평소 1초가 더 비싸다)
-        _harm, t = await asyncio.gather(self._harm_gate(user_msg),
-                                        self.turn(profile, user_msg))
+        #  ★ 2026-08-10 — 게이트에 «방금 준 카드 이름» 한 줄을 넘긴다(거부 판정용).
+        #    프로필에 이미 있는 값이라 새로 만들 게 없다. 이력 전체는 «안» 준다 — 위 스키마 주석.
+        _harm, t = await asyncio.gather(
+            self._harm_gate(user_msg, (profile or {}).get('_last_job_name')),
+            self.turn(profile, user_msg))
         #  ★ 착지 요청은 «막는 것»이 아니다 — 아래 로직이 쓰도록 표시만 남기고 계속 간다.
         #    `_LAND_REQ`(낱말 36개)가 못 잡는 「가져와 보세요」류를 게이트가 받는다.
         #  ★ 게이트가 본 「사정」을 남긴다 — 정체 카드가 그 턴을 건너뛰는 데 쓴다.
         profile['_said_situation'] = bool(getattr(self, 'last_situation', False))
+        #  ★★★ 2026-08-10 — 「직전 추천을 물렸나」 판정. **게이트가 «주»고 낱말표는 «대체»다.**
+        #    OR 로 묶지 않는다 — 그러면 낱말표 오탐이 항상 이긴다(실측: '아니고' 한 글자에
+        #    「그런 뜻 아니고요, 지게차 알려주세요」가 거부로 잡혀 지게차를 뺏겼다).
+        #    게이트가 «실제로 판정했으면» 그 답을 쓴다. 호출이 실패·차단됐을 때만 낱말표로 간다.
+        #  ⚠ 이 판정은 배제(_exclude)까지 건다 — 억제만 풀면 같은 카드가 또 나온다(실측).
+        #    step() 의 「목록 전체 거부」와 «같은 함수»를 쓴다(apply_rejection 주석).
+        if getattr(self, 'last_reject_seen', False):
+            _rej = bool(getattr(self, 'last_reject', False))
+            _src = '게이트'
+        else:
+            _rej = rejects_last_card(user_msg)      # 게이트가 못 돌았을 때만 (fail-safe)
+            _src = '낱말표(게이트 실패)'
+        profile['_gate_reject'] = _rej
+        if _rej:
+            profile = apply_rejection(profile)
+            print(f'[itda] 거부({_src}) — 배제 {profile.get("_exclude")}')
         if _harm and _harm[0] == '착지':
             profile['_gate_land'] = True
             _harm = None
@@ -7115,7 +7393,10 @@ class ItdaEngine:
         #    많고(「카페에서도 좀 했고요」), 그걸로 열면 이 가드가 막으려던 «추천 자판기»가
         #    그대로 돌아온다. 제약만 통과시킨다.
         elif (act == 'SEARCH' and (profile or {}).get('_landed')
-              and not _asked_land and not rejects_last_card(user_msg)
+              #  ★ 2026-08-10 — 게이트 판정을 «함께» 본다(_gate_reject 주석).
+              #    낱말표가 「어려울 것 같고요」류를 못 잡아 3턴이 헛돌던 것을 푼다.
+              and not _asked_land
+              and not (rejects_last_card(user_msg) or (profile or {}).get('_gate_reject'))
               and not _new_cond):
             print('[itda] 착지 뒤 재검색 억제 — 카드 유지하고 대화를 잇는다')
             act = 'ASK'
@@ -7462,7 +7743,7 @@ class ItdaEngine:
                     #    「아직 들은 게 많지 않아요」가 나가고 있었다(홀드아웃 실측).
                     if _j.get('name'):
                         profile['_last_job_name'] = _j['name']
-                #  ★ 카드에 나간 자격증·시험일정을 남긴다(2026-08-04) — 다음 턴에
+                #  ★ 카드에 나간 자격ㄹ증·시험일정을 남긴다(2026-08-04) — 다음 턴에
                 #    「시험이 언제예요?」를 물으면 **DB 값 그대로** 답하려고. asks_exam 주석 참고.
                 profile['_last_certs'] = [
                     {'cert': c.get('cert'), 'exam': c.get('exam')}

@@ -79,14 +79,18 @@ def schema_without_kind():
 def weight_detail(p):
     """can_land 무게를 «풀어서» 문자열로 — 왜 착지했나/못했나."""
     axes = [k for k in C.ASK_ORDER if p.get(k)]
-    src, kind = p.get('_slot_src') or {}, p.get('_slot_kind') or {}
+    src = p.get('_slot_src') or {}
     parts, tot = [], 0.0
     for k in axes:
         base = C.LAND_W_CODE if src.get(k) == 'code' else C.LAND_W_USER
-        kw = C.KIND_W.get(kind.get(k), 1.0)
+        #  ★ 2026-08-10 — _slot_kind 는 «값 단위»({슬롯:{값:종류}})다. kind.get(k) 는
+        #    안쪽 dict 를 돌려줘서 KIND_W.get(dict) 가 unhashable TypeError 로 죽었다 —
+        #    B런 첫 「못함」 턴(흐름① 1턴)에서 항상. 축 대표는 엔진과 같은 axis_kind 로 잰다.
+        ak = C.axis_kind(p, k)
+        kw = C.KIND_W.get(ak, 1.0)
         tot += base * kw
         parts.append(f"{k}({src.get(k) or 'user'}"
-                     f"{'/' + kind[k] if k in kind else ''}) {base}×{kw}")
+                     f"{'/' + ak if ak else ''}) {base}×{kw}")
     need = (C.LAND_NEED_LATE if int(p.get('_turns') or 0) >= C.LAND_RELAX_AFTER
             else C.LAND_NEED)
     return ' + '.join(parts) + f' = {tot:.2f}  (문턱 {need})', tot, need

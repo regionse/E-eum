@@ -311,9 +311,13 @@ async def full(model):
     orig_verify = C.verify_slots
     seen = {}
 
-    def spy(raw, user_msg):
+    #  ★ 2026-08-10 — 세 번째 인자(kinds_out)를 빠뜨려서 --full 이 전 케이스
+    #    TypeError 로 죽고 있었다(엔진은 verify_slots 를 «3인자»로 부른다 — 7016행).
+    #    게다가 그 TypeError 는 케이스별 except 에 먹혀 「🔴 실패」로만 찍혔다 —
+    #    LLM 비용은 이미 다 낸 뒤다. kind_ab_dump.py 의 spy 와 같은 서명으로 맞춘다.
+    def spy(raw, user_msg, kinds_out=None):
         seen['raw'] = raw
-        return orig_verify(raw, user_msg)
+        return orig_verify(raw, user_msg, kinds_out)
 
     C.verify_slots = spy
 

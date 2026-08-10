@@ -1,4 +1,3 @@
-from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import select
@@ -83,7 +82,6 @@ async def sync_single_policy(
         )
 
     existing_policy.content_hash = new_hash     # 새 해시 저장
-    existing_policy.updated_at = datetime.now() # 수정시간 저장
 
     return (
         PolicySyncAction.UPDATED,
