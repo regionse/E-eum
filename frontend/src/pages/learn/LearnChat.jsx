@@ -69,7 +69,16 @@ export default function LearnChat() {
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
     if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [msgs, busy])
+  //  ★ 2026-08-10 — 로그아웃 직후 이 effect 가 «지운 대화를 도로 저장»하고 있었다.
+  //    순서: logout() 이 eum_itda_chat* 전부 삭제 → uid 가 null 로 바뀜 → deps 의 uid 가
+  //    변해 effect 재실행 → 화면에 남아 있던 msgs 를 'anon' 키로 통째로 재저장.
+  //    공용 PC 라면 로그아웃했는데 상담 내용(돌봄 사정)이 localStorage 에 남는다.
+  //    (토큰 만료로 uid 가 내려갈 때도 같은 일이 난다 — 에이전트 검토가 잡음)
+  //  ⇒ 이 화면이 열릴 때의 사용자에게만 저장한다. uid 가 바뀌었다는 건 «다른 사람» 키라는
+  //    뜻이므로 그 순간부터는 쓰지 않는다.
+  const uidAtMountRef = useRef(uid)
   useEffect(() => {   // 새로고침·중간이탈에도 이어지도록 마지막 대화를 이 사용자 키에 저장
+    if (uid !== uidAtMountRef.current) return
     saveItdaDraft(uid, { sid: sidRef.current, msgs, mapped })
   }, [msgs, mapped, uid])
   //  언마운트 뒤에도 응답을 저장할 수 있게 최신 msgs 를 ref 로 들고 있는다(send 참고).
@@ -86,12 +95,15 @@ export default function LearnChat() {
     const q = (raw ?? input).trim(); setWarn('')
     if (!q) { setWarn('내용을 입력해 주세요.'); return }
     setInput('')
-    const meaningful = q.replace(/[^가-힣a-zA-Z]/g, '')
-    if (!meaningful || /^[ㄱ-ㅎㅏ-ㅣ\s]+$/.test(q)) {
-      push({ role: 'me', kind: 'text', text: q })
-      push({ role: 'bot', kind: 'text', text: '앗, 잘 이해하지 못했어요. 관심 있는 분야나 좋아하는 걸 말로 적어주시겠어요?' })
-      return
-    }
+    //  ★ 2026-08-10 — 여기 있던 «프론트 자체 오타 필터»(한글·라틴 없음 또는 자모만이면
+    //    「앗, 잘 이해하지 못했어요」)를 지웠다. 발표 전 최종 점검에서 실측:
+    //      「ㄱㄱ」 → 백엔드에 «보내지도 않고» 프론트가 오타 취급 (백엔드 게이트는 오늘
+    //        자모 축약을 «말»로 받게 고쳤는데, 프론트 사본이 그대로 막고 있었다)
+    //      「...」 → 침묵 신호(SILENT — 말문이 막힌 사용자를 받는 백엔드 기능)가
+    //        웹 화면에서는 «한 번도 발동할 수 없었다». 프론트가 먼저 삼켰으니까.
+    //    같은 판정이 두 곳에 있으면 한쪽만 고쳐지는 사고가 반복된다(오늘만 두 번째다).
+    //    이 판정의 원본은 백엔드 pre_check 하나로 둔다 — VAGUE/SILENT 응답은
+    //    코드가 쓰는 문구라 LLM 비용도 0이다. 왕복 한 번이 늘 뿐이다.
     push({ role: 'me', kind: 'text', text: q })
     //  ★ 자기 위해 신호는 프론트에서 막지 않는다(2026-07-30). 공유 BAD_WORDS 에 '죽어'가 있어
     //    "죽어버리고 싶어요" 같은 말이 여기서 걸려 "그런 쪽은 도와드리기 어려워요"가 떴다.

@@ -1,8 +1,22 @@
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+#  ★ 2026-08-10 — Windows 에서 stdout 이 «파이프»면 인코딩이 cp949 로 잡혀서,
+#    로그에 흔한 전각 대시(—) 한 글자로 print 가 UnicodeEncodeError 를 던지고
+#    **턴 전체가 죽는다.** (발표 전 최종 점검에서 실측:
+#      [itda] step 실패: UnicodeEncodeError … '—' → 사용자 화면엔
+#      「지금 잠시 연결이 원활하지 않아요」)
+#    터미널에서 직접 띄우면 콘솔 API 가 UTF-8 이라 여태 안 보였다 — 파이프로 물리는
+#    순간(서비스·리다이렉트·감시 도구)에만 터지는 지뢰였다.
+#    리눅스 배포는 원래 UTF-8 이라 동작이 안 바뀐다. errors='replace' 라
+#    어떤 글자가 와도 로그는 깨질지언정 «턴은 못 죽인다».
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 
 # =========================================================

@@ -142,7 +142,12 @@ async def update_me(
     )
 
 
-@router.post(
+#  ★ 2026-08-10 — 두 가지를 고쳤다 (에이전트 검토가 잡음, 라우트 덤프로 확인).
+#    ① 같은 라우트가 «두 번» 등록돼 있었다 — 두 번째는 닿을 수 없는 죽은 코드. 지웠다.
+#    ② bare router 에 걸려 있어 실제 경로가 /me/withdraw 였는데,
+#       프론트(mypage.js:59)는 /auth/me/withdraw 를 부른다 → 탈퇴가 «항상 404».
+#       프론트의 /auth/... 관례(login·signup·me 전부)에 맞춰 auth_router 로 옮겼다.
+@auth_router.post(
     "/me/withdraw",
     status_code=status.HTTP_200_OK,
     summary="회원 탈퇴",
@@ -153,24 +158,6 @@ async def withdraw_me(
     current_user: User = Depends(
         get_current_user
     ),
-):
-    await controllers.withdraw_me(
-        db=db,
-        user=current_user,
-        data=request,
-    )
-    return {"ok": True}
-
-
-@router.post(
-    "/me/withdraw",
-    status_code=status.HTTP_200_OK,
-    summary="회원 탈퇴",
-)
-async def withdraw_me(
-    request: WithdrawRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     await controllers.withdraw_me(
         db=db,

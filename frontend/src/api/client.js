@@ -170,8 +170,12 @@ export async function request(
     //    는 상태가 됐다. 「로그인이 만료되었어요」가 «반복해서» 뜨던 것의 정체다.
     //    (브라우저에서 직접 확인 — 토큰만 넣었더니 화면은 「로그인이 필요해요」였고,
     //     eum_user 를 넣으니 그제서야 로그인 상태가 됐다. 두 키가 따로 논다)
-    //  ⚠ 여기서 이벤트를 쏘거나 리다이렉트하지 않는다 — client.js 는 화면을 모른다.
-    //    키만 맞춰 두면 «다음 렌더»부터 auth.jsx 가 로그아웃 상태로 읽는다.
+    //  ★ 2026-08-10 — 어제 주석(「키만 맞춰 두면 다음 렌더부터 로그아웃으로 읽는다」)의
+    //    **전제가 틀려서 지웠다.** auth.jsx 는 localStorage 를 useState «초기화 때 한 번만»
+    //    읽는다(같은 탭 쓰기는 storage 이벤트도 안 낸다). 즉 키를 지워도 헤더는 로그인
+    //    상태로 남고, F5 전엔 복구가 안 됐다(에이전트 검토 + 코드로 확인).
+    //  ⇒ 사실만 방송한다 — 「세션이 끝났다」. 화면을 아는 건 여전히 auth.jsx 쪽이다
+    //    (거기서 이 이벤트를 듣고 상태를 내린다). 리다이렉트는 여기서 하지 않는다.
     //  ⚠ 토큰이 원래 없던 요청(=로그인 시도)에서는 건드리지 않는다. 지울 것도 없다.
     if (wasLoggedIn) {
       try {
@@ -179,6 +183,11 @@ export async function request(
         localStorage.removeItem('eum_family')
       } catch {
         // localStorage 접근이 제한된 환경
+      }
+      try {
+        window.dispatchEvent(new CustomEvent('eum:session-expired'))
+      } catch {
+        // 테스트 등 window 가 없는 환경
       }
     }
   }

@@ -96,6 +96,13 @@ def main():
     if r.returncode != 0:
         print(f'  🔴 실패 (rc={r.returncode})')
         print(err[:2000])
+        #  ★ 2026-08-10 — 부분 파일을 지운다(검토가 잡음). 남겨 두면 정상 백업과
+        #    같은 이름 규칙(eum_full_*.sql)이라 복원 때 손상본을 집을 수 있다.
+        try:
+            sql.unlink()
+            print('  부분 파일 삭제함')
+        except OSError:
+            pass
         sys.exit(1)
     if err.strip():
         print(f'  ⚠ 경고: {err.strip()[:500]}')
@@ -114,6 +121,14 @@ def main():
     print(f'  완결   {"✅ Dump completed 확인" if ok else "🔴 끝맺음 없음 — 중간에 끊겼다"}')
 
     final = sql
+    #  ★ 2026-08-10 — 끝맺음(Dump completed)이 없는 파일은 이름에 .FAILED 를 박는다
+    #    (검토가 잡음). 예전엔 rc=0 이면 압축까지 해서 «정상 이름»으로 남겼다 —
+    #    복원하는 사람이 이름만 보고 손상본을 못 가려낸다.
+    if not ok:
+        failed = sql.with_name(sql.stem + '.FAILED' + sql.suffix)
+        sql.rename(failed)
+        print(f'  이름   {failed.name} (끝맺음 없음 — 압축·정리 생략)')
+        sys.exit(2)
     if not a.no_gzip:
         gz = sql.with_suffix('.sql.gz')
         with open(sql, 'rb') as fi, gzip.open(gz, 'wb', compresslevel=6) as fo:
@@ -123,8 +138,6 @@ def main():
 
     print(f'  크기   {size:,}B → {final.stat().st_size:,}B ({final.name})')
     print(f'  걸린   {time.time() - t0:.1f}초')
-    if not ok:
-        sys.exit(2)
 
 
 if __name__ == '__main__':
