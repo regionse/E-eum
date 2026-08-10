@@ -1,23 +1,30 @@
-//  ★ 2026-08-06 — 주소와 토큰은 client.js 하나에서 가져온다.
-//    (예전엔 이 파일이 VITE_API_BASE_URL 과 localStorage 를 «따로» 읽었다 —
-//     client.js 와 환경변수 이름이 달라 배포 때 갈라지는 구조였다)
+// ★ 2026-08-06 — 주소와 토큰은 client.js 하나에서 가져온다.
 import { API_BASE, getToken } from './client.js'
 
-//  ★ 2026-08-06 — **로그인 토큰을 실어 보낸다.**
-//    왜 필요한가: 백엔드 나누다 라우터가 가족방·가족편지·초대코드·주간분석에
-//    Depends(get_current_user) 를 걸었다(router.py 의 get_verified_user_id 주석).
-//    그 주석은 「프론트(api/client.js)는 이미 Bearer 토큰을 싣고 있으므로 화면 수정
-//    없이 막힌다」고 적었는데, **나누다 화면은 client.js 를 안 썼다.**
-//    이 파일이 자체 request 를 갖고 있고 여기엔 Authorization 이 없었다
-//    → 그날부터 가족편지가 전부 401 이 됐다.
+// 로그인 토큰과 JSON 요청을 공통으로 처리한다.
 async function request(path, options = {}) {
   const token = getToken()
 
+  // JavaScript 객체를 JSON 문자열로 변환한다.
+  const isFormData =
+    typeof FormData !== 'undefined' &&
+    options.body instanceof FormData
+
+  const body =
+    options.body != null &&
+    typeof options.body !== 'string' &&
+    !isFormData
+      ? JSON.stringify(options.body)
+      : options.body
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
+    body,
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(token
+        ? { Authorization: `Bearer ${token}` }
+        : {}),
       ...options.headers,
     },
   })
@@ -28,8 +35,10 @@ async function request(path, options = {}) {
     const error = new Error(
       data?.detail ?? '요청을 처리하지 못했습니다.',
     )
+
     error.status = response.status
     error.data = data
+
     throw error
   }
 
@@ -172,9 +181,7 @@ export function getSupportFacilities({
   return request(`/support-facilities?${params}`)
 }
 
-// 기존 ResourceMap.jsx가 아직 사용하는 호환 함수입니다.
-// ResourceMap 화면을 실제 최종 추천 기관 화면으로 교체하면
-// 이 함수는 삭제할 수 있습니다.
+// 기존 ResourceMap.jsx가 아직 사용하는 호환 함수이다.
 export async function listResources() {
   const facilities = await getSupportFacilities({
     facilityType: 'MENTAL_HEALTH',
@@ -194,8 +201,7 @@ export async function listResources() {
       '기관 상세정보 없음',
     phone: facility.phone ?? '정보 없음',
 
-    // 기존 mock 지도 핀 화면이 깨지지 않도록 하는 임시 좌표입니다.
-    // 실제 위도·경도가 아니며 다음 지도 연결 단계에서 제거합니다.
+    // 기존 mock 지도 핀 화면을 위한 임시 좌표
     x: 15 + (index % 4) * 23,
     y: 20 + (Math.floor(index / 4) % 4) * 20,
   }))
@@ -254,6 +260,10 @@ export function recommendFacility({
   )
 }
 
+// ============================================================
+// 현재 위치
+// ============================================================
+
 export function getCurrentPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -287,6 +297,10 @@ export function getCurrentPosition() {
     )
   })
 }
+
+// ============================================================
+// 도로 경로
+// ============================================================
 
 export function getDrivingRoute({
   originLatitude,
