@@ -18,6 +18,10 @@ const GREET = { role: 'bot', kind: 'text', greet: 'hello', text: '안녕하세�
 //  '이어서하기'로 들어왔을 때의 머리말. 위 GREET 과 똑같이 **우리가 쓴 안내문**이라 같은 규칙을 받는다.
 const RESUME_GREET = { role: 'bot', kind: 'text', greet: 'resume', text: '저장한 지도를 이어서 볼게요 — 더 이야기하면 방향을 다듬을 수 있어요.' }
 const GOAL_EXAMPLES = ['나무나 식물을 다루는 일', '컴퓨터로 뭔가 만드는 일', '사람에게 도움이 되는 일']
+//  ★ 2026-08-10 — 한 번에 보낼 수 있는 글자 수. **백엔드와 같은 값이어야 한다**
+//    (Backend/app/itda/schemas.py 의 MessageRequest.message max_length).
+//    한쪽만 바꾸면 프론트는 통과시키는데 서버가 422 로 튕긴다 — 사용자에겐 그냥 오류 화면이다.
+const MAX_LEN = 200
 
 //  ★ 머리말은 '저장된 대화'가 아니라 '지금 코드의 문구'로 되살린다 (2026-08-05)
 //  무슨 일이 있었나 — 8/4 에 GREET 을 새 문구로 바꿨는데 화면엔 계속 옛 문구가 나왔다.
@@ -251,14 +255,26 @@ export default function LearnChat() {
           {msgs.length <= 1 && <Examples items={GOAL_EXAMPLES} onPick={send} />}
           {warn && <p role="alert" style={{ color: '#c0392b', fontSize: 14, margin: '10px 0 0' }}>⚠ {warn}</p>}
           <div className="chat-input">
+            {/*  ★ 2026-08-10 — 입력 상한 200자. 백엔드(schemas.MessageRequest)와 «같은 값»이다.
+                 예전엔 프론트에 상한이 없어서, 백엔드 한도를 넘기면 안내 대신 422 오류 화면이 떴다.
+                 maxLength 로 «애초에 못 넘기게» 하고, 남은 글자를 보여 준다.  */}
             <input className="input" disabled={busy} value={input}
               aria-label="관심사 입력"
+              maxLength={MAX_LEN}
               style={{ fontSize: 15.5, padding: '13px 15px' }}
               placeholder={mapped ? '더 이야기하거나, 다른 관심을 말해도 돼요…' : '관심 있는 것을 자유롭게 적어주세요…'}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => setInput(e.target.value.slice(0, MAX_LEN))}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) send() }} />
             <button className="btn btn-primary" style={{ fontSize: 15 }} onClick={() => send()} disabled={busy}>보내기</button>
           </div>
+          {/*  글자 수는 «한도에 가까울 때만» 보여 준다 — 평소엔 세면서 쓰라고 압박하지 않는다.  */}
+          {input.length >= MAX_LEN - 40 && (
+            <p className="hint" style={{ marginTop: 8, color: input.length >= MAX_LEN ? '#c0392b' : undefined }}>
+              {input.length >= MAX_LEN
+                ? `${MAX_LEN}자까지 쓸 수 있어요. 나눠서 말씀해 주셔도 괜찮아요.`
+                : `${input.length} / ${MAX_LEN}자`}
+            </p>
+          )}
           <p className="hint" style={{ marginTop: 10 }}>답변은 AI가 하는 것이라 확실하지 않을 수 있어요. 오류가 생기면 문의 부탁드려요!</p>
         </div>
         {toast.node}

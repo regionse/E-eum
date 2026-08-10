@@ -58,13 +58,10 @@ Environment=PYTHONUNBUFFERED=1
 #    8000 포트가 인터넷에 그대로 노출된다(TLS 도 rate limit 도 없이).
 ExecStart=/home/ubuntu/E-eum/Backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-#  죽으면 되살린다. 다만 «설정이 틀려서» 계속 죽는 경우엔 무한 재시작을 막는다 —
-#  JWT_SECRET_KEY 가 없으면 이제 기동이 실패하는데(main.py lifespan),
-#  그걸 초당 한 번씩 영원히 재시도하면 로그만 뒤덮인다.
+#  죽으면 되살린다. 재시작 «횟수 제한»(StartLimit*)은 [Unit] 섹션에 있다 —
+#  여기 두면 systemd 가 무시한다(2026-08-10 서버 실측, 위 [Unit] 주석 참고).
 Restart=always
 RestartSec=3
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 #  종료할 때 워커가 정리될 시간을 준다(진행 중인 LLM 호출이 최대 25초까지 간다)
 TimeoutStopSec=30

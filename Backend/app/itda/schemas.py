@@ -7,7 +7,12 @@ class MessageRequest(BaseModel):
     #  session_id min_length=1 — 빈 문자열이면 여러 클라이언트가 한 세션을 공유해 프로필이 섞인다(코드감사)
     session_id: str = Field(..., min_length=1, description="프론트가 생성·유지하는 대화 세션 id")
     #  max_length — 상한이 없으면 대용량 발화가 그대로 LLM 프롬프트로 들어가 토큰비용이 폭증한다
-    message: str = Field(..., min_length=1, max_length=2000, description="사용자 발화")
+    #  ★ 2026-08-10 — 2000 → 200 (사용자 지시). 프론트도 같은 값으로 막는다.
+    #    ⚠ 알고 감수하는 대가: 실측한 사정 발화가 249자였다("어머니가 뇌졸중으로 쓰러지신 지
+    #      4년…"). 이 서비스가 받으려고 만든 종류의 말이 200자를 넘는다. 잘리면 사용자는
+    #      «다 못 쓰고» 보내게 된다. 되돌리려면 이 숫자와 LearnChat.jsx 의 MAX_LEN 을 같이 올린다.
+    #    ⚠ 프론트가 먼저 막으므로 여기 422 는 «직접 API를 부른 경우»의 최후 방어선이다.
+    message: str = Field(..., min_length=1, max_length=200, description="사용자 발화")
 
 
 class ResetRequest(BaseModel):
