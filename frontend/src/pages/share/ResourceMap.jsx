@@ -158,6 +158,7 @@ export default function ResourceMap() {
   const [routeLoading, setRouteLoading] = useState(false)
   const [routeInfo, setRouteInfo] = useState(null)
   const [routeError, setRouteError] = useState('')
+  const [selectedPlace, setSelectedPlace] = useState(null)
 
   const clearPlaceMarkers = () => {
     markersRef.current.forEach((marker) => marker.setMap(null))
@@ -216,61 +217,22 @@ export default function ResourceMap() {
               ? `https://place.map.kakao.com/m/${encodeURIComponent(place.id)}`
               : place.place_url
 
-            const content = document.createElement('div')
-            content.style.padding = '9px 12px'
-            content.style.fontSize = '13px'
-            content.style.lineHeight = '1.5'
-            content.style.minWidth = '170px'
+            setSelectedPlace({
+              name: place.place_name,
+              address:
+                place.road_address_name ||
+                place.address_name ||
+                '주소 정보 없음',
+              category: place.category_name || '분류 정보 없음',
+              phone: place.phone || '전화번호 정보 없음',
+              distance: place.distance
+                ? `${Math.round(Number(place.distance))}m`
+                : null,
+              detailUrl: kakaoDetailUrl,
+            })
 
-            const name = document.createElement('strong')
-            name.textContent = place.place_name
-            content.appendChild(name)
-
-            const address = document.createElement('div')
-            address.style.color = '#667085'
-            address.textContent =
-              place.road_address_name ||
-              place.address_name ||
-              '주소 정보 없음'
-            content.appendChild(address)
-
-            if (place.category_name) {
-              const category = document.createElement('div')
-              category.style.color = '#667085'
-              category.textContent = `분류: ${place.category_name}`
-              content.appendChild(category)
-            }
-
-            const phone = document.createElement('div')
-            phone.style.marginTop = '3px'
-            phone.textContent = place.phone
-              ? `전화: ${place.phone}`
-              : '전화번호 정보 없음'
-            content.appendChild(phone)
-
-            if (kakaoDetailUrl) {
-              const detailLink = document.createElement('a')
-              detailLink.href = kakaoDetailUrl
-              detailLink.target = '_blank'
-              detailLink.rel = 'noreferrer'
-              detailLink.textContent = '카카오맵 상세정보 ↗'
-              detailLink.style.display = 'inline-block'
-              detailLink.style.marginTop = '6px'
-              detailLink.style.color = '#00897b'
-              detailLink.style.fontWeight = '700'
-              content.appendChild(detailLink)
-            }
-
-            infoWindowRef.current.setContent(content)
-            infoWindowRef.current.open(map, marker)
-
-            if (kakaoDetailUrl) {
-              window.open(
-                kakaoDetailUrl,
-                '_blank',
-                'noopener,noreferrer',
-              )
-            }
+            infoWindowRef.current?.close()
+            map.panTo(positionForPlace)
           })
 
           markersRef.current.push(marker)
@@ -352,6 +314,35 @@ export default function ResourceMap() {
               map,
               position: destinationPosition,
             })
+
+          window.kakao.maps.event.addListener(
+            recommendedMarkerRef.current,
+            'click',
+            () => {
+              setSelectedPlace({
+                name:
+                  recommendation.map_place_name ||
+                  recommendation.facility_name ||
+                  '추천 기관',
+                address:
+                  recommendation.address ||
+                  recommendation.facility_address ||
+                  '주소 정보 없음',
+                category:
+                  recommendation.facility_type ||
+                  recommendation.category ||
+                  '추천 기관',
+                phone:
+                  recommendation.phone ||
+                  recommendation.facility_phone ||
+                  '전화번호 정보 없음',
+                distance: routeInfo?.distanceM
+                  ? formatRouteDistance(routeInfo.distanceM)
+                  : null,
+                detailUrl: null,
+              })
+            },
+          )
 
           const recommendedLabel = document.createElement('div')
           recommendedLabel.textContent =
@@ -538,7 +529,10 @@ export default function ResourceMap() {
       <form
         onSubmit={submitSearch}
         className="card card-pad"
-        style={{ marginBottom: 'var(--sp-4)' }}
+        style={{
+          marginBottom: 'var(--sp-4)',
+          padding: '22px 24px',
+        }}
       >
         <div className="row" style={{ gap: 10 }}>
           <input
@@ -547,12 +541,13 @@ export default function ResourceMap() {
             onChange={(event) => setKeyword(event.target.value)}
             placeholder="복지시설 또는 기관명을 입력하세요"
             aria-label="복지시설 검색어"
-            style={{ flex: 1 }}
+            style={{ flex: 1, minHeight: 52, fontSize: 16, padding: '0 16px' }}
           />
           <button
             type="submit"
             className="btn btn-primary"
             disabled={!mapReady || searching}
+            style={{ minHeight: 52, minWidth: 104, fontSize: 16 }}
           >
             {searching ? '검색 중...' : '검색'}
           </button>
@@ -560,7 +555,7 @@ export default function ResourceMap() {
 
         {resultCount !== null && (
           <p className="hint" style={{ marginTop: 10 }}>
-            검색 결과 {resultCount}곳 · 시설 마커를 누르면 카카오맵 상세정보가 열립니다.
+            검색 결과 {resultCount}곳 · 지도 마커를 누르면 왼쪽에 기관 정보가 표시됩니다.
           </p>
         )}
       </form>
@@ -596,20 +591,183 @@ export default function ResourceMap() {
         </div>
       )}
 
-      <section className="card" style={{ overflow: 'hidden' }}>
-        <div
-          ref={mapElementRef}
-          style={{ width: '100%', minHeight: 560 }}
-        />
+      <section className="card resource-map-layout">
+        <aside className="resource-map-panel">
+          {selectedPlace ? (
+            <>
+              <span className="resource-map-label">선택한 기관</span>
+              <h3>{selectedPlace.name}</h3>
 
-        {mapError && (
-          <div className="card-pad callout-warn">{mapError}</div>
-        )}
+              <dl className="resource-map-details">
+                <div>
+                  <dt>주소</dt>
+                  <dd>{selectedPlace.address}</dd>
+                </div>
+                <div>
+                  <dt>전화번호</dt>
+                  <dd>{selectedPlace.phone}</dd>
+                </div>
+                <div>
+                  <dt>분류</dt>
+                  <dd>{selectedPlace.category}</dd>
+                </div>
+                {selectedPlace.distance && (
+                  <div>
+                    <dt>직선거리</dt>
+                    <dd>{selectedPlace.distance}</dd>
+                  </div>
+                )}
+              </dl>
 
-        {locationNotice && !mapError && (
-          <div className="card-pad callout-warn">{locationNotice}</div>
-        )}
+              {selectedPlace.detailUrl && (
+                <a
+                  className="btn btn-primary resource-map-detail-link"
+                  href={selectedPlace.detailUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  카카오맵에서 자세히 보기 ↗
+                </a>
+              )}
+            </>
+          ) : (
+            <div className="resource-map-empty">
+              <span aria-hidden="true">📍</span>
+              <strong>기관을 선택해 주세요</strong>
+              <p>지도에서 마커를 누르면 이곳에 기관 정보가 표시됩니다.</p>
+            </div>
+          )}
+        </aside>
+
+        <div className="resource-map-canvas">
+          <div ref={mapElementRef} className="resource-map-element" />
+
+          {mapError && (
+            <div className="card-pad callout-warn">{mapError}</div>
+          )}
+
+          {locationNotice && !mapError && (
+            <div className="card-pad callout-warn">{locationNotice}</div>
+          )}
+        </div>
       </section>
+
+      <style>{`
+        .resource-map-layout {
+          display: grid;
+          grid-template-columns: minmax(260px, 32%) minmax(0, 1fr);
+          min-height: 460px;
+          overflow: hidden;
+        }
+
+        .resource-map-panel {
+          min-width: 0;
+          padding: 28px 24px;
+          background: #ffffff;
+          border-right: 1px solid #e7eceb;
+        }
+
+        .resource-map-label {
+          display: inline-block;
+          margin-bottom: 10px;
+          color: #00897b;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .resource-map-panel h3 {
+          margin: 0 0 22px;
+          font-size: 21px;
+          line-height: 1.4;
+          overflow-wrap: anywhere;
+        }
+
+        .resource-map-details {
+          margin: 0;
+        }
+
+        .resource-map-details div {
+          padding: 13px 0;
+          border-top: 1px solid #eef1f0;
+        }
+
+        .resource-map-details dt {
+          margin-bottom: 5px;
+          color: #667085;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .resource-map-details dd {
+          margin: 0;
+          color: #202624;
+          font-size: 14px;
+          line-height: 1.55;
+          overflow-wrap: anywhere;
+        }
+
+        .resource-map-detail-link {
+          display: flex;
+          width: 100%;
+          margin-top: 22px;
+          justify-content: center;
+        }
+
+        .resource-map-empty {
+          min-height: 360px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          color: #667085;
+        }
+
+        .resource-map-empty > span {
+          margin-bottom: 12px;
+          font-size: 34px;
+        }
+
+        .resource-map-empty strong {
+          color: #344054;
+        }
+
+        .resource-map-empty p {
+          max-width: 210px;
+          margin: 8px 0 0;
+          font-size: 14px;
+          line-height: 1.55;
+        }
+
+        .resource-map-canvas {
+          min-width: 0;
+        }
+
+        .resource-map-element {
+          width: 100%;
+          height: 460px;
+        }
+
+        @media (max-width: 760px) {
+          .resource-map-layout {
+            display: flex;
+            flex-direction: column-reverse;
+          }
+
+          .resource-map-panel {
+            border-top: 1px solid #e7eceb;
+            border-right: 0;
+          }
+
+          .resource-map-element {
+            height: 380px;
+          }
+
+          .resource-map-empty {
+            min-height: 160px;
+          }
+        }
+      `}</style>
     </div>
   )
 }
