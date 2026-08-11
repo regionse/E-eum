@@ -4,7 +4,8 @@ import { useToast, Modal } from '../../components/ui/index.jsx'
 import RequireLogin from '../../components/RequireLogin.jsx'
 import { useAuth } from '../../store/auth.jsx'
 import { chatItda, saveMap, loadItdaDraft, saveItdaDraft, clearItdaDraft } from '../../api/learn.js'
-import { BAD_WORDS } from '../../utils/text.js'
+//  ★ 2026-08-11 — utils/text.js 의 BAD_WORDS import 를 뺐다. 이 화면은 더 이상 욕설을
+//    프론트에서 판정하지 않는다(아래 send() 안의 긴 주석 참고). text.js 자체는 덜다가 쓴다.
 
 // 잇다 대화 — 관심·가치를 말하면 AI가 대화로 이해해 '방향(직업)'을 잡고,
 // 그 직업의 자격증(≤3) + 무료강좌 + 국비훈련 안내를 미래설계지도로 그려준다.
@@ -67,11 +68,18 @@ export default function LearnChat() {
   //  ★ 스크롤 앵커링(2026-07-31) — 예전엔 새 메시지가 오면 **무조건** 맨 아래로 끌어내려서,
   //    사용자가 위로 올려 지난 카드(자격증·시험일)를 보고 있어도 강제로 튕겨 내려갔다.
   //    '이미 바닥 근처를 보고 있을 때만' 따라 내려간다(실무 표준).
+  //  ★★ 2026-08-11 — **scrollIntoView 를 버렸다. 이게 «페이지»까지 끌어내리고 있었다.**
+  //    실측(브라우저 1280×720): 카드 바닥이 847px 로 화면(720) 밖이라 입력창이 안 보였고,
+  //    답이 올 때마다 화면이 통째로 내려갔다. 원인은 앵커링 조건이 아니라 «수단»이다 —
+  //    scrollIntoView 는 **스크롤 가능한 조상을 전부** 스크롤한다(document 포함).
+  //    안쪽 대화창만 내리려던 의도인데 바깥 문서까지 같이 내려간 것이다.
+  //  ⇒ 컨테이너의 scrollTop 만 직접 움직인다. 조상은 건드리지 않는다.
+  //    (endRef 는 그대로 둔다 — 마지막 요소 마커로서 레이아웃에 쓰인다)
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-    if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (nearBottom) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [msgs, busy])
   //  ★ 2026-08-10 — 로그아웃 직후 이 effect 가 «지운 대화를 도로 저장»하고 있었다.
   //    순서: logout() 이 eum_itda_chat* 전부 삭제 → uid 가 null 로 바뀜 → deps 의 uid 가
@@ -109,16 +117,31 @@ export default function LearnChat() {
     //    이 판정의 원본은 백엔드 pre_check 하나로 둔다 — VAGUE/SILENT 응답은
     //    코드가 쓰는 문구라 LLM 비용도 0이다. 왕복 한 번이 늘 뿐이다.
     push({ role: 'me', kind: 'text', text: q })
-    //  ★ 자기 위해 신호는 프론트에서 막지 않는다(2026-07-30). 공유 BAD_WORDS 에 '죽어'가 있어
-    //    "죽어버리고 싶어요" 같은 말이 여기서 걸려 "그런 쪽은 도와드리기 어려워요"가 떴다.
-    //    백엔드가 상담 연락처를 안내하도록 그대로 보낸다. (text.js 는 덜다도 쓰므로 건드리지 않는다.)
-    const flat = q.replace(/\s/g, '')
-    const selfHarm = ['자살', '죽고싶', '죽어버리', '살기싫', '사라지고싶', '없어지고싶',
-      '자해', '끝내고싶', '죽는게', '죽어야'].some((w) => flat.includes(w))
-    if (!selfHarm && BAD_WORDS.some((w) => q.includes(w))) {
-      push({ role: 'bot', kind: 'text', text: '그런 쪽은 도와드리기 어려워요. 되고 싶은 모습이나 관심 있는 걸 들려주세요.' })
-      return
-    }
+    //  ★★★ 2026-08-11 — **프론트 욕설 필터를 지웠다.** 바로 위 문단이 오늘 오타 필터를
+    //    지우며 적어 둔 원칙("같은 판정이 두 곳에 있으면 한쪽만 고쳐지는 사고가 반복된다.
+    //    이 판정의 원본은 백엔드 pre_check 하나로 둔다")을 **욕설에는 적용하지 않았었다.**
+    //
+    //    지웠던 코드:
+    //      const selfHarm = ['자살','죽고싶',…].some(w => flat.includes(w))
+    //      if (!selfHarm && BAD_WORDS.some(w => q.includes(w))) { push(…); return }
+    //    BAD_WORDS = ['바보','멍청','나쁜 놈','죽어','꺼져','개새','병신'] (utils/text.js)
+    //
+    //  브라우저 실측(fetch 를 가로채서 셌다) — **이게 백엔드를 반쯤 무력화하고 있었다**:
+    //      「야 이 병신아 너 진짜 쓸모없네」 → 백엔드 요청 **0건** · 남용 **안 오름**
+    //      「씨발 너 진짜 답답하네」        → /api/itda/message · 남용 +1
+    //    같은 종류의 욕인데 «어느 낱말이냐»로 남용 카운트가 되기도 안 되기도 했다.
+    //    ⇒ 레드팀에서 잰 「5/5 차단 · 남용 1→5 · 3회부터 경고 · 문턱 넘으면 세션 잠금」이
+    //      **웹에서는 절반이 일어나지 않았다.** 잠금은 남용 카운터에만 달려 있다.
+    //    응답 문구도 둘로 갈려 있었다 — 프론트「그런 «쪽»은…」 vs 백엔드「그런 «이야기»는…」.
+    //
+    //  ⚠ 지우면 무엇이 달라지나(실측, sid=nf_c) — 확인하고 지웠다:
+    //      「병신·꺼져·개새」 → 백엔드 pre_check 이 차단하고 **남용을 센다** (원하던 것)
+    //      「바보·멍청」     → 백엔드 ABUSE 에 **없어서** 통과, LLM 이 사과로 받는다
+    //    후자는 «백엔드가 그건 막을 정도가 아니라고 판단한 것»이다(혼잣말 좌절 보호 원칙).
+    //    프론트가 그 판단을 뒤집고 있었다. 판정을 한 곳으로 모으는 것이 이 변경의 요지다.
+    //  ⚠ 자기 위해(자살·죽고싶)는 원래도 프론트가 안 막았다(2026-07-30). 그대로다 —
+    //    백엔드가 상담 연락처를 건네야 하고, 그 경로는 LLM 을 안 부르므로 비용도 0이다.
+    //  ⚠ text.js 의 BAD_WORDS 자체는 **안 건드린다** — 덜다가 쓴다.
     setBusy(true)
     //  ★ 취소(2026-07-31) — 응답이 3~10초 걸리는데 멈출 방법이 없었다.
     //    client.js 의 signal 을 쓴다(덜다에서 추가된 배관을 그대로 활용).
@@ -202,17 +225,29 @@ export default function LearnChat() {
   //  ⚠ 이 주석을 return( 바로 뒤에 «JSX 주석»으로 넣었다가 화면이 통째로 죽었다(500).
   //    return 이 최상위 요소를 둘 가지게 되어 파싱이 깨진다. 주석은 return «밖»에 둔다.
   return (
-    <div className="container page" style={{ maxWidth: 1240 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
+    <div className="container page" style={{ maxWidth: 1240,
+      //  ★★ 2026-08-11 — **화면 «안»에 통째로 들어가게 한다.** 실측이 근거다(1280×720):
+      //    카드 바닥 847px · 입력창 top 738 — 즉 «입력창이 화면 밖»이었고 페이지가 425px 넘쳤다.
+      //    예전 방식은 대화창 높이를 clamp(320, 100vh-270, 820) 로 «직접» 정했는데,
+      //    빼는 값 270 이 실제 군더더기(위 396 + 아래 118 = 514)보다 작아서 항상 모자랐다.
+      //    화면이 커지면 clamp 도 같이 커져서 **어떤 화면에서도 안 맞는다** — 고정 상수의 한계다.
+      //  ⇒ 상수를 버리고 **남는 공간을 채우게** 한다. 루트가 화면 높이를 갖고,
+      //    카드가 flex:1, 대화창이 또 flex:1 이면 군더더기가 몇이든 자동으로 맞는다.
+      //  ⚠ overflow 를 막지 «않는다» — 좁은 화면에서 minHeight 에 걸리면 그때는
+      //    페이지가 스크롤돼야 한다(예전 동작). 잘라내면 그게 더 나쁘다.
+      display: 'flex', flexDirection: 'column',
+      height: 'calc(100vh - var(--header-h))', paddingTop: 16, paddingBottom: 16 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap', flexShrink: 0 }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: 24, letterSpacing: '-.02em', margin: 0 }}>🌱 잇다</h1>
           <p className="muted" style={{ fontSize: 14, margin: '4px 0 0' }}>대화하듯 관심을 말하면, 어울리는 방향과 그 길(자격증·강좌·국비훈련)을 그려드려요.</p>
         </div>
-        <Link to="/learn" className="btn btn-ghost btn-lg" style={{ flexShrink: 0 }}>← 잇다 홈</Link>
-      </div>
-      <RequireLogin axis="잇다">
-        <div className="card card-pad">
-          <div className="row" style={{ justifyContent: 'flex-start', marginBottom: 10 }}>
+        {/*  ★ 2026-08-11 — 글자크기 조절을 카드 «안»에서 제목줄로 옮겼다.
+             카드 안에 있을 때 40+10=50px 을 차지했는데, 그만큼이 대화창에서 나온 것이다.
+             제목줄 오른쪽은 원래 비어 있던 자리라 새로 먹는 높이가 0 이다.
+             ⚠ 로그인해야 대화창이 뜨므로 이 조절기도 로그인했을 때만 보인다(RequireLogin 과 같은 조건).  */}
+        <div className="row" style={{ gap: 10, flexShrink: 0 }}>
+          {user && (
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1.5px solid var(--teal-200)', background: 'var(--teal-50)', borderRadius: 999, padding: '4px 6px' }}>
               <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--teal-700)', padding: '0 6px' }}>글자 크기</span>
               <button aria-label="작게" disabled={chatZoom <= 0.8}
@@ -223,7 +258,15 @@ export default function LearnChat() {
                 onClick={() => setChatZoom((z) => Math.min(1.6, +(z + 0.15).toFixed(2)))}
                 style={{ width: 30, height: 30, borderRadius: 999, border: '1.5px solid var(--teal-300)', background: '#fff', color: 'var(--teal-700)', fontSize: 18, fontWeight: 800, lineHeight: 1, cursor: 'pointer' }}>＋</button>
             </div>
-          </div>
+          )}
+          <Link to="/learn" className="btn btn-ghost btn-lg" style={{ flexShrink: 0 }}>← 잇다 홈</Link>
+        </div>
+      </div>
+      <RequireLogin axis="잇다">
+        {/*  카드가 남은 세로를 다 먹는다. minHeight 는 «바닥» — 좁은 화면에서 이 밑으로는
+             안 줄이고 대신 페이지가 스크롤된다(위 루트 주석 참고).  */}
+        <div className="card card-pad" style={{ display: 'flex', flexDirection: 'column',
+          flex: '1 1 auto', minHeight: 360, overflow: 'hidden' }}>
           {/*  높이를 화면에 맞춘다(2026-07-30) — 고정 500px 이라 작은 화면(667×714 실측)에서는
                대화창이 화면을 넘겨 '바깥 스크롤 + 안쪽 스크롤'이 겹치고, 정작 아래 빈 공간은 남았다.
                미래설계지도는 긴 카드라 좁은 창에서 계속 스크롤해야 했다. clamp 로 화면에 맞춘다.
@@ -240,7 +283,7 @@ export default function LearnChat() {
                  렌더링됐다. 브라우저로 직접 열어 보고서야 찾았다.
                  ⇒ 주석 안에 닫는 기호를 «글자로» 쓰지 마라. 고치면서 한 번 더 틀렸다. */}
           <div className="chat-wrap" role="log" aria-live="polite" ref={wrapRef}
-            style={{ height: 'clamp(320px, calc(100vh - 270px), 820px)',
+            style={{ flex: '1 1 auto', minHeight: 0, height: 'auto',
                      fontSize: 15.5, zoom: chatZoom }}>
             {msgs.map((m, i) => (
               <ChatItem key={i} m={m} onSave={(g) => setAskSave(g)} onOpenGoal={openGoal}
@@ -252,9 +295,11 @@ export default function LearnChat() {
             <div ref={endRef} />
           </div>
 
+          {/*  ★ 2026-08-11 — 아래 것들은 flex 자식이라 기본값이 «줄어들 수 있음»(flex-shrink:1)이다.
+               자리가 모자라면 입력창부터 눌려서 글자가 잘린다. 줄어들 것은 대화창 하나뿐이어야 한다.  */}
           {msgs.length <= 1 && <Examples items={GOAL_EXAMPLES} onPick={send} />}
-          {warn && <p role="alert" style={{ color: '#c0392b', fontSize: 14, margin: '10px 0 0' }}>⚠ {warn}</p>}
-          <div className="chat-input">
+          {warn && <p role="alert" style={{ color: '#c0392b', fontSize: 14, margin: '10px 0 0', flexShrink: 0 }}>⚠ {warn}</p>}
+          <div className="chat-input" style={{ flexShrink: 0 }}>
             {/*  ★ 2026-08-10 — 입력 상한 200자. 백엔드(schemas.MessageRequest)와 «같은 값»이다.
                  예전엔 프론트에 상한이 없어서, 백엔드 한도를 넘기면 안내 대신 422 오류 화면이 떴다.
                  maxLength 로 «애초에 못 넘기게» 하고, 남은 글자를 보여 준다.  */}
@@ -275,7 +320,7 @@ export default function LearnChat() {
                 : `${input.length} / ${MAX_LEN}자`}
             </p>
           )}
-          <p className="hint" style={{ marginTop: 10 }}>답변은 AI가 하는 것이라 확실하지 않을 수 있어요. 오류가 생기면 문의 부탁드려요!</p>
+          <p className="hint" style={{ marginTop: 8, flexShrink: 0 }}>답변은 AI가 하는 것이라 확실하지 않을 수 있어요. 오류가 생기면 문의 부탁드려요!</p>
         </div>
         {toast.node}
         {askSave && (
