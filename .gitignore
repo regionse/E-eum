@@ -10,8 +10,8 @@ dist-ssr
 # Python / 백엔드
 __pycache__/
 *.pyc
-
 # OS / 기타
 .DS_Store
 *.log
 activate_home.bat
+*.md
